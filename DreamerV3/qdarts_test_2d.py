@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from qdarts.plotting import get_polytopes, plot_polytopes
 from qdarts.capacitance_model import CapacitanceModel
 from qdarts.simulator import CapacitiveDeviceSimulator
+from qdarts.tunneling_simulator import NoisySensorDot, ApproximateTunnelingSimulator
 
 import time
 start_time = time.time()
@@ -61,8 +62,8 @@ P[2, 1] = 1  # Barrier gate along y-axis
 
 from qdarts.plotting import get_CSD_data
 
-minV = np.array([-0.02,-0.02])
-maxV = np.array([ 0.01, 0.01])
+minV = np.array([-0.05,-0.05]) # was -0.02
+maxV = np.array([ 0.05, 0.05]) # was 0.01
 
 resolution = 100
 
@@ -83,12 +84,9 @@ tunnel_couplings = np.zeros((N_dots, N_dots))
 tunnel_couplings[0, 1] = 30e-6
 tunnel_couplings[1, 0] = 30e-6
 
-tunnel_couplings = tunnel_couplings+ tunnel_couplings.T
+tunnel_couplings = tunnel_couplings + tunnel_couplings.T
 
 temperature = 0.1 # 100mK
-
-
-from qdarts.tunneling_simulator import NoisySensorDot, ApproximateTunnelingSimulator
 
 print(f"Creating sensor model, time elapsed = {time.time() - start_time:.2f}s")
 
