@@ -1,34 +1,56 @@
 import numpy as np
 import torch
 import os
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusion3Pipeline
 from dotenv import load_dotenv
+
+# required packages:
+# import accelerate
+# import protobuf
+# import sentencepiece
 
 load_dotenv()
 
 def load_model():
     """
-    Loads the Stable Diffusion model from local .safetensors files and returns a callable pipeline for inference.
+    Loads the Stable Diffusion 3 model from local files and returns a callable pipeline for inference.
     """
-    model_path = "./sd3_medium_incl_clips_t5xxlfp16.safetensors"  # Path to the local model file
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    print(f"Loading Stable Diffusion model from: {model_path}")
-    pipeline = StableDiffusionPipeline.from_pretrained(
-        model_path,
-        torch_dtype=torch.float16,
-        local_files_only=True  # Ensures the model is loaded locally
-    )
-    pipeline = pipeline.to(device)
-
-    print("Model loaded successfully.")
-    return pipeline
+    # First, try to download the complete model structure
+    print("Downloading Stable Diffusion 3 model...")
+    try:
+        pipeline = StableDiffusion3Pipeline.from_pretrained(
+            "stabilityai/stable-diffusion-3-medium-diffusers",
+            torch_dtype=torch.float16,
+            cache_dir="./model_cache"  # Cache locally for future use
+        )
+        pipeline = pipeline.to(device)
+        print("Model loaded successfully from Hugging Face.")
+        return pipeline
+        
+    except Exception as e:
+        print(f"Error loading model from Hugging Face: {e}")
+        
+        # Alternative: try with different model variant
+        try:
+            print("Trying alternative model...")
+            pipeline = StableDiffusion3Pipeline.from_pretrained(
+                "stabilityai/stable-diffusion-3-medium",
+                torch_dtype=torch.float16,
+                cache_dir="./model_cache"
+            )
+            pipeline = pipeline.to(device)
+            print("Alternative model loaded successfully.")
+            return pipeline
+            
+        except Exception as e2:
+            print(f"Error with alternative model: {e2}")
+            raise Exception("Could not load any Stable Diffusion 3 model")
 
 
 def load_data():
     pass
-
-
 
 
 def main():
@@ -38,10 +60,14 @@ def main():
     parser.add_argument("--num_epochs", type=int, default=1, help="Number of epochs for training")
     args = parser.parse_args()
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     print("Loading model...")
     model = load_model()
+    model.to(device)
+    print(f"Model device: {model.device}")
 
-    print("Model is ready for inference.")
     # Example inference
     prompt = "A futuristic cityscape at sunset"
     image = model(prompt).images[0]
