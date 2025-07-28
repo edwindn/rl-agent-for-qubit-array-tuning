@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import os
-from diffusers import StableDiffusion3Pipeline
+from diffusers import StableDiffusion3Pipeline, StableDiffusionPipeline
 from dotenv import load_dotenv
 
 # required packages:
@@ -63,16 +63,29 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+
+
+
+
+    # -------- #
+
     print("Loading model...")
     model = load_model()
     model.to(device)
     print(f"Model device: {model.device}")
 
+    import time
+    start_time = time.time()
+
     # Example inference
-    prompt = "A futuristic cityscape at sunset"
+    # prompt = "A futuristic cityscape at sunset"
+    prompt = "Voltages: [-1.18318284  0.85538369]"
     image = model(prompt).images[0]
+
+    print(f"Inference time: {time.time() - start_time:.2f} seconds")
     image.save("output.png")
     print("Inference completed. Image saved as output.png.")
+
 
 
 if __name__ == '__main__':
