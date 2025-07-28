@@ -2,16 +2,29 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torchvision.utils import save_image
+import wandb
+from dotenv import load_dotenv
+from tqdm import tqdm
+
 from tinyGAN.model import Generator, Discriminator, VGGLoss
 from tinyGAN.utils import *
 from utils import load_data
+
+load_dotenv()
 
 """
 training script for tiny GAN
 
 note: we keep the noise fixed to ensure deterministic outputs
 pass in y embeds rather than x label
+
+todo:
+better handling of grayscale
 """
+
+wandb.init(
+    project="qarray_tiny_gan",
+)
 
 class VoltageProjector(nn.Module):
     def __init__(self, in_dim, out_dim, latent_dim=256):
@@ -56,9 +69,18 @@ def train(dataloader, G, D, voltage_projector, g_optimizer, d_optimizer, device,
         total_g_loss = 0
         total_d_loss = 0
         
-        for batch_idx, batch in enumerate(dataloader):
-            voltages = batch['voltages'].to(device)  # Shape: (batch_size, voltage_dim)
+        for batch_idx, batch in tqdm(enumerate(dataloader)):
+            # Convert voltages to torch.float
+            voltages = batch['voltages'].to(device).float()  # Ensure dtype is torch.float
             real_images = batch['image'].to(device)  # Shape: (batch_size, 3, height, width)
+            real_images = real_images.permute(0, 3, 1, 2)  # Convert to (batch_size, channels, height, width)
+            
+            # Ensure real_images has 3 channels
+            if real_images.shape[1] != 3:
+                if real_images.shape[1] == 1:  # Grayscale images
+                    real_images = real_images.repeat(1, 3, 1, 1)  # Convert to 3 channels
+                else:
+                    raise ValueError(f"Unexpected number of channels in real_images: {real_images.shape[1]}")
             
             batch_size = voltages.size(0)
             
@@ -126,24 +148,28 @@ def train(dataloader, G, D, voltage_projector, g_optimizer, d_optimizer, device,
             
             # Print progress
             if batch_idx % 10 == 0:
-                print(f'Epoch [{epoch+1}/{epochs}], Batch [{batch_idx}/{len(dataloader)}], '
-                      f'G_Loss: {g_loss.item():.4f}, D_Loss: {d_loss.item():.4f}, '
-                      f'G_Adv: {g_adv_loss.item():.4f}, G_Recon: {g_recon_loss.item():.4f}, '
-                      f'G_VGG: {g_vgg_loss.item():.4f}')
+                wandb.log({
+                    'G_Loss': g_loss.item(),
+                    'D_Loss': d_loss.item(),
+                })
+
+                # print(f'Epoch [{epoch+1}/{epochs}], Batch [{batch_idx}/{len(dataloader)}], '
+                #       f'G_Loss: {g_loss.item():.4f}, D_Loss: {d_loss.item():.4f}, '
+                #       f'G_Adv: {g_adv_loss.item():.4f}, G_Recon: {g_recon_loss.item():.4f}, '
+                #       f'G_VGG: {g_vgg_loss.item():.4f}')
             
             # Save sample images periodically
-            if batch_idx % 50 == 0:
+            if batch_idx % 5000 == 0:
                 with torch.no_grad():
                     sample_voltage = voltages[0:1]  # Take first sample
                     sample_embedding = voltage_projector(sample_voltage)
-                    sample_noise = fixed_noise[0:1]
+                    sample_noise = fixed_noise #[0:1]
                     sample_fake = G(sample_noise, sample_embedding)
                     sample_real = real_images[0:1]
                     
                     # Save comparison
                     comparison = torch.cat([sample_real, sample_fake], dim=0)
-                    save_image(comparison, f'{save_dir}/training_samples_epoch{epoch}_batch{batch_idx}.png', 
-                             nrow=2, normalize=True, range=(-1, 1))
+                    save_image(comparison, f'{save_dir}/training_samples_epoch{epoch}_batch{batch_idx}.png', nrow=2, normalize=True)
         
         # Print epoch summary
         avg_g_loss = total_g_loss / len(dataloader)

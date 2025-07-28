@@ -118,7 +118,7 @@ print(f"Generating plot, time elapsed = {time.time() - start_time:.2f}s")
 plot_polytopes(plt.gca(),polytopes, skip_dots=[3,4,5], fontsize=16)
 
 
-plt.savefig('qdarts_plot_6d.png', dpi=300, bbox_inches='tight')
+plt.savefig('qdarts_plot.png', dpi=300, bbox_inches='tight')
 
 end_time = time.time()
 print(f"Execution time: {end_time - start_time:.2f} seconds")

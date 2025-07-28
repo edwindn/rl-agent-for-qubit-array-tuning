@@ -81,12 +81,6 @@ polytopes = get_polytopes(states, sliced_csim, minV, maxV, V_offset_2D)
 plt.xlim(minV[0],maxV[0])
 plt.ylim(minV[1],maxV[1])
 plot_polytopes(plt.gca(),polytopes, skip_dots=[3,4,5], fontsize=16)
-
-plt.savefig('qdarts_plot.png', dpi=300, bbox_inches='tight')
-
-end_time = time.time()
-print(f"Execution time: {end_time - start_time:.2f} seconds")
-exit()
 # -------------- #
 
 tunnel_couplings = np.zeros((N_dots, N_dots))
