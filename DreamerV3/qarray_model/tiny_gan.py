@@ -5,6 +5,8 @@ from torchvision.utils import save_image
 import wandb
 from dotenv import load_dotenv
 from tqdm import tqdm
+import random
+import matplotlib.pyplot as plt
 
 from tinyGAN.model import Generator, Discriminator, VGGLoss
 from tinyGAN.utils import *
@@ -19,12 +21,8 @@ note: we keep the noise fixed to ensure deterministic outputs
 pass in y embeds rather than x label
 
 todo:
-better handling of grayscale
+better handling of grayscale (viridis or better reshape to c=1)
 """
-
-wandb.init(
-    project="qarray_tiny_gan",
-)
 
 class VoltageProjector(nn.Module):
     def __init__(self, in_dim, out_dim, latent_dim=256):
@@ -49,7 +47,7 @@ def infer(G, label, noise, z_dim=128):
     return denorm(out)
 
 
-def train(dataloader, G, D, voltage_projector, g_optimizer, d_optimizer, device, epochs=1, save_dir='./checkpoints'):
+def train(dataloader, G, D, voltage_projector, g_optimizer, d_optimizer, device, use_wandb, epochs=1, save_dir='./checkpoints'):
     os.makedirs(save_dir, exist_ok=True)
 
     # Loss functions
@@ -69,10 +67,14 @@ def train(dataloader, G, D, voltage_projector, g_optimizer, d_optimizer, device,
         total_g_loss = 0
         total_d_loss = 0
         
-        for batch_idx, batch in tqdm(enumerate(dataloader)):
+        progress_bar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}/{epochs}")
+        
+        for batch_idx, batch in progress_bar:
             # Convert voltages to torch.float
             voltages = batch['voltages'].to(device).float()  # Ensure dtype is torch.float
-            real_images = batch['image'].to(device)  # Shape: (batch_size, 3, height, width)
+            
+            # Convert real_images to torch.float and normalize to [0, 1]
+            real_images = batch['image'].to(device).float() / 255.0  # Normalize uint8 to [0, 1]
             real_images = real_images.permute(0, 3, 1, 2)  # Convert to (batch_size, channels, height, width)
             
             # Ensure real_images has 3 channels
@@ -146,31 +148,42 @@ def train(dataloader, G, D, voltage_projector, g_optimizer, d_optimizer, device,
             total_g_loss += g_loss.item()
             total_d_loss += d_loss.item()
             
-            # Print progress
-            if batch_idx % 10 == 0:
+            # Update tqdm progress bar
+            progress_bar.set_postfix({
+                'G_Loss': g_loss.item(),
+                'D_Loss': d_loss.item(),
+            })
+            
+            if use_wandb:
                 wandb.log({
                     'G_Loss': g_loss.item(),
                     'D_Loss': d_loss.item(),
                 })
 
-                # print(f'Epoch [{epoch+1}/{epochs}], Batch [{batch_idx}/{len(dataloader)}], '
-                #       f'G_Loss: {g_loss.item():.4f}, D_Loss: {d_loss.item():.4f}, '
-                #       f'G_Adv: {g_adv_loss.item():.4f}, G_Recon: {g_recon_loss.item():.4f}, '
-                #       f'G_VGG: {g_vgg_loss.item():.4f}')
+        # Save test run of generated images at the end of the epoch
+        with torch.no_grad():
+            sample_voltage = voltages[0:1]  # Take first sample
+            sample_embedding = voltage_projector(sample_voltage)
+            sample_noise = fixed_noise[0:1].expand(1, 128)  # Ensure correct shape
+            sample_fake = G(sample_noise, sample_embedding)
+            sample_real = real_images[0:1]  # Take first sample
+
+            # Remove batch dimension for visualization
+            sample_real = sample_real.squeeze(0)  # Shape: (channels, height, width)
+            sample_fake = sample_fake.squeeze(0)  # Shape: (channels, height, width)
+
+            plt.figure(figsize=(10, 5))
+            plt.subplot(1, 2, 1)
+            plt.imshow(sample_real.permute(1, 2, 0).cpu().numpy())
+            plt.title("Real Image")
+            plt.axis('off')
+            plt.subplot(1, 2, 2)
+            plt.imshow(sample_fake.permute(1, 2, 0).cpu().numpy())
+            plt.title("Fake Image")
+            plt.axis('off')
+            plt.savefig(f'{save_dir}/test_run_epoch{epoch+1}.png')
+            plt.close()
             
-            # Save sample images periodically
-            if batch_idx % 5000 == 0:
-                with torch.no_grad():
-                    sample_voltage = voltages[0:1]  # Take first sample
-                    sample_embedding = voltage_projector(sample_voltage)
-                    sample_noise = fixed_noise #[0:1]
-                    sample_fake = G(sample_noise, sample_embedding)
-                    sample_real = real_images[0:1]
-                    
-                    # Save comparison
-                    comparison = torch.cat([sample_real, sample_fake], dim=0)
-                    save_image(comparison, f'{save_dir}/training_samples_epoch{epoch}_batch{batch_idx}.png', nrow=2, normalize=True)
-        
         # Print epoch summary
         avg_g_loss = total_g_loss / len(dataloader)
         avg_d_loss = total_d_loss / len(dataloader)
@@ -198,13 +211,50 @@ def train(dataloader, G, D, voltage_projector, g_optimizer, d_optimizer, device,
     print("Final models saved!")
 
 
+def visualise_images(dataset, device):
+    """
+    Visualize 10 random images from the dataset after processing them
+    the same way as in the training loop.
+    """
+    # Select 10 random samples from the dataset
+    random_samples = random.sample(dataset, 10)
+
+    # Process the images
+    processed_images = []
+    voltages_list = []
+    for sample in random_samples:
+        voltages = sample['voltages']
+        image = sample['image']
+
+        # Convert image to torch.float and normalize to [0, 1]
+        image = torch.tensor(image).to(device).float() / 255.0  # Normalize uint8 to [0, 1]
+        image = image.permute(2, 0, 1)  # Convert to (channels, height, width)
+
+        processed_images.append(image)
+        voltages_list.append(voltages)
+
+    # Plot the images
+    fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+    axes = axes.flatten()
+    for i, (image, voltages) in enumerate(zip(processed_images, voltages_list)):
+        # Convert image back to numpy for plotting
+        image_np = image.permute(1, 2, 0).cpu().numpy()  # Convert to (height, width, channels)
+        axes[i].imshow(image_np)
+        axes[i].set_title(f"Voltages: {voltages}")
+        axes[i].axis('off')
+
+    plt.tight_layout()
+    plt.savefig('random_samples.png')
+
+
 def main():
     from argparse import ArgumentParser
     parser = ArgumentParser(description="Tiny GAN finetuning script")
     parser.add_argument("--voltage_dim", type=int, default=2, help="Dimensionality of the voltage input")
-    parser.add_argument("--batch_size", type=int, default=1, help="Batch size for inference")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
     parser.add_argument("--lr", type=float, default=0.0002, help="Learning rate for the optimizer")
+    parser.add_argument("--use_wandb", action='store_true', default=False, help="Use Weights & Biases for logging")
     args = parser.parse_args()
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -212,6 +262,7 @@ def main():
 
     voltage_dim = args.voltage_dim
     lr = args.lr
+    use_wandb = args.use_wandb
 
     noise = torch.load('tinygan_noise.pt').to(device)
     z_dim = 128
@@ -232,8 +283,13 @@ def main():
     dataset = load_data('./data')
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
+    if use_wandb:
+        wandb.init(
+            project="qarray_tiny_gan",
+        )
+
     print('Training ...')
-    train(dataloader, G, D, voltage_projector, g_optimizer, d_optimizer, device, epochs=args.epochs)
+    train(dataloader, G, D, voltage_projector, g_optimizer, d_optimizer, device, use_wandb, epochs=args.epochs)
     print('Finished training')
     exit()
 
