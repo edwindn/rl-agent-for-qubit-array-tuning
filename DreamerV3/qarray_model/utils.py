@@ -36,7 +36,7 @@ def load_data(data_dir):
     # Get all data file paths
     shard_folders = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
     data_files = [os.path.join(data_dir, f, 'data.npz') for f in shard_folders]
-    data_files = data_files[:2000]
+    data_files = data_files[:200]
 
     # Use multiprocessing to process files in parallel
     with Pool(processes=cpu_count()) as pool:
