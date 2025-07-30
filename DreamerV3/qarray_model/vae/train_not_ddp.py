@@ -1,22 +1,18 @@
 import torch
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-from tqdm import tqdm  # Import tqdm for progress bar
+from tqdm import tqdm
 import os
 
-from vae.vqvae import create_vqvae2_large, VQVAELoss
+from vqvae import create_vqvae2_large, VQVAELoss
 from utils import load_data
-
-"""
-Run from parent directory
-python -m vae.train
-"""
 
 def main():
     from argparse import ArgumentParser
     parser = ArgumentParser(description="Train VQ-VAE on qarray data")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training")
-    parser.add_argument("--epochs", type=int, default=4, help="Number of epochs for training")
+    parser.add_argument("--epochs", type=int, default=5, help="Number of epochs for training")
+    parser.add_argument("--gpu_index", type=int, default=0, help="GPU index to use")
     args = parser.parse_args()
     batch_size = args.batch_size
     num_epochs = args.epochs
@@ -38,7 +34,7 @@ def main():
     print(f"Number of training samples: {len(train_loader.dataset)}")
     print(f"Number of test samples: {len(test_loader.dataset)}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda:{args.gpu_index}" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     VQVAE = create_vqvae2_large(image_size=128, in_channels=1).to(device)
@@ -69,6 +65,7 @@ def main():
             })
 
         print(f"Epoch {epoch + 1} Loss: {epoch_loss / len(train_loader):.4f}")
+        torch.save(VQVAE.state_dict(), f"vqvae_epoch_{epoch + 1}.pth")
 
 
     torch.save(VQVAE.state_dict(), "vqvae_qarray.pth")

@@ -32,6 +32,7 @@ def main():
     parser = ArgumentParser(description="Train VQ-VAE on MNIST")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=4, help="Number of epochs for training")
+    parser.add_argument("--gpu_index", type=int, default=0, help="GPU device to train on (for single-GPU)")
     args = parser.parse_args()
     batch_size = args.batch_size
     num_epochs = args.epochs
