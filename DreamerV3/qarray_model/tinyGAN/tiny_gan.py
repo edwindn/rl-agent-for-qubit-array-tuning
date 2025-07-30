@@ -8,9 +8,9 @@ from tqdm import tqdm
 import random
 import matplotlib.pyplot as plt
 
-from tinyGAN.model import Generator, Discriminator, VGGLoss
-from tinyGAN.utils import *
-from utils import load_data
+from model import Generator, Discriminator, VGGLoss
+from utils import *
+# efrom ..utils import load_data
 
 load_dotenv()
 
@@ -251,7 +251,7 @@ def main():
     from argparse import ArgumentParser
     parser = ArgumentParser(description="Tiny GAN finetuning script")
     parser.add_argument("--voltage_dim", type=int, default=2, help="Dimensionality of the voltage input")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
+    parser.add_argument("--batch_size", type=int, default=128, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
     parser.add_argument("--lr", type=float, default=0.0002, help="Learning rate for the optimizer")
     parser.add_argument("--use_wandb", action='store_true', default=False, help="Use Weights & Biases for logging")
@@ -262,7 +262,7 @@ def main():
 
     voltage_dim = args.voltage_dim
     lr = args.lr
-    use_wandb = args.use_wandb
+    use_wandb = bool(args.use_wandb)
 
     noise = torch.load('tinygan_noise.pt').to(device)
     z_dim = 128

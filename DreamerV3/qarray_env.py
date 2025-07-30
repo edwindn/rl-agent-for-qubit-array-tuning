@@ -661,6 +661,10 @@ class QuantumDeviceEnv(gym.Env):
 if __name__ == "__main__":
     env = QuantumDeviceEnv()
     env.reset()
+
+    voltages = [-3.0, 1.0]
+    env._apply_voltages(voltages)
+
     frame = env._render_frame(inference_plot=True)
     path = "quantum_dot_plot.png"
     plt.imsave(path, frame, cmap='viridis')

@@ -3,40 +3,61 @@ import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from matplotlib import colormaps  # Use the updated colormaps API
+from multiprocessing import Pool, cpu_count
+
+
+def process_file(file_path):
+    """
+    Process a single data file and return the processed data.
+    """
+    data = np.load(file_path, allow_pickle=True)
+    voltages, images = data['voltages'], data['states']
+    processed_data = []
+
+    viridis = colormaps.get_cmap('viridis')
+
+    for v, i in zip(voltages, images):
+        i_normalized = (i - i.min()) / (i.max() - i.min() + 1e-8)  # Avoid division by zero
+        # i_colored = viridis(i_normalized.squeeze())[:, :, :3]
+        # i_colored = (i_colored * 255).astype(np.uint8)
+        i_processed = np.transpose(i_normalized, (2, 0, 1))
+        processed_data.append({'voltages': v, 'image': i_processed})
+
+    return processed_data
+
 
 def load_data(data_dir):
     """
-    Load training data from the specified directory and convert grayscale images to 3-channel RGB using viridis colormap.
+    Load training data from the specified directory using multiprocessing
+    and convert grayscale images to 3-channel RGB using viridis colormap.
     """
     dataset = []
 
-    # Initialize the viridis colormap
-    viridis = colormaps.get_cmap('viridis')  # Updated to use colormaps.get_cmap
-
+    # Get all data file paths
     shard_folders = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
-    
-    for f in tqdm(shard_folders, desc="Loading data"):
-        data_path = os.path.join(data_dir, f, 'data.npz')
-        data = np.load(data_path, allow_pickle=True)
-        voltages, images = data['voltages'], data['states']
-        for v, i in zip(voltages, images):
-            # Normalize the grayscale image to the range [0, 1]
-            i_normalized = (i - i.min()) / (i.max() - i.min() + 1e-8)  # Avoid division by zero
-            
-            # Apply the viridis colormap
-            i_colored = viridis(i_normalized.squeeze())[:, :, :3]  # Get RGB channels (ignore alpha)
-            
-            # Convert to uint8 format (optional, for consistency)
-            i_colored = (i_colored * 255).astype(np.uint8)
-            
-            dataset.append({'voltages': v, 'image': i_colored})
+    data_files = [os.path.join(data_dir, f, 'data.npz') for f in shard_folders]
+    data_files = data_files[:2000]
+
+    # Use multiprocessing to process files in parallel
+    with Pool(processes=cpu_count()) as pool:
+        results = list(tqdm(pool.imap(process_file, data_files), total=len(data_files), desc="Loading data"))
+
+    # Combine results from all processes
+    for result in results:
+        dataset.extend(result)
 
     print(f"Loaded {len(dataset)} samples from {data_dir}")
     return dataset
 
+
 if __name__ == "__main__":
     dataset = load_data('./data')
-    print(f"Dataset contains {len(dataset)} samples.")
+    all_voltages = np.array([d['voltages'] for d in dataset])
+    max_v = np.max(all_voltages, axis=0)
+    min_v = np.min(all_voltages, axis=0)
+    print(f"Max voltages: {max_v}, Min voltages: {min_v}")
+
+    exit()
     # Plot an image
     data = dataset[0]
     print(data['image'].shape)
