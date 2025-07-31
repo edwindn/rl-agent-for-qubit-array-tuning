@@ -26,7 +26,7 @@ def process_file(file_path):
     return processed_data
 
 
-def load_data(data_dir):
+def load_data(data_dir, num_samples=None):
     """
     Load training data from the specified directory using multiprocessing
     and convert grayscale images to 3-channel RGB using viridis colormap.
@@ -36,7 +36,8 @@ def load_data(data_dir):
     # Get all data file paths
     shard_folders = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
     data_files = [os.path.join(data_dir, f, 'data.npz') for f in shard_folders]
-    data_files = data_files[:2000]
+    if num_samples is not None:
+        data_files = data_files[:num_samples]
 
     # Use multiprocessing to process files in parallel
     with Pool(processes=cpu_count()) as pool:

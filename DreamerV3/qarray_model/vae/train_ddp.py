@@ -1,110 +1,325 @@
+import os
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import datasets, transforms
+import signal
+import sys
+from typing import List, Dict
+import subprocess
 from tqdm import tqdm
-import os
 
 from vqvae import create_vqvae2_large, VQVAELoss
 from utils import load_data
 
-def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
 
-def cleanup():
-    dist.destroy_process_group()
+def setup(rank: int, world_size: int) -> None:
+    """
+    Initialize the distributed process group for multi-GPU training.
 
-def train(rank, world_size, args):
-    setup(rank, world_size)
-    device = torch.device(f"cuda:{rank}")
+    Args:
+        rank (int): The rank of the current process.
+        world_size (int): The total number of processes.
 
-    # Load dataset
-    this_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(this_dir, '../data')
-    dataset = load_data(data_dir)
+    """
+    os.environ['MASTER_ADDR'] = '127.0.0.1' # 'oums-dlgpu1.materials.ox.ac.uk'
+    os.environ['MASTER_PORT'] = '50001'  # or any free port number
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
-    # Split dataset
+
+def cleanup() -> None:
+    """
+    Clean up the distributed process group.
+    """
+    if dist.is_initialized():
+        dist.destroy_process_group()
+        print('Process group destroyed')
+    else:
+        print('No group found')
+
+
+def check_gpu_memory(min_memory_gb: float) -> List[int]:
+    """
+    Check available GPU memory and return GPUs with at least min_memory_gb free memory.
+
+    Args:
+        min_memory_gb (float): Minimum required free memory in GB.
+
+    Returns:
+        List[int]: List of GPU indices with sufficient free memory.
+    """
+    available_gpus = []
+    result = subprocess.run(['nvidia-smi', '--query-gpu=memory.free', '--format=csv,nounits,noheader'],
+                            stdout=subprocess.PIPE)
+    memory_free = result.stdout.decode('utf-8').strip().split('\n')
+    memory_free = [int(x) for x in memory_free]
+    print("GPU Memory Availability:")
+    for i, mem in enumerate(memory_free):
+        mem_gb = mem / 1024  # Convert MB to GB
+        print(f"GPU {i}: {mem_gb:.2f} GB free")
+        if mem_gb >= min_memory_gb:
+            available_gpus.append(i)
+    return available_gpus
+
+
+def signal_handler(sig, frame) -> None:
+    """
+    Handle termination signals to clean up and exit gracefully.
+
+    Args:
+        sig: Signal number.
+        frame: Current stack frame.
+    """
+    print('Received signal to terminate. Cleaning up...')
+    cleanup()
+    sys.exit(0)
+
+
+def GPU_setup(min_memory_gb: float, use_gpus: List[int]) -> int:
+    """
+    Set up available GPUs based on minimum required free memory.
+
+    Args:
+        min_memory_gb (float): Minimum required free memory in GB per GPU.
+
+    Returns:
+        int: Number of GPUs available (world_size).
+    """
+    available_gpus = check_gpu_memory(min_memory_gb)
+    available_gpus = [gpu for gpu in available_gpus if gpu in use_gpus]
+
+    world_size = len(available_gpus)
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, available_gpus))
+    if not available_gpus:
+        print(f"No GPUs with at least {min_memory_gb} GB of memory available.")
+    else:
+        gpustring = ', '.join(str(gpu) for gpu in available_gpus)
+        print(f'Using {world_size} GPUs: {gpustring}')
+
+    return world_size
+
+
+def build_model(image_size: int, in_channels: int, rank: int) -> torch.nn.Module:
+    """
+    Build the VQ-VAE model.
+
+    Args:
+        image_size (int): Size of the input images.
+        in_channels (int): Number of input channels.
+        rank (int): Rank of the current process.
+
+    Returns:
+        torch.nn.Module: The VQ-VAE model.
+    """
+    model = create_vqvae2_large(image_size=image_size, in_channels=in_channels)
+    model = model.to(rank)
+    return model
+
+
+def load_dataset(data_dir: str) -> (TensorDataset, TensorDataset):
+    """
+    Load the dataset from the specified directory.
+    Args:
+        data_dir (str): Directory to load the dataset from.
+
+    Returns:
+        TensorDataset: Training and testing datasets.
+    """
+    dataset = load_data(data_dir, num_samples=2000)
     train_size = int(0.99 * len(dataset))
     test_size = len(dataset) - train_size
     train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
-    
-    # Use DistributedSampler for training data
-    train_sampler = DistributedSampler(train_dataset)
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=args.batch_size, 
-        sampler=train_sampler, 
-        num_workers=2, 
-        pin_memory=True
-    )
-    test_loader = DataLoader(
-        test_dataset, 
-        batch_size=args.batch_size, 
-        shuffle=False, 
-        num_workers=2, 
-        pin_memory=True
-    )
 
-    # Print dataset sizes on rank 0
+    train_images, train_labels = zip(*[(torch.tensor(item['image']), torch.tensor(item['voltages'])) for item in train_dataset])
+    test_images, test_labels = zip(*[(torch.tensor(item['image']), torch.tensor(item['voltages'])) for item in test_dataset])
+    train_images = torch.stack(train_images)
+    train_labels = torch.stack(train_labels)
+    test_images = torch.stack(test_images)
+    test_labels = torch.stack(test_labels)
+
+    train_dataset = TensorDataset(train_images, train_labels)
+    test_dataset = TensorDataset(test_images, test_labels)
+    return train_dataset, test_dataset
+
+
+def save_test_images(model: torch.nn.Module, test_loader: DataLoader, save_dir: str) -> None:
+    """
+    Save reconstructed images from the test set.
+
+    Args:
+        model (torch.nn.Module): The trained VQ-VAE model.
+        test_loader (DataLoader): DataLoader for the test set.
+        save_dir (str): Directory to save the images.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    print(f"Saving test images to {save_dir}")
+
+    model.eval()
+    with torch.no_grad():
+        for batch_idx, (images, _) in enumerate(test_loader):
+            images = images.to(rank).float()
+            outputs = model(images)
+
+        for i in range(len(images)):
+            img = outputs[i].cpu().numpy().transpose(1, 2, 0)  # Convert to HWC format
+            img_path = os.path.join(save_dir, f"test_image_{batch_idx * len(images) + i}.png")
+            torchvision.utils.save_image(img, img_path)
+
+
+def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset, config: Dict) -> None:
+    """
+    Main training function to be executed by each process.
+    """
+    setup(rank, world_size)
+    print(f"Rank {rank} of {world_size} is starting training...")
+
+    batch_size = config['batch_size']
+    epochs = config['epochs']
+    save_dir = config['save_dir']
+    use_wandb = config['use_wandb']
+
+    train_sampler = DistributedSampler(train, num_replicas=world_size, rank=rank)
+    test_sampler = DistributedSampler(test, num_replicas=world_size, rank=rank)
+    train_loader = DataLoader(train, batch_size=batch_size, sampler=train_sampler)
+    test_loader = DataLoader(test, batch_size=batch_size, sampler=test_sampler)
+
+    model = build_model(**config['model_params'], rank=rank)
+    ddp_model = DDP(model, device_ids=[rank])#, find_unused_parameters=True)
+    ddp_model.train()
+
+    optimizer = torch.optim.Adam(ddp_model.parameters(), lr=config['lr'])
+    criterion = VQVAELoss().to(rank)
+
     if rank == 0:
-        print(f"Number of training samples: {len(train_loader.dataset)}")
-        print(f"Number of test samples: {len(test_loader.dataset)}")
-        print(f"Using {world_size} GPUs")
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        print(f"Saving models to {save_dir}")
 
-    # Initialize model and wrap with DDP
-    VQVAE = create_vqvae2_large(image_size=128, in_channels=1).to(device)
-    VQVAE = DDP(VQVAE, device_ids=[rank])
-    optimizer = torch.optim.Adam(VQVAE.parameters(), lr=1e-3)
-    criterion = VQVAELoss()
+    if rank == 0 and use_wandb:
+        import wandb
+        wandb.init(project="vqvae-qarray", config=config)
 
-    # Training loop
-    for epoch in range(args.epochs):
-        train_sampler.set_epoch(epoch)  # Ensure consistent shuffling across GPUs
-        if rank == 0:
-            print(f"Epoch {epoch + 1}/{args.epochs}")
+    for epoch in range(epochs):
         epoch_loss = 0.0
 
-        progress_bar = tqdm(train_loader, desc="Training", leave=False, disable=rank != 0)
-        for batch_idx, data in enumerate(progress_bar):
-            images = data['image'].to(device).float()
-            outputs = VQVAE(images)
+        if rank == 0:
+            progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", leave=False)
+        else:
+            progress_bar = train_loader
+
+        for batch_idx, (images, _) in enumerate(progress_bar):
+            images = images.to(rank).float()
+            outputs = ddp_model(images)
             loss_dict = criterion(outputs, images)
             loss = loss_dict['total_loss']
+
+            reconstruction_loss = loss_dict['reconstruction_loss']
+            vq_loss = loss_dict['vq_loss']
+            vq_loss_top = loss_dict['vq_loss_top']
+            vq_loss_bottom = loss_dict['vq_loss_bottom']
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
+            dist.all_reduce(loss)
+            dist.all_reduce(reconstruction_loss)
+            dist.all_reduce(vq_loss)
+            dist.all_reduce(vq_loss_top)
+            dist.all_reduce(vq_loss_bottom)
+
+            loss /= world_size
+
             epoch_loss += loss.item()
+
             if rank == 0:
                 progress_bar.set_postfix({
                     "Batch Loss": f"{loss.item():.4f}",
                     "Avg Loss": f"{epoch_loss / (batch_idx + 1):.4f}"
                 })
 
+                if use_wandb:
+                    wandb.log({
+                        "epoch": epoch + 1,
+                        "total_loss": loss.item(),
+                        "reconstruction_loss": reconstruction_loss.item(),
+                        "vq_loss": vq_loss.item(),
+                    })
+
         if rank == 0:
-            print(f"Epoch {epoch + 1} Loss: {epoch_loss / len(train_loader):.4f}")
-
-    # Save model on rank 0
-    if rank == 0:
-        torch.save(VQVAE.module.state_dict(), "vqvae_qarray.pth")
-
+            print(f"Epoch {epoch + 1}/{epochs}, Loss: {epoch_loss / len(train_loader):.4f}")
+            save_dict = {
+                'model': ddp_model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+            }
+            torch.save(save_dict, f"{save_dir}/vqvae_epoch_{epoch + 1}.pth")
+    
+    print(f"Rank {rank} finished training.")
     cleanup()
 
-def main():
+
+def train2(rank: int, world_size: int, config: Dict) -> None:
+    setup(rank, world_size)
+    print(f"Rank {rank} of {world_size} is starting training...")
+
+    # Your training code here
+    # ...
+    model = build_model(**config['model_params'], rank=rank)
+    print("Wrapping model with DDP...")
+    ddp_model = DDP(model, device_ids=[rank])
+    print("DDP wrapped.")
+    # ddp_model = model
+    # ddp_model = DDP(model, device_ids=[rank], find_unused_parameters=True)
+    ddp_model.train()
+
+    print(f"Rank {rank} finished training.")
+    cleanup()
+
+
+def main() -> None:
     from argparse import ArgumentParser
     parser = ArgumentParser(description="Train VQ-VAE on qarray data")
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
-    parser.add_argument("--epochs", type=int, default=4, help="Number of epochs for training")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training")
+    parser.add_argument("--num_epochs", type=int, default=5, help="Number of epochs for training")
+    parser.add_argument("--gpu_index", type=int, default=7, help="GPU index to use")
+    parser.add_argument("--use_gpus", type=int, nargs='+', default=[0,1,2,3,4,5,6,7], help="List of GPU indices to use")
+    parser.add_argument("--min_memory_gb", type=float, default=10.0, help="Minimum required free memory in GB per GPU")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--use_wandb", action='store_true', help="Use wandb for logging")
+    parser.add_argument("--data_dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data'), help="Directory to load data from")
+    parser.add_argument("--save_dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'qarray_checkpoints'), help="Directory to save models")
     args = parser.parse_args()
 
-    world_size = torch.cuda.device_count()
-    mp.spawn(train, args=(world_size, args), nprocs=world_size, join=True)
+    train_dataset, test_dataset = load_dataset(args.data_dir)
+
+    use_gpus = args.use_gpus
+    min_memory_gb = args.min_memory_gb
+    world_size = GPU_setup(min_memory_gb, use_gpus)
+
+    config = {
+        'batch_size': args.batch_size,
+        'epochs': args.num_epochs,
+        'lr': args.lr,
+        'save_dir': args.save_dir,
+        'use_wandb': args.use_wandb,
+        'model_params': {
+            'image_size': 128,
+            'in_channels': 1,
+        }
+    }
+
+    if world_size < 1:
+        print("No suitable GPUs found. Exiting.")
+        sys.exit(1)
+
+    print("Training ...")
+    torch.multiprocessing.spawn(train, args=(world_size, train_dataset, test_dataset, config), nprocs=world_size, join=True)
+    # torch.multiprocessing.spawn(train2, args=(world_size, config), nprocs=world_size, join=True)
+
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     main()

@@ -191,15 +191,27 @@ class Encoder(nn.Module):
     Hierarchical encoder for VQ-VAE 2.
     """
     def __init__(self, in_channels: int = 3, base_channels: int = 128, 
-                 channel_multipliers: List[int] = [1, 1, 2, 2, 4, 4], 
-                 num_res_blocks: int = 2, attention_resolutions: List[int] = [16, 8]):
+                 channel_multipliers: List[int] = [1, 2, 4], 
+                 num_res_blocks: int = 2, attention_resolutions: List[int] = [],
+                 num_classes: int = 10, input_resolution: int = 28):
         super().__init__()
         
         self.num_resolutions = len(channel_multipliers)
         self.attention_resolutions = attention_resolutions
+        self.input_resolution = input_resolution
         
-        # Initial convolution
-        self.conv_in = nn.Conv2d(in_channels, base_channels, 3, padding=1)
+        # Initial convolution - slightly reduce channels to make room for label
+        self.conv_in = nn.Conv2d(in_channels, base_channels - 16, 3, padding=1)
+        
+        # Label processing for one-hot vectors
+        self.label_proj = nn.Sequential(
+            nn.Linear(num_classes, base_channels // 4),  # Changed from embedding to linear
+            nn.ReLU(),
+            nn.Linear(base_channels // 4, 16)
+        )
+        
+        # Combine features
+        self.combine_conv = nn.Conv2d(base_channels, base_channels, 3, padding=1)
         
         # Downsampling blocks
         self.down_blocks = nn.ModuleList()
@@ -209,8 +221,8 @@ class Encoder(nn.Module):
             out_ch = base_channels * mult
             downsample = i < self.num_resolutions - 1
             
-            # Calculate current resolution (assuming input is 256x256)
-            current_res = 256 // (2 ** i)
+            # Calculate current resolution based on actual input size
+            current_res = self.input_resolution // (2 ** i)
             use_attention = current_res in attention_resolutions
             
             self.down_blocks.append(
@@ -223,37 +235,49 @@ class Encoder(nn.Module):
         self.mid_attn = AttentionBlock(in_ch)
         self.mid_block2 = ResidualBlock(in_ch, in_ch)
         
-        # Output layers for different levels
+        # Output layers
         self.norm_out_top = nn.GroupNorm(32, in_ch)
-        self.conv_out_top = nn.Conv2d(in_ch, 512, 3, padding=1)  # Top level codebook
-        
-        # For bottom level, we need to upsample once
+        self.conv_out_top = nn.Conv2d(in_ch, 512, 3, padding=1)
         self.upsample_bottom = nn.ConvTranspose2d(in_ch, in_ch, 4, stride=2, padding=1)
         self.norm_out_bottom = nn.GroupNorm(32, in_ch)
-        self.conv_out_bottom = nn.Conv2d(in_ch, 256, 3, padding=1)  # Bottom level codebook
+        self.conv_out_bottom = nn.Conv2d(in_ch, 256, 3, padding=1)
         
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, label: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass returning encodings for both levels.
+        
+        Args:
+            x: Input images [B, C, H, W]
+            label: One-hot label vectors [B, num_classes]
         
         Returns:
             top_encoding: Encoding for top level (lower resolution)
             bottom_encoding: Encoding for bottom level (higher resolution)
         """
-        x = self.conv_in(x)
+        # Process image
+        img_features = self.conv_in(x)  # [B, base_channels-16, H, W]
         
-        # Store intermediate features
-        features = []
+        # Process one-hot label vector
+        label_emb = self.label_proj(label.float())  # [B, 16]
+        
+        # Expand label to spatial dimensions
+        label_features = label_emb.view(x.size(0), 16, 1, 1).expand(-1, -1, x.size(2), x.size(3))
+        
+        # Concatenate instead of add
+        x = torch.cat([img_features, label_features], dim=1)  # [B, base_channels, H, W]
+        x = self.combine_conv(x)
+        
+        # Downsampling blocks
         for down_block in self.down_blocks:
             x = down_block(x)
-            features.append(x)
+            # features.append(x)
         
         # Middle processing
         x = self.mid_block1(x)
         x = self.mid_attn(x)
         x = self.mid_block2(x)
         
-        # Top level encoding (lowest resolution)
+        # Top level encoding (lower resolution)
         top_encoding = self.norm_out_top(x)
         top_encoding = F.silu(top_encoding)
         top_encoding = self.conv_out_top(top_encoding)
@@ -262,7 +286,7 @@ class Encoder(nn.Module):
         bottom_features = self.upsample_bottom(x)
         bottom_encoding = self.norm_out_bottom(bottom_features)
         bottom_encoding = F.silu(bottom_encoding)
-        bottom_encoding = self.conv_out_bottom(bottom_encoding)
+        bottom_encoding = self.conv_out_bottom(bottom_features)
         
         return top_encoding, bottom_encoding
 
@@ -271,45 +295,47 @@ class Decoder(nn.Module):
     """
     Hierarchical decoder for VQ-VAE 2.
     """
-    def __init__(self, out_channels: int = 3, base_channels: int = 128,
-                 channel_multipliers: List[int] = [4, 4, 2, 2, 1, 1],
-                 num_res_blocks: int = 2, attention_resolutions: List[int] = [16, 8],
-                 input_resolution: int = 64):  # Add input resolution parameter
+    def __init__(self, out_channels: int = 1, base_channels: int = 128,
+                 channel_multipliers: List[int] = [4, 2, 1],
+                 num_res_blocks: int = 2, attention_resolutions: List[int] = [],
+                 input_resolution: int = 28, num_classes: int = 10):
         super().__init__()
         
         self.num_resolutions = len(channel_multipliers)
         self.attention_resolutions = attention_resolutions
         self.input_resolution = input_resolution
         
-        # Calculate the encoded resolution (after all downsampling)
-        # Each downsample block (except the last) reduces resolution by 2x
         num_downsamples = len(channel_multipliers) - 1
         self.encoded_resolution = input_resolution // (2 ** num_downsamples)
         
-        # Input layers for different levels
-        self.conv_in_top = nn.Conv2d(512, base_channels * channel_multipliers[0], 3, padding=1)
-        self.conv_in_bottom = nn.Conv2d(256, base_channels * channel_multipliers[0], 3, padding=1)
+        # Input processing
+        self.conv_in_top = nn.Conv2d(512, base_channels * channel_multipliers[0] // 2, 3, padding=1)
+        self.conv_in_bottom = nn.Conv2d(256, base_channels * channel_multipliers[0] // 2, 3, padding=1)
         
-        # Combine top and bottom features
-        self.combine_conv = nn.Conv2d(base_channels * channel_multipliers[0] * 2, 
-                                     base_channels * channel_multipliers[0], 3, padding=1)
+        # Label processing for one-hot vectors
+        self.label_proj = nn.Sequential(
+            nn.Linear(num_classes, 64),  # Changed from embedding to linear
+            nn.ReLU(),
+            nn.Linear(64, base_channels * channel_multipliers[0] // 2)
+        )
         
-        # Middle blocks
+        # Combine features
+        total_channels = base_channels * channel_multipliers[0] // 2 * 3  # top + bottom + label
+        self.combine_conv = nn.Conv2d(total_channels, base_channels * channel_multipliers[0], 3, padding=1)
+        
+        # Rest of decoder...
         in_ch = base_channels * channel_multipliers[0]
         self.mid_block1 = ResidualBlock(in_ch, in_ch)
         self.mid_attn = AttentionBlock(in_ch)
         self.mid_block2 = ResidualBlock(in_ch, in_ch)
         
-        # Upsampling blocks - only upsample as much as we downsampled
         self.up_blocks = nn.ModuleList()
+        remaining_upsamples = num_downsamples - 1
         
         for i, mult in enumerate(channel_multipliers):
             out_ch = base_channels * mult
-            # Only upsample if we haven't reached the input resolution yet
-            upsample = i < num_downsamples  # Changed this condition
-            
-            # Calculate current resolution during upsampling
-            current_res = self.encoded_resolution * (2 ** i)
+            upsample = i < remaining_upsamples
+            current_res = (self.encoded_resolution * 2) * (2 ** min(i, remaining_upsamples))
             use_attention = current_res in attention_resolutions
             
             self.up_blocks.append(
@@ -317,46 +343,41 @@ class Decoder(nn.Module):
             )
             in_ch = out_ch
         
-        # Output layer
         self.norm_out = nn.GroupNorm(32, in_ch)
         self.conv_out = nn.Conv2d(in_ch, out_channels, 3, padding=1)
         
-    def forward(self, top_quantized: torch.Tensor, bottom_quantized: torch.Tensor) -> torch.Tensor:
+    def forward(self, top_quantized: torch.Tensor, bottom_quantized: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass combining both quantized levels.
-        
         Args:
-            top_quantized: Quantized features from top level
-            bottom_quantized: Quantized features from bottom level
-            
-        Returns:
-            Reconstructed image
+            top_quantized: [B, 512, H_top, W_top]
+            bottom_quantized: [B, 256, H_bottom, W_bottom]  
+            label: One-hot label vectors [B, num_classes]
         """
-        # Process top level
+        # Process quantized features
         top_features = self.conv_in_top(top_quantized)
-        
-        # Upsample top features to match bottom resolution
-        top_features = F.interpolate(top_features, size=bottom_quantized.shape[-2:], mode='nearest')
-        
-        # Process bottom level
         bottom_features = self.conv_in_bottom(bottom_quantized)
         
-        # Combine features
-        combined = torch.cat([top_features, bottom_features], dim=1)
+        # Upsample top to match bottom resolution
+        top_features = F.interpolate(top_features, size=bottom_features.shape[-2:], mode='nearest')
+        
+        # Process one-hot label vector
+        label_features = self.label_proj(label.float())  # [B, channels]
+        label_features = label_features.view(label.size(0), -1, 1, 1)
+        label_features = label_features.expand(-1, -1, bottom_features.size(2), bottom_features.size(3))
+        
+        # Combine all features via concatenation
+        combined = torch.cat([top_features, bottom_features, label_features], dim=1)
         x = self.combine_conv(combined)
         
-        # Middle processing
+        # Rest of decoding
         x = self.mid_block1(x)
         x = self.mid_attn(x)
         x = self.mid_block2(x)
         
-        # Upsampling
         for up_block in self.up_blocks:
             x = up_block(x)
         
-        # Output
-        x = self.norm_out(x)
-        x = F.silu(x)
+        x = F.silu(self.norm_out(x))
         x = self.conv_out(x)
         
         return x
@@ -378,7 +399,7 @@ class VQVAE2(nn.Module):
                  channel_multipliers: List[int] = [1, 1, 2, 2, 4, 4],
                  num_res_blocks: int = 2,
                  attention_resolutions: List[int] = [16, 8],
-                 input_resolution: int = 64):  # Add input resolution parameter
+                 input_resolution: int = 64):
         super().__init__()
         
         self.input_resolution = input_resolution
@@ -388,16 +409,20 @@ class VQVAE2(nn.Module):
             base_channels=base_channels,
             channel_multipliers=channel_multipliers,
             num_res_blocks=num_res_blocks,
-            attention_resolutions=attention_resolutions
+            attention_resolutions=attention_resolutions,
+            input_resolution=input_resolution  # Pass input resolution to encoder
         )
+        
+        # Reverse the multipliers for decoder and pass same input resolution
+        decoder_multipliers = list(reversed(channel_multipliers))
         
         self.decoder = Decoder(
             out_channels=out_channels,
             base_channels=base_channels,
-            channel_multipliers=list(reversed(channel_multipliers)),
+            channel_multipliers=decoder_multipliers,
             num_res_blocks=num_res_blocks,
             attention_resolutions=attention_resolutions,
-            input_resolution=input_resolution  # Pass input resolution to decoder
+            input_resolution=input_resolution
         )
         
         self.vq_top = VectorQuantizer(
@@ -412,7 +437,7 @@ class VQVAE2(nn.Module):
             commitment_cost=commitment_cost
         )
         
-    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor, label: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Forward pass of VQ-VAE 2.
         
@@ -428,14 +453,14 @@ class VQVAE2(nn.Module):
                 - perplexity_bottom: Perplexity for bottom level
         """
         # Encode
-        top_encoding, bottom_encoding = self.encoder(x)
+        top_encoding, bottom_encoding = self.encoder(x, label)
 
         # Quantize
         top_quantized, vq_loss_top, perplexity_top, top_indices = self.vq_top(top_encoding)
         bottom_quantized, vq_loss_bottom, perplexity_bottom, bottom_indices = self.vq_bottom(bottom_encoding)
 
         # Decode
-        reconstructed = self.decoder(top_quantized, bottom_quantized)
+        reconstructed = self.decoder(top_quantized, bottom_quantized, label)
 
         return {
             'reconstructed': reconstructed,
@@ -460,7 +485,7 @@ class VQVAE2(nn.Module):
         """Decode quantized representations to images."""
         return self.decoder(top_quantized, bottom_quantized)
 
-    def decode_from_indices(self, top_indices: torch.Tensor, bottom_indices: torch.Tensor) -> torch.Tensor:
+    def decode_from_indices(self, top_indices: torch.Tensor, bottom_indices: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
         """
         Reconstruct the image from quantization indices.
 
@@ -471,6 +496,7 @@ class VQVAE2(nn.Module):
         Returns:
             Reconstructed image as a tensor of shape (batch_size, channels, height, width).
         """
+
         # Retrieve embeddings from the codebook using the indices
         top_quantized = self.vq_top.embeddings(top_indices.view(-1)).view(
             top_indices.shape[0], top_indices.shape[1], top_indices.shape[2], -1
@@ -481,7 +507,7 @@ class VQVAE2(nn.Module):
         ).permute(0, 3, 1, 2)  # Reshape to (batch_size, embedding_dim, height, width)
 
         # Decode the quantized embeddings
-        reconstructed = self.decoder(top_quantized, bottom_quantized)
+        reconstructed = self.decoder(top_quantized, bottom_quantized, label)
         return reconstructed
 
 
@@ -499,19 +525,19 @@ def create_vqvae2_large(image_size: int = 256, in_channels: int = 3) -> VQVAE2:
     # Scale model based on image size
     if image_size <= 64:
         base_channels = 64
-        channel_multipliers = [1, 2, 4]  # Fewer layers for smaller images
+        encoder_multipliers = [1, 2, 4]  # Fewer layers for smaller images
         attention_resolutions = []
     elif image_size <= 128:
         base_channels = 64
-        channel_multipliers = [1, 2, 2, 4]
+        encoder_multipliers = [1, 2, 2, 4]
         attention_resolutions = [16, 8]
     elif image_size <= 256:
         base_channels = 128
-        channel_multipliers = [1, 1, 2, 2, 4, 4]
+        encoder_multipliers = [1, 1, 2, 2, 4, 4]
         attention_resolutions = [32, 16, 8]
     else:  # 512 or larger
         base_channels = 128
-        channel_multipliers = [1, 1, 2, 2, 4, 4, 8]
+        encoder_multipliers = [1, 1, 2, 2, 4, 4, 8]
         attention_resolutions = [64, 32, 16, 8]
     
     return VQVAE2(
@@ -523,10 +549,10 @@ def create_vqvae2_large(image_size: int = 256, in_channels: int = 3) -> VQVAE2:
         embedding_dim_top=512,
         embedding_dim_bottom=256,
         commitment_cost=0.25,
-        channel_multipliers=channel_multipliers,
+        channel_multipliers=encoder_multipliers,  # Use for encoder
         num_res_blocks=2,
         attention_resolutions=attention_resolutions,
-        input_resolution=image_size  # Pass the input resolution
+        input_resolution=image_size
     )
 
 
@@ -570,34 +596,48 @@ class VQVAELoss(nn.Module):
         }
 
 
-# Example usage and testing
-if __name__ == "__main__":
-    # Create model
-    model = create_vqvae2_large(image_size=256, in_channels=3)
-    
-    # Test forward pass
-    batch_size = 4
-    x = torch.randn(batch_size, 3, 256, 256)
-    
-    print(f"Input shape: {x.shape}")
-    
-    # Forward pass
-    outputs = model(x)
-    
-    print(f"Reconstructed shape: {outputs['reconstructed'].shape}")
-    print(f"VQ loss top: {outputs['vq_loss_top'].item():.4f}")
-    print(f"VQ loss bottom: {outputs['vq_loss_bottom'].item():.4f}")
-    print(f"Perplexity top: {outputs['perplexity_top'].item():.2f}")
-    print(f"Perplexity bottom: {outputs['perplexity_bottom'].item():.2f}")
-    
-    # Test loss computation
-    loss_fn = VQVAELoss()
-    losses = loss_fn(outputs, x)
-    
-    print(f"Total loss: {losses['total_loss'].item():.4f}")
-    print(f"Reconstruction loss: {losses['reconstruction_loss'].item():.4f}")
-    
-    # Count parameters
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"Total parameters: {total_params:,}")
-    print(f"Model size: {total_params * 4 / 1024 / 1024:.2f} MB")
+class ConditionalVQVAELoss(nn.Module):
+    def __init__(self, reconstruction_weight: float = 1.0, vq_weight: float = 1.0, 
+                 classification_weight: float = 0.1):
+        super().__init__()
+        self.reconstruction_weight = reconstruction_weight
+        self.vq_weight = vq_weight
+        self.classification_weight = classification_weight
+        
+        # Add a classifier head to ensure label information is preserved
+        self.classifier = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(512, 128),  # Assuming top quantized has 512 channels
+            nn.ReLU(),
+            nn.Linear(128, 10)
+        )
+        
+    def forward(self, outputs: Dict[str, torch.Tensor], targets: torch.Tensor, labels: torch.Tensor) -> Dict[str, torch.Tensor]:
+        # Reconstruction loss
+        recon_loss = F.mse_loss(outputs['reconstructed'], targets)
+        
+        # VQ losses
+        vq_loss = outputs['vq_loss_top'] + outputs['vq_loss_bottom']
+        
+        # Classification loss to ensure label information is preserved
+        device = outputs['reconstructed'].device
+        pred_labels = self.classifier(outputs['top_quantized'])
+        classification_loss = F.cross_entropy(pred_labels, labels.argmax(dim=1))
+        
+        # Total loss
+        total_loss = (self.reconstruction_weight * recon_loss + 
+                     self.vq_weight * vq_loss + 
+                     self.classification_weight * classification_loss)
+        
+        return {
+            'total_loss': total_loss,
+            'reconstruction_loss': recon_loss,
+            'vq_loss': vq_loss,
+            'classification_loss': classification_loss,
+            'vq_loss_top': outputs['vq_loss_top'],
+            'vq_loss_bottom': outputs['vq_loss_bottom'],
+            'perplexity_top': outputs['perplexity_top'],
+            'perplexity_bottom': outputs['perplexity_bottom']
+        }
+

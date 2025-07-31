@@ -12,7 +12,7 @@ def main():
     parser = ArgumentParser(description="Train VQ-VAE on qarray data")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=5, help="Number of epochs for training")
-    parser.add_argument("--gpu_index", type=int, default=0, help="GPU index to use")
+    parser.add_argument("--gpu_index", type=int, default=7, help="GPU index to use")
     args = parser.parse_args()
     batch_size = args.batch_size
     num_epochs = args.epochs
