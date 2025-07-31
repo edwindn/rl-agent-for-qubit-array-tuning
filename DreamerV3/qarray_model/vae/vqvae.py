@@ -537,20 +537,72 @@ def create_vqvae2_large(image_size: int = 256, in_channels: int = 3) -> VQVAE2:
 
 # Training utilities
 class VQVAELoss(nn.Module):
-    """Combined loss for VQ-VAE 2 training."""
+    """Combined loss for VQ-VAE 2 training with latent consistency."""
     
-    def __init__(self, reconstruction_weight: float = 1.0, vq_weight: float = 1.0):
+    def __init__(self, reconstruction_weight: float = 1.0, vq_weight: float = 1.0, 
+                 consistency_weight: float = 0.1):
         super().__init__()
         self.reconstruction_weight = reconstruction_weight
         self.vq_weight = vq_weight
+        self.consistency_weight = consistency_weight
         
-    def forward(self, outputs: Dict[str, torch.Tensor], targets: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def compute_consistency_loss(self, latents: torch.Tensor, voltages: torch.Tensor) -> torch.Tensor:
         """
-        Compute VQ-VAE 2 loss.
+        Compute consistency loss between voltage distances and latent distances.
+        
+        Args:
+            latents: Latent representations [batch_size, embedding_dim, h, w]
+            voltages: Voltage parameters [batch_size, num_voltages]
+            
+        Returns:
+            Consistency loss scalar
+        """
+        batch_size = latents.shape[0]
+        if batch_size < 2:
+            return torch.tensor(0.0, device=latents.device)
+        
+        # Flatten latents to [batch_size, -1]
+        latents_flat = latents.view(batch_size, -1)
+        
+        # Compute pairwise distances in voltage space
+        voltage_diffs = voltages.unsqueeze(1) - voltages.unsqueeze(0)  # [B, B, num_voltages]
+        voltage_distances = torch.norm(voltage_diffs, dim=2)  # [B, B]
+        
+        # Compute pairwise distances in latent space
+        latent_diffs = latents_flat.unsqueeze(1) - latents_flat.unsqueeze(0)  # [B, B, latent_dim]
+        latent_distances = torch.norm(latent_diffs, dim=2)  # [B, B]
+        
+        # Create masks to exclude diagonal (same sample comparisons)
+        mask = ~torch.eye(batch_size, dtype=torch.bool, device=latents.device)
+        
+        # Extract upper triangular part to avoid double counting
+        triu_mask = torch.triu(torch.ones_like(mask), diagonal=1)
+        final_mask = mask & triu_mask
+        
+        voltage_dist_pairs = voltage_distances[final_mask]
+        latent_dist_pairs = latent_distances[final_mask]
+        
+        if len(voltage_dist_pairs) == 0:
+            return torch.tensor(0.0, device=latents.device)
+        
+        # Normalize distances to [0, 1] range for stability
+        voltage_dist_norm = voltage_dist_pairs / (voltage_dist_pairs.max() + 1e-8)
+        latent_dist_norm = latent_dist_pairs / (latent_dist_pairs.max() + 1e-8)
+        
+        # Compute consistency loss using MSE between normalized distances
+        consistency_loss = F.mse_loss(latent_dist_norm, voltage_dist_norm)
+        
+        return consistency_loss
+    
+    def forward(self, outputs: Dict[str, torch.Tensor], targets: torch.Tensor, 
+                voltages: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Compute VQ-VAE 2 loss with consistency term.
         
         Args:
             outputs: Model outputs dictionary
             targets: Target images
+            voltages: Voltage parameters [batch_size, num_voltages]
             
         Returns:
             Dictionary with loss components
@@ -561,13 +613,21 @@ class VQVAELoss(nn.Module):
         # VQ losses
         vq_loss = outputs['vq_loss_top'] + outputs['vq_loss_bottom']
         
+        # Consistency loss using top-level quantized features
+        consistency_loss = self.compute_consistency_loss(
+            outputs['top_quantized'], voltages
+        )
+        
         # Total loss
-        total_loss = self.reconstruction_weight * recon_loss + self.vq_weight * vq_loss
+        total_loss = (self.reconstruction_weight * recon_loss + 
+                     self.vq_weight * vq_loss + 
+                     self.consistency_weight * consistency_loss)
         
         return {
             'total_loss': total_loss,
             'reconstruction_loss': recon_loss,
             'vq_loss': vq_loss,
+            'consistency_loss': consistency_loss,
             'vq_loss_top': outputs['vq_loss_top'],
             'vq_loss_bottom': outputs['vq_loss_bottom'],
             'perplexity_top': outputs['perplexity_top'],

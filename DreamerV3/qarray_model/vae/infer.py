@@ -11,14 +11,16 @@ from qarray_env import QuantumDeviceEnv
 def main():
     from argparse import ArgumentParser
     parser = ArgumentParser()
-    parser.add_argument("--device", type=str, default="cpu", help="Device to use for inference")
-    parser.add_argument("--checkpoint", type=str, default="./qarray_checkpoints/vqvae_epoch_2.pth", help="Path to the model checkpoint")
+    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"], help="Device to use for inference")
+    parser.add_argument("--checkpoint", type=str, default="./qarray_checkpoints/vqvae_epoch_5.pth", help="Path to the model checkpoint")
     parser.add_argument("--num_samples", type=int, default=12, help="Number of samples to generate")
     parser.add_argument("--data_type", type=str, default="unseen", choices=["unseen", "train"], help="Whether to infer on train or unseen data")
     args = parser.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+
+    print(f"Inferring on {args.data_type} samples")
 
     model = create_vqvae2_large(image_size=128, in_channels=1).to(device)
 
@@ -61,6 +63,8 @@ def main():
         images = [d['image'] for d in dataset[:num_images]]
         images = np.array(images)
         images = torch.tensor(images).to(device)
+
+    images = images + torch.randn_like(images) * 0.025  # Adding white noise
 
     if num_images > max_cuda_batch_size:
         recons = []

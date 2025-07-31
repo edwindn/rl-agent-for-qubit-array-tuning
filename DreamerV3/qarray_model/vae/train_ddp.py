@@ -118,7 +118,7 @@ def build_model(image_size: int, in_channels: int, rank: int) -> torch.nn.Module
     return model
 
 
-def load_dataset(data_dir: str) -> (TensorDataset, TensorDataset):
+def load_dataset(data_dir: str, num_samples: int) -> (TensorDataset, TensorDataset):
     """
     Load the dataset from the specified directory.
     Args:
@@ -127,7 +127,7 @@ def load_dataset(data_dir: str) -> (TensorDataset, TensorDataset):
     Returns:
         TensorDataset: Training and testing datasets.
     """
-    dataset = load_data(data_dir, num_samples=2000)
+    dataset = load_data(data_dir, num_samples=num_samples)
     train_size = int(0.99 * len(dataset))
     test_size = len(dataset) - train_size
     train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
@@ -179,6 +179,8 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
     epochs = config['epochs']
     save_dir = config['save_dir']
     use_wandb = config['use_wandb']
+    noise_weight = config['noise_weight']
+    consistency_weight = config['consistency_weight']
 
     train_sampler = DistributedSampler(train, num_replicas=world_size, rank=rank)
     test_sampler = DistributedSampler(test, num_replicas=world_size, rank=rank)
@@ -190,7 +192,7 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
     ddp_model.train()
 
     optimizer = torch.optim.Adam(ddp_model.parameters(), lr=config['lr'])
-    criterion = VQVAELoss().to(rank)
+    criterion = VQVAELoss(consistency_weight=consistency_weight).to(rank)
 
     if rank == 0:
         if not os.path.exists(save_dir):
@@ -209,14 +211,18 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
         else:
             progress_bar = train_loader
 
-        for batch_idx, (images, _) in enumerate(progress_bar):
+        for batch_idx, (images, voltages) in enumerate(progress_bar):
             images = images.to(rank).float()
-            outputs = ddp_model(images)
-            loss_dict = criterion(outputs, images)
+            voltages = voltages.to(rank).float()
+
+            noise = torch.randn_like(images) * noise_weight
+            outputs = ddp_model(images + noise)
+            loss_dict = criterion(outputs, images, voltages)
             loss = loss_dict['total_loss']
 
             reconstruction_loss = loss_dict['reconstruction_loss']
             vq_loss = loss_dict['vq_loss']
+            consistency_loss = loss_dict['consistency_loss']
             vq_loss_top = loss_dict['vq_loss_top']
             vq_loss_bottom = loss_dict['vq_loss_bottom']
 
@@ -227,10 +233,14 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
             dist.all_reduce(loss)
             dist.all_reduce(reconstruction_loss)
             dist.all_reduce(vq_loss)
+            dist.all_reduce(consistency_loss)
             dist.all_reduce(vq_loss_top)
             dist.all_reduce(vq_loss_bottom)
 
             loss /= world_size
+            consistency_loss /= world_size
+            reconstruction_loss /= world_size
+            vq_loss /= world_size
 
             epoch_loss += loss.item()
 
@@ -246,6 +256,7 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
                         "total_loss": loss.item(),
                         "reconstruction_loss": reconstruction_loss.item(),
                         "vq_loss": vq_loss.item(),
+                        "consistency_loss": consistency_loss.item(),
                     })
 
         if rank == 0:
@@ -282,28 +293,32 @@ def main() -> None:
     from argparse import ArgumentParser
     parser = ArgumentParser(description="Train VQ-VAE on qarray data")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training")
-    parser.add_argument("--num_epochs", type=int, default=5, help="Number of epochs for training")
-    parser.add_argument("--gpu_index", type=int, default=7, help="GPU index to use")
-    parser.add_argument("--use_gpus", type=int, nargs='+', default=[0,1,2,3,4,5,6,7], help="List of GPU indices to use")
-    parser.add_argument("--min_memory_gb", type=float, default=10.0, help="Minimum required free memory in GB per GPU")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--use_wandb", action='store_true', help="Use wandb for logging")
+    parser.add_argument("--epochs", type=int, default=5, help="Number of epochs for training")
+    parser.add_argument("--gpus", type=int, nargs='+', default=[0,1,2,3,4,5,6,7], help="List of GPU indices to use")
+    parser.add_argument("--min_memory_gb", type=float, default=14.0, help="Minimum required free memory in GB per GPU")
+    parser.add_argument("--datasize", type=int, default=2000, help="Size of the dataset")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for the optimizer")
+    parser.add_argument("--white_noise", type=float, default=0.1, help="Weight of white noise added to images")
+    parser.add_argument("--consistency_weight", type=float, default=0.1, help="Weight of consistency loss")
+    parser.add_argument("--wandb", action='store_true', help="Use wandb for logging")
     parser.add_argument("--data_dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data'), help="Directory to load data from")
     parser.add_argument("--save_dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'qarray_checkpoints'), help="Directory to save models")
     args = parser.parse_args()
 
-    train_dataset, test_dataset = load_dataset(args.data_dir)
+    train_dataset, test_dataset = load_dataset(args.data_dir, args.datasize)
 
-    use_gpus = args.use_gpus
+    use_gpus = args.gpus
     min_memory_gb = args.min_memory_gb
     world_size = GPU_setup(min_memory_gb, use_gpus)
 
     config = {
         'batch_size': args.batch_size,
-        'epochs': args.num_epochs,
+        'epochs': args.epochs,
         'lr': args.lr,
         'save_dir': args.save_dir,
-        'use_wandb': args.use_wandb,
+        'use_wandb': args.wandb,
+        'noise_weight': args.white_noise,
+        'consistency_weight': args.consistency_weight,
         'model_params': {
             'image_size': 128,
             'in_channels': 1,
