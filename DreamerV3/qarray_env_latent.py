@@ -10,6 +10,10 @@ matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 import io
+import torch
+
+from qarray_model.vae.vqvae import create_vqvae2_large
+
 
 class QuantumDeviceEnv(gym.Env):
     """
@@ -18,7 +22,7 @@ class QuantumDeviceEnv(gym.Env):
     #rendering info
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    def __init__(self, config_path='qarray_config.yaml', render_mode=None, **kwargs):
+    def __init__(self, config_path='qarray_config.yaml', render_mode=None, vqvae_checkpoint=None, **kwargs):
         """
         constructor for the environment
 
@@ -27,6 +31,9 @@ class QuantumDeviceEnv(gym.Env):
         init state and variables
         """
         super().__init__()
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Initialising env on device: {self.device}")
 
         # --- Load Configuration ---
         config_path = os.path.join(os.path.dirname(__file__), config_path)
@@ -57,14 +64,24 @@ class QuantumDeviceEnv(gym.Env):
         self.obs_channels = obs_config['channels']
         self.obs_normalization_range = obs_config['normalization_range']
         self.obs_dtype = obs_config['dtype']
-        
+
+        self.top_latent_size = self.config['simulator']['vqvae']['top_latent_size']
+        self.bottom_latent_size = self.config['simulator']['vqvae']['bottom_latent_size']
+        self.latent_range = self.config['simulator']['vqvae']['latent_range']
+
         # Define multi-modal observation space using Dict
         self.observation_space = spaces.Dict({
-            'image': spaces.Box(
+            'top_latent': spaces.Box(
                 low=0,
-                high=255,
-                shape=(self.obs_image_size[0], self.obs_image_size[1], self.obs_channels),
-                dtype=np.uint8
+                high=1,
+                shape=self.top_latent_size,
+                dtype=np.float32
+            ),
+            'bottom_latent': spaces.Box(
+                low=0,
+                high=1,
+                shape=self.bottom_latent_size,
+                dtype=np.float32
             ),
             'voltages': spaces.Box(
                 low=self.action_voltage_min,
@@ -79,13 +96,32 @@ class QuantumDeviceEnv(gym.Env):
 
         # --- Initialize Model (one-time setup) ---
         self.model = self._load_model()
-        
+
+        # --- Load in VQVAE model ---
+        checkpoint = self.config['simulator']['vqvae']['checkpoint'] if vqvae_checkpoint is None else vqvae_checkpoint
+        self.vqvae = self._load_vqvae(self.obs_image_size[0], self.obs_channels, checkpoint=checkpoint)
+
         # --- Initialize normalization parameters ---
         self._init_normalization_params()
 
         # --- For Rendering --- 
         self.render_fps = self.config['training']['render_fps'] #unused for now
         self.render_mode = render_mode or self.config['training']['render_mode']
+
+
+    def _load_vqvae(self, image_size=128, in_channels=1, checkpoint):
+        model = create_vqvae2_large(image_size=image_size, in_channels=in_channels).to(self.device)
+
+        checkpoint = torch.load(checkpoint, map_location=self.device)
+        state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            new_key = k.replace('module.', '') if k.startswith('module.') else k
+            new_state_dict[new_key] = v
+
+        model.load_state_dict(new_state_dict)
+        model.eval()
+        return model
 
     def _init_normalization_params(self):
         """
@@ -424,21 +460,32 @@ class QuantumDeviceEnv(gym.Env):
         # Extract voltage centers for voltage observation
         voltage_centers = self._extract_voltage_centers(current_voltages)  # Shape: (2,)
         
-        # Create multi-modal observation dictionary with numpy arrays 
+        tq, bq = self.vqvae.encode_to_indices(image_obs) # use custom pass to save time on decoder step
+        tq = tq.cpu().numpy() / self.latent_range  # Normalize to [0, 1]
+        bq = bq.cpu().numpy() / self.latent_range  # Normalize to [0, 1]
+
         observation = {
-            'image': image_obs,  # numpy array
-            'voltages': voltage_centers  # numpy array
+            'top_latent': tq,  # numpy array
+            'bottom_latent': bq,  # numpy array
+            'voltages': voltage_centers,  # numpy array
         }
         
         # Validate observation structure
         expected_image_shape = (self.obs_image_size[0], self.obs_image_size[1], self.obs_channels)
-        expected_voltage_shape = (self.num_voltages,)
-        
-        if observation['image'].shape != expected_image_shape:
-            raise ValueError(f"Image observation shape {observation['image'].shape} does not match expected {expected_image_shape}")
-        
+        expected_top_latent_shape = self.top_latent_size
+        expected_bottom_latent_shape = self.bottom_latent_size
+
+        if observation['top_latent'].shape != expected_top_latent_shape:
+            raise ValueError(f"Top latent shape {observation['top_latent'].shape} does not match expected {expected_top_latent_shape}")
+
+        if observation['bottom_latent'].shape != expected_bottom_latent_shape:
+            raise ValueError(f"Bottom latent shape {observation['bottom_latent'].shape} does not match expected {expected_bottom_latent_shape}")
+
         if observation['voltages'].shape != expected_voltage_shape:
             raise ValueError(f"Voltage observation shape {observation['voltages'].shape} does not match expected {expected_voltage_shape}")
+
+        if observation['top_latent'].max() >= 1.0 or observation['bottom_latent'].max() >= 1.0:
+            raise ValueError("Latent indices should be normalized to [0, 1] range")
         
         return observation
 
@@ -661,15 +708,16 @@ class QuantumDeviceEnv(gym.Env):
 if __name__ == "__main__":
     env = QuantumDeviceEnv()
     env.reset()
+
+    voltages = [-3.0, 1.0]
+    env._apply_voltages(voltages)
+
     frame = env._render_frame(inference_plot=True)
     path = "quantum_dot_plot.png"
     plt.imsave(path, frame, cmap='viridis')
-    sample_action = np.array([-1, -1])
-    env.step(sample_action)
-    frame = env._render_frame(inference_plot=True)
-    path = "quantum_dot_plot_2.png"
-    plt.imsave(path, frame, cmap='viridis')
-    env.close()
-
-
-    #charge sensor voltage, note this is being completely ignored for now,just kept as intialised
+    # sample_action = np.array([-1, -1])
+    # env.step(sample_action)
+    # frame = env._render_frame(inference_plot=True)
+    # path = "quantum_dot_plot_2.png"
+    # plt.imsave(path, frame, cmap='viridis')
+    # env.close()

@@ -1,6 +1,7 @@
 TRAIN:
-python dreamerv3/main.py --task custom_qarray --configs size12m
-python dreamerv3/main.py --task custom_qarray --jax.platform cpu
+python dreamerv3/main.py --task custom_qarray_latent --configs size12m
+python dreamerv3/main.py --task custom_qarray_latent --jax.platform cpu
+(default task is custom_qarray)
 
 INFER: (replace with actual checkpoint)
 python inference.py --checkpoint /Users/e.d.888/logdir/20250721T133104/ckpt/20250721T140232F993755

@@ -63,6 +63,13 @@ simulator:
     - [-0.0, 1, 0]
     - [-0.05, -0.05, 0]
 
+  vqvae:
+   checkpoint: "qarray_model/vae/checkpoints2/vqvae_epoch_5.pth"  # Path to the VQVAE model checkpoint
+
+   top_latent_size: [7, 7]  # Size of the top latent space
+   bottom_latent_size: [14, 14]  # Size of the bottom latent space
+   latent_range: 1024 - 1  # Range for normalizing latent observations (since there are 1024 integer codes, starting from zero)
+
 env:
   # Maximum number of steps per episode
   max_steps: 50

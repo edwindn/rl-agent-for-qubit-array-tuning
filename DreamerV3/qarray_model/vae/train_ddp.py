@@ -9,6 +9,7 @@ import sys
 from typing import List, Dict
 import subprocess
 from tqdm import tqdm
+import json
 
 from vqvae import create_vqvae2_large, VQVAELoss
 from utils import load_data
@@ -194,11 +195,6 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
     optimizer = torch.optim.Adam(ddp_model.parameters(), lr=config['lr'])
     criterion = VQVAELoss(consistency_weight=consistency_weight).to(rank)
 
-    if rank == 0:
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        print(f"Saving models to {save_dir}")
-
     if rank == 0 and use_wandb:
         import wandb
         wandb.init(project="vqvae-qarray", config=config)
@@ -210,6 +206,8 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
             progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", leave=False)
         else:
             progress_bar = train_loader
+
+        ddp_model.train()
 
         for batch_idx, (images, voltages) in enumerate(progress_bar):
             images = images.to(rank).float()
@@ -252,12 +250,50 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
 
                 if use_wandb:
                     wandb.log({
-                        "epoch": epoch + 1,
-                        "total_loss": loss.item(),
-                        "reconstruction_loss": reconstruction_loss.item(),
-                        "vq_loss": vq_loss.item(),
-                        "consistency_loss": consistency_loss.item(),
+                        "train/epoch": epoch + 1,
+                        "train/total_loss": loss.item(),
+                        "train/reconstruction_loss": reconstruction_loss.item(),
+                        "train/vq_loss": vq_loss.item(),
+                        "train/consistency_loss": consistency_loss.item(),
                     })
+
+        ddp_model.eval()
+
+        for images, voltages in test_loader:
+            images = images.to(rank).float()
+            voltages = voltages.to(rank).float()
+
+            noise = torch.randn_like(images) * noise_weight
+            outputs = ddp_model(images + noise)
+            loss_dict = criterion(outputs, images, voltages)
+            loss = loss_dict['total_loss']
+
+            reconstruction_loss = loss_dict['reconstruction_loss']
+            vq_loss = loss_dict['vq_loss']
+            consistency_loss = loss_dict['consistency_loss']
+            vq_loss_top = loss_dict['vq_loss_top']
+            vq_loss_bottom = loss_dict['vq_loss_bottom']
+
+            dist.all_reduce(loss)
+            dist.all_reduce(reconstruction_loss)
+            dist.all_reduce(vq_loss)
+            dist.all_reduce(consistency_loss)
+            dist.all_reduce(vq_loss_top)
+            dist.all_reduce(vq_loss_bottom)
+
+            loss /= world_size
+            consistency_loss /= world_size
+            reconstruction_loss /= world_size
+            vq_loss /= world_size
+
+            if rank == 0 and use_wandb:
+                wandb.log({
+                    "eval/total_loss": loss.item(),
+                    "eval/reconstruction_loss": reconstruction_loss.item(),
+                    "eval/vq_loss": vq_loss.item(),
+                    "eval/consistency_loss": consistency_loss.item(),
+                })
+
 
         if rank == 0:
             print(f"Epoch {epoch + 1}/{epochs}, Loss: {epoch_loss / len(train_loader):.4f}")
@@ -311,6 +347,10 @@ def main() -> None:
     min_memory_gb = args.min_memory_gb
     world_size = GPU_setup(min_memory_gb, use_gpus)
 
+    if world_size < 1:
+        print("No suitable GPUs found. Exiting.")
+        sys.exit(1)
+
     config = {
         'batch_size': args.batch_size,
         'epochs': args.epochs,
@@ -325,14 +365,15 @@ def main() -> None:
         }
     }
 
-    if world_size < 1:
-        print("No suitable GPUs found. Exiting.")
-        sys.exit(1)
+    os.makedirs(config['save_dir'], exist_ok=True)
+
+    # save config to save_dir as a json file
+    with open(os.path.join(os.path.dirname(__file__), config['save_dir'], 'config.json'), 'w') as f:
+        json.dump(vars(args), f, indent=4)
 
     print("Training ...")
     torch.multiprocessing.spawn(train, args=(world_size, train_dataset, test_dataset, config), nprocs=world_size, join=True)
-    # torch.multiprocessing.spawn(train2, args=(world_size, config), nprocs=world_size, join=True)
-
+    
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)

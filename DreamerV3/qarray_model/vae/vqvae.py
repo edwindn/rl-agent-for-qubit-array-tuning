@@ -460,7 +460,22 @@ class VQVAE2(nn.Module):
         top_quantized, _, _ = self.vq_top(top_encoding)
         bottom_quantized, _, _ = self.vq_bottom(bottom_encoding)
         return top_quantized, bottom_quantized
-    
+
+    def encode_to_indices(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Encode images to quantization indices.
+        
+        Args:
+            x: Input images of shape (batch_size, channels, height, width)
+            
+        Returns:
+            Tuple of top and bottom quantization indices.
+        """
+        top_encoding, bottom_encoding = self.encoder(x)
+        top_indices = self.vq_top(top_encoding)[3]
+        bottom_indices = self.vq_bottom(bottom_encoding)[3]
+        return top_indices, bottom_indices
+
     def decode(self, top_quantized: torch.Tensor, bottom_quantized: torch.Tensor) -> torch.Tensor:
         """Decode quantized representations to images."""
         return self.decoder(top_quantized, bottom_quantized)

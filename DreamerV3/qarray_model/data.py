@@ -41,7 +41,7 @@ def main():
     parser = ArgumentParser(description="Collect CSD data")
     parser.add_argument("--rollouts", type=int, required=True, help="Number of rollouts to collect")
     parser.add_argument("--max_steps", type=int, default=50, help="Maximum steps per rollout")
-    parser.add_argument("--save_dir", type=str, default="./data", help="Directory to save collected data")
+    parser.add_argument("--save_dir", type=str, default="./eval_data", help="Directory to save collected data")
     parser.add_argument("--num_workers", type=int, default=mp.cpu_count(), help="Number of parallel workers")
     args = parser.parse_args()
 
