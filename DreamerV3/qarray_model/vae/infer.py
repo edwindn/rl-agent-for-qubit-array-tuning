@@ -12,7 +12,7 @@ def main():
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"], help="Device to use for inference")
-    parser.add_argument("--checkpoint", type=str, default="./qarray_checkpoints/vqvae_epoch_5.pth", help="Path to the model checkpoint")
+    parser.add_argument("--checkpoint", type=str, default=os.path.join(os.path.dirname(__file__), "./checkpoints2/vqvae_epoch_5.pth"), help="Path to the model checkpoint")
     parser.add_argument("--num_samples", type=int, default=12, help="Number of samples to generate")
     parser.add_argument("--data_type", type=str, default="unseen", choices=["unseen", "train"], help="Whether to infer on train or unseen data")
     args = parser.parse_args()

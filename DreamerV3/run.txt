@@ -1,6 +1,6 @@
 TRAIN:
-python dreamerv3/main.py --task custom_qarray_latent --configs size12m
-python dreamerv3/main.py --task custom_qarray_latent --jax.platform cpu
+python dreamerv3/main.py --task custom_qarraylatent --configs size12m
+python dreamerv3/main.py --task custom_qarraylatent --jax.platform cpu
 (default task is custom_qarray)
 
 INFER: (replace with actual checkpoint)

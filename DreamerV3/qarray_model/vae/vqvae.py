@@ -653,13 +653,26 @@ class VQVAELoss(nn.Module):
 # Example usage and testing
 if __name__ == "__main__":
     # Create model
-    model = create_vqvae2_large(image_size=256, in_channels=3)
+    model = create_vqvae2_large(image_size=128, in_channels=1)
     
     # Test forward pass
     batch_size = 4
-    x = torch.randn(batch_size, 3, 256, 256)
+    x = torch.randn(batch_size, 1, 128, 128)
     
     print(f"Input shape: {x.shape}")
+
+    output = model(x)
+    tq, bq = output['top_indices'], output['bottom_indices']
+    print(tq.shape)
+    print(bq.shape)
+    import sys
+    sys.exit(0)
+
+    tq, bq = model.encode_to_indices(x)
+    print(tq.shape)
+    print(bq.shape)
+    import sys
+    sys.exit(0)
     
     # Forward pass
     outputs = model(x)

@@ -231,6 +231,10 @@ def make_env(config, index, **overrides):
       qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_env.py')
       sys.path.insert(0, os.path.dirname(qarray_env_path))
       from qarray_env import QuantumDeviceEnv
+    elif task == 'qarraylatent':
+      qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_env_latent.py')
+      sys.path.insert(0, os.path.dirname(qarray_env_path))
+      from qarray_env_latent import QuantumDeviceEnv
   
   ctor = {
       'dummy': 'embodied.envs.dummy:Dummy',
@@ -253,6 +257,7 @@ def make_env(config, index, **overrides):
       'custom': lambda task, **kw: (
           from_gym.FromGym(NavEnv(**kw)) if task == 'nav' 
           else from_gym.FromGym(QuantumDeviceEnv(**kw)) if task == 'qarray'
+          else from_gym.FromGym(QuantumDeviceEnv(**kw)) if task == 'qarraylatent'
           else None
       ),
   }[suite]

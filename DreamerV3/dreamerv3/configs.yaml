@@ -73,8 +73,8 @@ defaults:
   jax:
     platform: cuda
     compute_dtype: bfloat16
-    policy_devices: [6]
-    train_devices: [6]
+    policy_devices: [7]
+    train_devices: [7]
     mock_devices: 0
     prealloc: True
     jit: True

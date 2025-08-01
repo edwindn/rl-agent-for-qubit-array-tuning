@@ -65,9 +65,9 @@ class QuantumDeviceEnv(gym.Env):
         self.obs_normalization_range = obs_config['normalization_range']
         self.obs_dtype = obs_config['dtype']
 
-        self.top_latent_size = self.config['simulator']['vqvae']['top_latent_size']
-        self.bottom_latent_size = self.config['simulator']['vqvae']['bottom_latent_size']
-        self.latent_range = self.config['simulator']['vqvae']['latent_range']
+        self.top_latent_size = tuple(self.config['simulator']['vqvae']['top_latent_size'])
+        self.bottom_latent_size = tuple(self.config['simulator']['vqvae']['bottom_latent_size'])
+        self.latent_range = float(self.config['simulator']['vqvae']['latent_range'])
 
         # Define multi-modal observation space using Dict
         self.observation_space = spaces.Dict({
@@ -109,7 +109,7 @@ class QuantumDeviceEnv(gym.Env):
         self.render_mode = render_mode or self.config['training']['render_mode']
 
 
-    def _load_vqvae(self, image_size=128, in_channels=1, checkpoint):
+    def _load_vqvae(self, image_size, in_channels, checkpoint):
         model = create_vqvae2_large(image_size=image_size, in_channels=in_channels).to(self.device)
 
         checkpoint = torch.load(checkpoint, map_location=self.device)
@@ -445,7 +445,7 @@ class QuantumDeviceEnv(gym.Env):
         """
         Helper method to get the current observation of the environment.
         
-        Returns a multi-modal observation with image and voltage data as numpy arrays.
+        Returns a multi-modal observation with latent and voltage data as numpy arrays.
         """
         # Get current voltage configuration
         current_voltages = self.device_state["current_voltages"]
@@ -460,9 +460,14 @@ class QuantumDeviceEnv(gym.Env):
         # Extract voltage centers for voltage observation
         voltage_centers = self._extract_voltage_centers(current_voltages)  # Shape: (2,)
         
-        tq, bq = self.vqvae.encode_to_indices(image_obs) # use custom pass to save time on decoder step
-        tq = tq.cpu().numpy() / self.latent_range  # Normalize to [0, 1]
-        bq = bq.cpu().numpy() / self.latent_range  # Normalize to [0, 1]
+        image_tensor = torch.from_numpy(image_obs).float().to(self.device)
+        image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0)
+    
+        with torch.no_grad():
+            tq, bq = self.vqvae.encode_to_indices(image_tensor)
+    
+        tq = tq.cpu().numpy().astype(np.float32).squeeze() / self.latent_range  # Normalize to [0, 1]
+        bq = bq.cpu().numpy().astype(np.float32).squeeze() / self.latent_range  # Normalize to [0, 1]
 
         observation = {
             'top_latent': tq,  # numpy array
@@ -481,10 +486,7 @@ class QuantumDeviceEnv(gym.Env):
         if observation['bottom_latent'].shape != expected_bottom_latent_shape:
             raise ValueError(f"Bottom latent shape {observation['bottom_latent'].shape} does not match expected {expected_bottom_latent_shape}")
 
-        if observation['voltages'].shape != expected_voltage_shape:
-            raise ValueError(f"Voltage observation shape {observation['voltages'].shape} does not match expected {expected_voltage_shape}")
-
-        if observation['top_latent'].max() >= 1.0 or observation['bottom_latent'].max() >= 1.0:
+        if observation['top_latent'].max() > 1.0 or observation['bottom_latent'].max() > 1.0:
             raise ValueError("Latent indices should be normalized to [0, 1] range")
         
         return observation
