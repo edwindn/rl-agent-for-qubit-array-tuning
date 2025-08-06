@@ -5,105 +5,6 @@ import numpy as np
 from typing import Tuple, Dict, Optional, List
 import math
 
-class VoltagePredictor(nn.Module):
-    """
-    A simple neural network to predict voltages from latent vectors (for loss function).
-    """
-    def __init__(self, top_size: int, bottom_size: int, output_size: int, latent_size: int = 128):
-        super(VoltagePredictor, self).__init__()
-
-        self.top_encoder = nn.Sequential(
-            nn.Linear(top_size**2, latent_size*2),
-            nn.ReLU(),
-            nn.Linear(latent_size*2, latent_size),
-            nn.ReLU(),
-        )
-
-        self.bottom_encoder = nn.Sequential(
-            nn.Linear(bottom_size**2, latent_size*2),
-            nn.ReLU(),
-            nn.Linear(latent_size*2, latent_size),
-            nn.ReLU(),
-        )
-
-        self.feature_net = nn.Sequential(
-            nn.Linear(latent_size*2, latent_size//2),
-            nn.ReLU(),
-            nn.Linear(latent_size//2, latent_size//4),
-            nn.ReLU(),
-            nn.Linear(latent_size//4, output_size),
-        )
-
-    def forward(self, top: torch.Tensor, bottom: torch.Tensor) -> torch.Tensor:
-        bs = top.shape[0]
-        top_x = self.top_encoder(top.reshape(bs, -1))
-        bottom_x = self.bottom_encoder(bottom.reshape(bs, -1))
-        x = torch.cat((top_x, bottom_x), dim=-1)
-        return self.feature_net(x)
-
-### --- VQVAE components ---
-
-class VectorQuantizer(nn.Module):
-    """
-    Vector Quantization module for VQ-VAE.
-    """
-    def __init__(self, num_embeddings: int, embedding_dim: int, commitment_cost: float = 0.25):
-        super().__init__()
-        self.num_embeddings = num_embeddings
-        self.embedding_dim = embedding_dim
-        self.commitment_cost = commitment_cost
-        
-        # Initialize embeddings
-        self.embeddings = nn.Embedding(num_embeddings, embedding_dim)
-        self.embeddings.weight.data.uniform_(-1/num_embeddings, 1/num_embeddings)
-        
-    def forward(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Forward pass of vector quantization.
-        
-        Args:
-            inputs: Tensor of shape (batch_size, embedding_dim, height, width)
-            
-        Returns:
-            quantized: Quantized tensor
-            vq_loss: Vector quantization loss
-            perplexity: Perplexity measure
-            encoding_indices: Discrete indices of the embeddings
-        """
-        # Convert inputs from BCHW -> BHWC
-        inputs = inputs.permute(0, 2, 3, 1).contiguous()
-        input_shape = inputs.shape
-        
-        # Flatten input
-        flat_input = inputs.view(-1, self.embedding_dim)
-        
-        # Calculate distances
-        distances = (torch.sum(flat_input**2, dim=1, keepdim=True) 
-                    + torch.sum(self.embeddings.weight**2, dim=1)
-                    - 2 * torch.matmul(flat_input, self.embeddings.weight.t()))
-        
-        # Encoding
-        encoding_indices = torch.argmin(distances, dim=1).unsqueeze(1)
-        encodings = torch.zeros(encoding_indices.shape[0], self.num_embeddings, device=inputs.device)
-        encodings.scatter_(1, encoding_indices, 1)
-        
-        # Quantize and unflatten
-        quantized = torch.matmul(encodings, self.embeddings.weight).view(input_shape)
-        
-        # Loss
-        e_latent_loss = F.mse_loss(quantized.detach(), inputs)
-        q_latent_loss = F.mse_loss(quantized, inputs.detach())
-        vq_loss = q_latent_loss + self.commitment_cost * e_latent_loss
-        
-        quantized = inputs + (quantized - inputs).detach()
-        
-        # Perplexity
-        avg_probs = torch.mean(encodings, dim=0)
-        perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
-        
-        # Convert from BHWC -> BCHW
-        return quantized.permute(0, 3, 1, 2).contiguous(), vq_loss, perplexity, encoding_indices.view(input_shape[:-1])
-
 
 class ResidualBlock(nn.Module):
     """Residual block with groupnorm and activation."""
@@ -225,16 +126,17 @@ class UpsampleBlock(nn.Module):
 
 class Encoder(nn.Module):
     """
-    Hierarchical encoder for VQ-VAE 2.
+    Hierarchical encoder for VAE - same architecture as VQ-VAE but outputs continuous latents.
     """
     def __init__(self, in_channels: int = 3, base_channels: int = 128, 
                  channel_multipliers: List[int] = [1, 1, 2, 2, 4, 4], 
                  num_res_blocks: int = 2, attention_resolutions: List[int] = [16, 8],
-                 embedding_dim_top: int = 512, embedding_dim_bottom: int = 256):
+                 latent_dim: int = 512):
         super().__init__()
         
         self.num_resolutions = len(channel_multipliers)
         self.attention_resolutions = attention_resolutions
+        self.latent_dim = latent_dim
         
         # Initial convolution
         self.conv_in = nn.Conv2d(in_channels, base_channels, 3, padding=1)
@@ -261,21 +163,18 @@ class Encoder(nn.Module):
         self.mid_attn = AttentionBlock(in_ch)
         self.mid_block2 = ResidualBlock(in_ch, in_ch)
         
-        # Output layers for different levels
-        self.norm_out_top = nn.GroupNorm(32, in_ch)
-        self.conv_out_top = nn.Conv2d(in_ch, embedding_dim_top, 3, padding=1)  # Top level codebook
-        
-        self.upsample_bottom = nn.ConvTranspose2d(in_ch, in_ch, 4, stride=2, padding=1)
-        self.norm_out_bottom = nn.GroupNorm(32, in_ch)
-        self.conv_out_bottom = nn.Conv2d(in_ch, embedding_dim_bottom, 3, padding=1)  # Bottom level codebook
+        # Output layers for latent distribution parameters
+        self.norm_out = nn.GroupNorm(32, in_ch)
+        self.conv_out_mu = nn.Conv2d(in_ch, latent_dim, 3, padding=1)      # Mean
+        self.conv_out_logvar = nn.Conv2d(in_ch, latent_dim, 3, padding=1)  # Log variance
         
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Forward pass returning encodings for both levels.
+        Forward pass returning distribution parameters.
         
         Returns:
-            top_encoding: Encoding for top level (lower resolution)
-            bottom_encoding: Encoding for bottom level (higher resolution)
+            mu: Mean of latent distribution
+            logvar: Log variance of latent distribution
         """
         x = self.conv_in(x)
         
@@ -290,47 +189,37 @@ class Encoder(nn.Module):
         x = self.mid_attn(x)
         x = self.mid_block2(x)
         
-        # Top level encoding (lowest resolution)
-        top_encoding = self.norm_out_top(x)
-        top_encoding = F.silu(top_encoding)
-        top_encoding = self.conv_out_top(top_encoding)
+        # Output distribution parameters
+        x = self.norm_out(x)
+        x = F.silu(x)
         
-        # Bottom level encoding (higher resolution)
-        bottom_features = self.upsample_bottom(x)
-        bottom_encoding = self.norm_out_bottom(bottom_features)
-        bottom_encoding = F.silu(bottom_encoding)
-        bottom_encoding = self.conv_out_bottom(bottom_encoding)
+        mu = self.conv_out_mu(x)
+        logvar = self.conv_out_logvar(x)
         
-        return top_encoding, bottom_encoding
+        return mu, logvar
 
 
 class Decoder(nn.Module):
     """
-    Hierarchical decoder for VQ-VAE 2.
+    Hierarchical decoder for VAE - same architecture as VQ-VAE but takes continuous latents.
     """
     def __init__(self, out_channels: int = 3, base_channels: int = 128,
                  channel_multipliers: List[int] = [4, 4, 2, 2, 1, 1],
                  num_res_blocks: int = 2, attention_resolutions: List[int] = [16, 8],
-                 input_resolution: int = 64,
-                 embedding_dim_top: int = 512, embedding_dim_bottom: int = 256):
+                 input_resolution: int = 64, latent_dim: int = 512):
         super().__init__()
         
         self.num_resolutions = len(channel_multipliers)
         self.attention_resolutions = attention_resolutions
         self.input_resolution = input_resolution
+        self.latent_dim = latent_dim
         
         # Calculate how many downsampling steps the encoder does
-        # The encoder downsamples in all blocks except the last one
         self.num_downsamples = self.num_resolutions - 1
         self.encoded_resolution = input_resolution // (2 ** self.num_downsamples)
         
-        # Input layers for different levels
-        self.conv_in_top = nn.Conv2d(embedding_dim_top, base_channels * channel_multipliers[0], 3, padding=1)
-        self.conv_in_bottom = nn.Conv2d(embedding_dim_bottom, base_channels * channel_multipliers[0], 3, padding=1)
-        
-        # Combine top and bottom features
-        self.combine_conv = nn.Conv2d(base_channels * channel_multipliers[0] * 2, 
-                                     base_channels * channel_multipliers[0], 3, padding=1)
+        # Input layer for latent features
+        self.conv_in = nn.Conv2d(latent_dim, base_channels * channel_multipliers[0], 3, padding=1)
         
         # Middle blocks
         in_ch = base_channels * channel_multipliers[0]
@@ -359,29 +248,18 @@ class Decoder(nn.Module):
         self.norm_out = nn.GroupNorm(32, in_ch)
         self.conv_out = nn.Conv2d(in_ch, out_channels, 3, padding=1)
         
-    def forward(self, top_quantized: torch.Tensor, bottom_quantized: torch.Tensor) -> torch.Tensor:
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass combining both quantized levels.
+        Forward pass from latent to reconstruction.
         
         Args:
-            top_quantized: Quantized features from top level
-            bottom_quantized: Quantized features from bottom level
+            z: Latent tensor of shape (batch_size, latent_dim, height, width)
             
         Returns:
             Reconstructed image
         """
-        # Process top level
-        top_features = self.conv_in_top(top_quantized)
-        
-        # Upsample top features to match bottom resolution
-        top_features = F.interpolate(top_features, size=bottom_quantized.shape[-2:], mode='nearest')
-        
-        # Process bottom level
-        bottom_features = self.conv_in_bottom(bottom_quantized)
-        
-        # Combine features
-        combined = torch.cat([top_features, bottom_features], dim=1)
-        x = self.combine_conv(combined)
+        # Process latent
+        x = self.conv_in(z)
         
         # Middle processing
         x = self.mid_block1(x)
@@ -405,40 +283,33 @@ class Decoder(nn.Module):
         return x
 
 
-class VQVAE2(nn.Module):
+class VAE(nn.Module):
     """
-    VQ-VAE 2 model for high-quality image reconstruction.
+    VAE model with the same architecture as VQ-VAE 2 but using continuous latent space.
     """
     def __init__(self, 
                  in_channels: int = 3,
                  out_channels: int = 3,
                  base_channels: int = 128,
-                 num_embeddings_top: int = 512,
-                 num_embeddings_bottom: int = 512,
-                 embedding_dim_top: int = 512,
-                 embedding_dim_bottom: int = 256,
-                 commitment_cost: float = 0.25,
+                 latent_dim: int = 512,
                  channel_multipliers: List[int] = [1, 1, 2, 2, 4, 4],
                  num_res_blocks: int = 2,
                  attention_resolutions: List[int] = [16, 8],
                  input_resolution: int = 64,
-                 # extra args for the voltage predictor
-                 voltage_top: int = 16,
-                 voltage_bottom: int = 32,
-                 voltage_out: int = 2,
-                 voltage_latent: int = 128,
-                 use_voltage_predictor: bool = False):
+                 beta: float = 1.0):  # KL divergence weight
         super().__init__()
+        
         self.input_resolution = input_resolution
-        self.use_voltage_predictor = use_voltage_predictor
+        self.latent_dim = latent_dim
+        self.beta = beta
+        
         self.encoder = Encoder(
             in_channels=in_channels,
             base_channels=base_channels,
             channel_multipliers=channel_multipliers,
             num_res_blocks=num_res_blocks,
             attention_resolutions=attention_resolutions,
-            embedding_dim_top=embedding_dim_top,
-            embedding_dim_bottom=embedding_dim_bottom
+            latent_dim=latent_dim
         )
         
         self.decoder = Decoder(
@@ -447,30 +318,28 @@ class VQVAE2(nn.Module):
             channel_multipliers=list(reversed(channel_multipliers)),
             num_res_blocks=num_res_blocks,
             attention_resolutions=attention_resolutions,
-            input_resolution=input_resolution  # Pass input resolution to decoder
+            input_resolution=input_resolution,
+            latent_dim=latent_dim
         )
-
-        if use_voltage_predictor:
-            self.voltage_predictor = VoltagePredictor(
-                top_size=voltage_top,
-                bottom_size=voltage_bottom,
-                output_size=voltage_out,
-                latent_size=voltage_latent
-            )
-
-        self.vq_top = VectorQuantizer(
-            num_embeddings=num_embeddings_top,
-            embedding_dim=embedding_dim_top,
-            commitment_cost=commitment_cost
-        )
-        self.vq_bottom = VectorQuantizer(
-            num_embeddings=num_embeddings_bottom,
-            embedding_dim=embedding_dim_bottom,
-            commitment_cost=commitment_cost
-        )
+        
+    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        """
+        Reparameterization trick for VAE.
+        
+        Args:
+            mu: Mean of latent distribution
+            logvar: Log variance of latent distribution
+            
+        Returns:
+            Sampled latent vector
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+    
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
-        Forward pass of VQ-VAE 2.
+        Forward pass of VAE.
         
         Args:
             x: Input images of shape (batch_size, channels, height, width)
@@ -478,106 +347,94 @@ class VQVAE2(nn.Module):
         Returns:
             Dictionary containing:
                 - reconstructed: Reconstructed images
-                - vq_loss_top: VQ loss for top level
-                - vq_loss_bottom: VQ loss for bottom level
-                - perplexity_top: Perplexity for top level
-                - perplexity_bottom: Perplexity for bottom level
+                - mu: Mean of latent distribution
+                - logvar: Log variance of latent distribution
+                - z: Sampled latent vector
+                - kl_loss: KL divergence loss
         """
         # Encode
-        top_encoding, bottom_encoding = self.encoder(x)
-
-        # Quantize
-        top_quantized, vq_loss_top, perplexity_top, top_indices = self.vq_top(top_encoding)
-        bottom_quantized, vq_loss_bottom, perplexity_bottom, bottom_indices = self.vq_bottom(bottom_encoding)
-
+        mu, logvar = self.encoder(x)
+        
+        # Sample latent
+        z = self.reparameterize(mu, logvar)
+        
         # Decode
-        reconstructed = self.decoder(top_quantized, bottom_quantized)
-
-        # Voltage prediction
-        if self.use_voltage_predictor:
-            voltages = self.voltage_predictor(top_indices/1023, bottom_indices/1023)
-        else:
-            voltages = None
-
-
+        reconstructed = self.decoder(z)
+        
+        # KL divergence loss
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        kl_loss = kl_loss / (x.shape[0] * x.shape[2] * x.shape[3])  # Normalize by batch size and spatial dims
+        
         return {
             'reconstructed': reconstructed,
-            'voltages': voltages,
-            'vq_loss_top': vq_loss_top,
-            'vq_loss_bottom': vq_loss_bottom,
-            'perplexity_top': perplexity_top,
-            'perplexity_bottom': perplexity_bottom,
-            'top_quantized': top_quantized,
-            'bottom_quantized': bottom_quantized,
-            'top_indices': top_indices,
-            'bottom_indices': bottom_indices
+            'mu': mu,
+            'logvar': logvar,
+            'z': z,
+            'kl_loss': kl_loss
         }
     
-    def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Encode images to quantized representations."""
-        top_encoding, bottom_encoding = self.encoder(x)
-        top_quantized, _, _ = self.vq_top(top_encoding)
-        bottom_quantized, _, _ = self.vq_bottom(bottom_encoding)
-        return top_quantized, bottom_quantized
-
-    def encode_to_indices(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Encode images to latent distribution parameters and sample."""
+        mu, logvar = self.encoder(x)
+        z = self.reparameterize(mu, logvar)
+        return mu, logvar, z
+    
+    def encode_to_latent(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Encode images to quantization indices.
+        Encode images to latent representations (mean of distribution).
         
         Args:
             x: Input images of shape (batch_size, channels, height, width)
             
         Returns:
-            Tuple of top and bottom quantization indices.
+            Latent representations (means)
         """
-        top_encoding, bottom_encoding = self.encoder(x)
-        top_indices = self.vq_top(top_encoding)[3]
-        bottom_indices = self.vq_bottom(bottom_encoding)[3]
-        return top_indices, bottom_indices
-
-    def decode(self, top_quantized: torch.Tensor, bottom_quantized: torch.Tensor) -> torch.Tensor:
-        """Decode quantized representations to images."""
-        return self.decoder(top_quantized, bottom_quantized)
-
-    def decode_from_indices(self, top_indices: torch.Tensor, bottom_indices: torch.Tensor) -> torch.Tensor:
+        mu, logvar = self.encoder(x)
+        return mu
+    
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        """Decode latent representations to images."""
+        return self.decoder(z)
+    
+    def sample(self, num_samples: int, device: torch.device) -> torch.Tensor:
         """
-        Reconstruct the image from quantization indices.
-
+        Sample from the prior and decode to images.
+        
         Args:
-            top_indices: Tensor of shape (batch_size, height_top, width_top) containing top-level quantization indices.
-            bottom_indices: Tensor of shape (batch_size, height_bottom, width_bottom) containing bottom-level quantization indices.
-
+            num_samples: Number of samples to generate
+            device: Device to generate samples on
+            
         Returns:
-            Reconstructed image as a tensor of shape (batch_size, channels, height, width).
+            Generated images
         """
-        # Retrieve embeddings from the codebook using the indices
-        top_quantized = self.vq_top.embeddings(top_indices.view(-1)).view(
-            top_indices.shape[0], top_indices.shape[1], top_indices.shape[2], -1
-        ).permute(0, 3, 1, 2)  # Reshape to (batch_size, embedding_dim, height, width)
+        # Calculate latent spatial dimensions based on input resolution
+        encoder_downsamples = len([m for m in self.encoder.down_blocks if m.downsample is not None])
+        latent_h = self.input_resolution // (2 ** encoder_downsamples)
+        latent_w = latent_h
+        
+        # Sample from prior (standard normal)
+        z = torch.randn(num_samples, self.latent_dim, latent_h, latent_w, device=device)
+        
+        # Decode
+        with torch.no_grad():
+            samples = self.decoder(z)
+        
+        return samples
 
-        bottom_quantized = self.vq_bottom.embeddings(bottom_indices.view(-1)).view(
-            bottom_indices.shape[0], bottom_indices.shape[1], bottom_indices.shape[2], -1
-        ).permute(0, 3, 1, 2)  # Reshape to (batch_size, embedding_dim, height, width)
 
-        # Decode the quantized embeddings
-        reconstructed = self.decoder(top_quantized, bottom_quantized)
-        return reconstructed
-
-
-def create_vqvae2_large(image_size: int = 256, in_channels: int = 3,
-                        embedding_dim_top: int = 512, embedding_dim_bottom: int = 256,
-                        use_voltage_predictor: bool = False) -> VQVAE2:
+def create_vae_large(image_size: int = 256, in_channels: int = 3, latent_dim: int = 512) -> VAE:
     """
-    Create a large VQ-VAE 2 model suitable for complex image datasets.
+    Create a large VAE model with the same architecture as VQ-VAE 2.
     
     Args:
         image_size: Input image size (assumed square)
         in_channels: Number of input channels
+        latent_dim: Dimensionality of latent space
         
     Returns:
-        Configured VQ-VAE 2 model
+        Configured VAE model
     """
-    # Scale model based on image size
+    # Scale model based on image size - same as VQ-VAE
     if image_size <= 64:
         base_channels = 64
         channel_multipliers = [1, 2, 4]  # Fewer layers for smaller images
@@ -595,55 +452,36 @@ def create_vqvae2_large(image_size: int = 256, in_channels: int = 3,
         channel_multipliers = [1, 1, 2, 2, 4, 4, 8]
         attention_resolutions = [64, 32, 16, 8]
     
-    return VQVAE2(
+    return VAE(
         in_channels=in_channels,
         out_channels=in_channels,
         base_channels=base_channels,
-        num_embeddings_top=1024,
-        num_embeddings_bottom=1024,
-        embedding_dim_top=embedding_dim_top,
-        embedding_dim_bottom=embedding_dim_bottom,
-        commitment_cost=0.25,
+        latent_dim=latent_dim,
         channel_multipliers=channel_multipliers,
         num_res_blocks=2,
         attention_resolutions=attention_resolutions,
         input_resolution=image_size,
-        use_voltage_predictor=use_voltage_predictor,
+        beta=1.0
     )
 
 
 # Training utilities
-class VQVAELoss(nn.Module):
-    """Combined loss for VQ-VAE 2 training with latent consistency."""
+class VAELoss(nn.Module):
+    """Combined loss for VAE training with latent consistency."""
     
-    def __init__(self, reconstruction_weight: float = 1.0, vq_weight: float = 1.0, 
-                 consistency_weight: float = 0.1, voltage_reconstruction_weight: float = 0.1):
+    def __init__(self, reconstruction_weight: float = 1.0, kl_weight: float = 1.0, 
+                 consistency_weight: float = 0.1):
         super().__init__()
         self.reconstruction_weight = reconstruction_weight
-        self.vq_weight = vq_weight
+        self.kl_weight = kl_weight
         self.consistency_weight = consistency_weight
-        self.voltage_reconstruction_weight = voltage_reconstruction_weight
-
-        total_latent_space = 16**2 + 32**2
-        num_voltages = 2
-        self.voltage_predictor = nn.Sequential(
-            nn.Linear(total_latent_space, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, num_voltages)
-        )
         
     def compute_consistency_loss(self, latents: torch.Tensor, voltages: torch.Tensor) -> torch.Tensor:
         """
         Compute consistency loss between voltage distances and latent distances.
         
         Args:
-            latents: Latent representations [batch_size, embedding_dim, h, w]
+            latents: Latent representations [batch_size, latent_dim, h, w]
             voltages: Voltage parameters [batch_size, num_voltages]
             
         Returns:
@@ -658,6 +496,8 @@ class VQVAELoss(nn.Module):
         
         # Compute pairwise distances in voltage space
         voltage_diffs = voltages.unsqueeze(1) - voltages.unsqueeze(0)  # [B, B, num_voltages]
+        if len(voltage_diffs.shape) == 2:
+            voltage_diffs = voltage_diffs.unsqueeze(2)
         voltage_distances = torch.norm(voltage_diffs, dim=2)  # [B, B]
         
         # Compute pairwise distances in latent space
@@ -671,6 +511,8 @@ class VQVAELoss(nn.Module):
         triu_mask = torch.triu(torch.ones_like(mask), diagonal=1)
         final_mask = mask & triu_mask
         
+        device = latents.device
+        voltage_distances = voltage_distances.to(device)
         voltage_dist_pairs = voltage_distances[final_mask]
         latent_dist_pairs = latent_distances[final_mask]
         
@@ -689,7 +531,7 @@ class VQVAELoss(nn.Module):
     def forward(self, outputs: Dict[str, torch.Tensor], targets: torch.Tensor, 
                 voltages: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
-        Compute VQ-VAE 2 loss with consistency term.
+        Compute VAE loss with consistency term.
         
         Args:
             outputs: Model outputs dictionary
@@ -702,74 +544,58 @@ class VQVAELoss(nn.Module):
         # Reconstruction loss
         recon_loss = F.mse_loss(outputs['reconstructed'], targets)
         
-        # VQ losses
-        vq_loss = outputs['vq_loss_top'] + outputs['vq_loss_bottom']
+        # KL divergence loss
+        kl_loss = outputs['kl_loss']
         
-        # Consistency loss using top-level quantized features
+        # Consistency loss using latent means
         consistency_loss = self.compute_consistency_loss(
-            outputs['top_quantized'], voltages
+            outputs['mu'], voltages
         )
-
-        voltage_reconstruction_loss = F.mse_loss(outputs['voltages'], voltages)
         
         # Total loss
         total_loss = (self.reconstruction_weight * recon_loss + 
-                     self.vq_weight * vq_loss + 
-                     self.consistency_weight * consistency_loss +
-                     self.voltage_reconstruction_weight * voltage_reconstruction_loss)
+                     self.kl_weight * kl_loss + 
+                     self.consistency_weight * consistency_loss)
         
         return {
             'total_loss': total_loss,
             'reconstruction_loss': recon_loss,
-            'voltage_reconstruction_loss': voltage_reconstruction_loss,
-            'vq_loss': vq_loss,
-            'consistency_loss': consistency_loss,
-            'vq_loss_top': outputs['vq_loss_top'],
-            'vq_loss_bottom': outputs['vq_loss_bottom'],
-            'perplexity_top': outputs['perplexity_top'],
-            'perplexity_bottom': outputs['perplexity_bottom']
+            'kl_loss': kl_loss,
+            'consistency_loss': consistency_loss
         }
 
 
 # Example usage and testing
 if __name__ == "__main__":
     # Create model
-    model = create_vqvae2_large(image_size=128, in_channels=1)
+    model = create_vae_large(image_size=128, in_channels=1, latent_dim=512)
     
     # Test forward pass
     batch_size = 4
     x = torch.randn(batch_size, 1, 128, 128)
     
     print(f"Input shape: {x.shape}")
-
-    output = model(x)
-    tq, bq = output['top_indices'], output['bottom_indices']
-    print(tq.shape)
-    print(bq.shape)
-    import sys
-    sys.exit(0)
-
-    tq, bq = model.encode_to_indices(x)
-    print(tq.shape)
-    print(bq.shape)
-    import sys
-    sys.exit(0)
     
     # Forward pass
     outputs = model(x)
     
     print(f"Reconstructed shape: {outputs['reconstructed'].shape}")
-    print(f"VQ loss top: {outputs['vq_loss_top'].item():.4f}")
-    print(f"VQ loss bottom: {outputs['vq_loss_bottom'].item():.4f}")
-    print(f"Perplexity top: {outputs['perplexity_top'].item():.2f}")
-    print(f"Perplexity bottom: {outputs['perplexity_bottom'].item():.2f}")
+    print(f"Latent mu shape: {outputs['mu'].shape}")
+    print(f"Latent logvar shape: {outputs['logvar'].shape}")
+    print(f"KL loss: {outputs['kl_loss'].item():.4f}")
+    
+    # Test sampling
+    samples = model.sample(num_samples=2, device=x.device)
+    print(f"Generated samples shape: {samples.shape}")
     
     # Test loss computation
-    loss_fn = VQVAELoss()
-    losses = loss_fn(outputs, x)
+    loss_fn = VAELoss()
+    voltages = torch.randn(batch_size, 2)  # Dummy voltages
+    losses = loss_fn(outputs, x, voltages)
     
     print(f"Total loss: {losses['total_loss'].item():.4f}")
     print(f"Reconstruction loss: {losses['reconstruction_loss'].item():.4f}")
+    print(f"Consistency loss: {losses['consistency_loss'].item():.4f}")
     
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())

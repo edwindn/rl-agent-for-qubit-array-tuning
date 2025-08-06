@@ -15,6 +15,16 @@ from vqvae import create_vqvae2_large, VQVAELoss
 from utils import load_data
 
 
+"""
+Train VQVAE to reconstruct CSD images
+
+added a voltage predictor to better align the latent vectors with the voltage space
+(params are hardcoded in vqvae, add them to config)
+
+note we are currently passing in normalised latent indices
+
+"""
+
 def setup(rank: int, world_size: int) -> None:
     """
     Initialize the distributed process group for multi-GPU training.
@@ -114,7 +124,7 @@ def build_model(image_size: int, in_channels: int, rank: int) -> torch.nn.Module
     Returns:
         torch.nn.Module: The VQ-VAE model.
     """
-    model = create_vqvae2_large(image_size=image_size, in_channels=in_channels)
+    model = create_vqvae2_large(image_size=image_size, in_channels=in_channels, use_voltage_predictor=True)
     model = model.to(rank)
     return model
 
@@ -182,18 +192,27 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
     use_wandb = config['use_wandb']
     noise_weight = config['noise_weight']
     consistency_weight = config['consistency_weight']
+    voltage_reconstruction_weight = config['voltage_reconstruction_weight']
+    num_voltages = config['num_voltages']
+    save_epochs = config['save_epochs']
+    resume_ckpt = config['resume_ckpt']
 
     train_sampler = DistributedSampler(train, num_replicas=world_size, rank=rank)
     test_sampler = DistributedSampler(test, num_replicas=world_size, rank=rank)
-    train_loader = DataLoader(train, batch_size=batch_size, sampler=train_sampler)
-    test_loader = DataLoader(test, batch_size=batch_size, sampler=test_sampler)
+    train_loader = DataLoader(train, batch_size=batch_size, sampler=train_sampler, pin_memory=True)
+    test_loader = DataLoader(test, batch_size=batch_size, sampler=test_sampler, pin_memory=True)
 
     model = build_model(**config['model_params'], rank=rank)
     ddp_model = DDP(model, device_ids=[rank])#, find_unused_parameters=True)
     ddp_model.train()
 
     optimizer = torch.optim.Adam(ddp_model.parameters(), lr=config['lr'])
-    criterion = VQVAELoss(consistency_weight=consistency_weight).to(rank)
+    if resume_ckpt:
+        print(f"Resuming training from checkpoint: {resume_ckpt}")
+        checkpoint = torch.load(resume_ckpt, map_location='cpu')
+        ddp_model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+    criterion = VQVAELoss(consistency_weight=consistency_weight, voltage_reconstruction_weight=voltage_reconstruction_weight).to(rank)
 
     if rank == 0 and use_wandb:
         import wandb
@@ -201,6 +220,10 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
 
     for epoch in range(epochs):
         epoch_loss = 0.0
+        if epoch in save_epochs:
+            voltage_data = []
+            top_latent_data = []
+            bottom_latent_data = []
 
         if rank == 0:
             progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", leave=False)
@@ -210,11 +233,19 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
         ddp_model.train()
 
         for batch_idx, (images, voltages) in enumerate(progress_bar):
+            if epoch in save_epochs:
+                voltage_data.append(voltages.cpu())
+
             images = images.to(rank).float()
             voltages = voltages.to(rank).float()
 
             noise = torch.randn_like(images) * noise_weight
             outputs = ddp_model(images + noise)
+
+            if epoch in save_epochs:
+                top_latent_data.append(outputs['top_indices'].cpu())
+                bottom_latent_data.append(outputs['bottom_indices'].cpu())
+
             loss_dict = criterion(outputs, images, voltages)
             loss = loss_dict['total_loss']
 
@@ -223,6 +254,7 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
             consistency_loss = loss_dict['consistency_loss']
             vq_loss_top = loss_dict['vq_loss_top']
             vq_loss_bottom = loss_dict['vq_loss_bottom']
+            voltage_reconstruction_loss = loss_dict['voltage_reconstruction_loss']
 
             optimizer.zero_grad()
             loss.backward()
@@ -234,11 +266,13 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
             dist.all_reduce(consistency_loss)
             dist.all_reduce(vq_loss_top)
             dist.all_reduce(vq_loss_bottom)
+            dist.all_reduce(voltage_reconstruction_loss)
 
             loss /= world_size
             consistency_loss /= world_size
             reconstruction_loss /= world_size
             vq_loss /= world_size
+            voltage_reconstruction_loss /= world_size
 
             epoch_loss += loss.item()
 
@@ -250,9 +284,10 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
 
                 if use_wandb:
                     wandb.log({
-                        "train/epoch": epoch + 1,
+                        "epoch": epoch + 1,
                         "train/total_loss": loss.item(),
                         "train/reconstruction_loss": reconstruction_loss.item(),
+                        "train/voltage_loss": voltage_reconstruction_loss.item(),
                         "train/vq_loss": vq_loss.item(),
                         "train/consistency_loss": consistency_loss.item(),
                     })
@@ -273,6 +308,7 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
             consistency_loss = loss_dict['consistency_loss']
             vq_loss_top = loss_dict['vq_loss_top']
             vq_loss_bottom = loss_dict['vq_loss_bottom']
+            voltage_reconstruction_loss = loss_dict['voltage_reconstruction_loss']
 
             dist.all_reduce(loss)
             dist.all_reduce(reconstruction_loss)
@@ -280,16 +316,19 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
             dist.all_reduce(consistency_loss)
             dist.all_reduce(vq_loss_top)
             dist.all_reduce(vq_loss_bottom)
+            dist.all_reduce(voltage_reconstruction_loss)
 
             loss /= world_size
             consistency_loss /= world_size
             reconstruction_loss /= world_size
             vq_loss /= world_size
+            voltage_reconstruction_loss /= world_size
 
             if rank == 0 and use_wandb:
                 wandb.log({
                     "eval/total_loss": loss.item(),
                     "eval/reconstruction_loss": reconstruction_loss.item(),
+                    "eval/voltage_loss": voltage_reconstruction_loss.item(),
                     "eval/vq_loss": vq_loss.item(),
                     "eval/consistency_loss": consistency_loss.item(),
                 })
@@ -302,25 +341,33 @@ def train(rank: int, world_size: int, train: TensorDataset, test: TensorDataset,
                 'optimizer': optimizer.state_dict(),
             }
             torch.save(save_dict, f"{save_dir}/vqvae_epoch_{epoch + 1}.pth")
+
+
+        if epoch in save_epochs:
+            voltage_data = torch.cat(voltage_data, dim=0)
+            top_latent_data = torch.cat(top_latent_data, dim=0)
+            bottom_latent_data = torch.cat(bottom_latent_data, dim=0)
+
+            rank_dataset = {
+                'voltages': voltage_data,
+                'top_latents': top_latent_data,
+                'bottom_latents': bottom_latent_data
+            }
+
+            gathered_data = [None for _ in range(world_size)]
+            dist.gather_object(rank_dataset, gathered_data if rank == 0 else None, dst=0)
+
+            if rank == 0:
+                voltage_data = torch.cat([torch.tensor(d['voltages']) for d in gathered_data], dim=0)
+                top_latent_data = torch.cat([torch.tensor(d['top_latents']) for d in gathered_data], dim=0)
+                bottom_latent_data = torch.cat([torch.tensor(d['bottom_latents']) for d in gathered_data], dim=0)
+                dataset = {
+                    'voltages': voltage_data,
+                    'top_latents': top_latent_data,
+                    'bottom_latents': bottom_latent_data
+                }
+                torch.save(dataset, f"{save_dir}/qarray_dataset_{epoch + 1}.pth")
     
-    print(f"Rank {rank} finished training.")
-    cleanup()
-
-
-def train2(rank: int, world_size: int, config: Dict) -> None:
-    setup(rank, world_size)
-    print(f"Rank {rank} of {world_size} is starting training...")
-
-    # Your training code here
-    # ...
-    model = build_model(**config['model_params'], rank=rank)
-    print("Wrapping model with DDP...")
-    ddp_model = DDP(model, device_ids=[rank])
-    print("DDP wrapped.")
-    # ddp_model = model
-    # ddp_model = DDP(model, device_ids=[rank], find_unused_parameters=True)
-    ddp_model.train()
-
     print(f"Rank {rank} finished training.")
     cleanup()
 
@@ -335,13 +382,13 @@ def main() -> None:
     parser.add_argument("--datasize", type=int, default=2000, help="Size of the dataset")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for the optimizer")
     parser.add_argument("--white_noise", type=float, default=0.1, help="Weight of white noise added to images")
-    parser.add_argument("--consistency_weight", type=float, default=0.1, help="Weight of consistency loss")
+    parser.add_argument("--consistency_weight", type=float, default=0.5, help="Weight of consistency loss")
+    parser.add_argument("--voltage_recon_weight", type=float, default=0.002, help="Weight of voltage reconstruction loss")
     parser.add_argument("--wandb", action='store_true', help="Use wandb for logging")
+    parser.add_argument("--resume_ckpt", type=str, default=None, help="Path to resume training from a checkpoint")
     parser.add_argument("--data_dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data'), help="Directory to load data from")
     parser.add_argument("--save_dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'qarray_checkpoints'), help="Directory to save models")
     args = parser.parse_args()
-
-    train_dataset, test_dataset = load_dataset(args.data_dir, args.datasize)
 
     use_gpus = args.gpus
     min_memory_gb = args.min_memory_gb
@@ -359,6 +406,11 @@ def main() -> None:
         'use_wandb': args.wandb,
         'noise_weight': args.white_noise,
         'consistency_weight': args.consistency_weight,
+        'voltage_reconstruction_weight': args.voltage_recon_weight,
+        'num_voltages': 2,
+        'save_epochs': [args.epochs - 1], # indexed from 0
+        'resume_ckpt': args.resume_ckpt,
+    
         'model_params': {
             'image_size': 128,
             'in_channels': 1,
@@ -368,8 +420,11 @@ def main() -> None:
     os.makedirs(config['save_dir'], exist_ok=True)
 
     # save config to save_dir as a json file
-    with open(os.path.join(os.path.dirname(__file__), config['save_dir'], 'config.json'), 'w') as f:
-        json.dump(vars(args), f, indent=4)
+    with open(os.path.join(config['save_dir'], 'config.json'), 'w') as f:
+        time = subprocess.check_output(['date', '+%Y-%m-%d_%H-%M-%S']).decode('utf-8').strip()
+        json.dump({'time': time, **vars(args)}, f, indent=4)
+
+    train_dataset, test_dataset = load_dataset(args.data_dir, args.datasize)
 
     print("Training ...")
     torch.multiprocessing.spawn(train, args=(world_size, train_dataset, test_dataset, config), nprocs=world_size, join=True)

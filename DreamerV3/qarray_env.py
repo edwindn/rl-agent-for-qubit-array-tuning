@@ -10,6 +10,8 @@ matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 import io
+import fcntl
+import json
 
 class QuantumDeviceEnv(gym.Env):
     """
@@ -18,6 +20,8 @@ class QuantumDeviceEnv(gym.Env):
     #rendering info
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
+    COUNTER_FILE = "/tmp/dreamer_rollout_counter.json"
+    
     def __init__(self, config_path='qarray_config.yaml', render_mode=None, **kwargs):
         """
         constructor for the environment
@@ -208,6 +212,26 @@ class QuantumDeviceEnv(gym.Env):
         current_voltages = self.device_state["current_voltages"]
         z = self._get_charge_sensor_data(current_voltages)
         return z[:, :, 0]
+
+    def _increment_global_counter(self):
+        """Thread-safe increment of global rollout counter."""
+        try:
+            # Create file if it doesn't exist
+            if not os.path.exists(self.COUNTER_FILE):
+                with open(self.COUNTER_FILE, 'w') as f:
+                    json.dump({"total_rollouts": 0}, f)
+            
+            # Read, increment, and write back
+            with open(self.COUNTER_FILE, 'r+') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+                data = json.load(f)
+                data["total_rollouts"] += 1
+                f.seek(0)
+                json.dump(data, f)
+                f.truncate()
+                return data["total_rollouts"]
+        except:
+            return -1  # Error case
 
     def reset(self, seed=None, options=None):
         """

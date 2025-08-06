@@ -4,6 +4,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from matplotlib import colormaps  # Use the updated colormaps API
 from multiprocessing import Pool, cpu_count
+from torch.utils.data import TensorDataset
+import torch
 
 
 def process_file(file_path):
@@ -50,6 +52,31 @@ def load_data(data_dir, num_samples=None):
     print(f"Loaded {len(dataset)} samples from {data_dir}")
     return dataset
 
+    
+def load_dataset(data_dir: str, num_samples: int) -> (TensorDataset, TensorDataset):
+    """
+    Load the dataset from the specified directory.
+    Args:
+        data_dir (str): Directory to load the dataset from.
+
+    Returns:
+        TensorDataset: Training and testing datasets.
+    """
+    dataset = load_data(data_dir, num_samples=num_samples)
+    train_size = int(0.99 * len(dataset))
+    test_size = len(dataset) - train_size
+    train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
+
+    train_images, train_labels = zip(*[(torch.tensor(item['image']), torch.tensor(item['voltages'])) for item in train_dataset])
+    test_images, test_labels = zip(*[(torch.tensor(item['image']), torch.tensor(item['voltages'])) for item in test_dataset])
+    train_images = torch.stack(train_images)
+    train_labels = torch.stack(train_labels)
+    test_images = torch.stack(test_images)
+    test_labels = torch.stack(test_labels)
+
+    train_dataset = TensorDataset(train_images, train_labels)
+    test_dataset = TensorDataset(test_images, test_labels)
+    return train_dataset, test_dataset
 
 if __name__ == "__main__":
     dataset = load_data('./data')
