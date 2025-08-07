@@ -1,0 +1,5 @@
+
+
+modify _apply_voltages to update all 4 values
+
+capacitances only used to get reward for now
