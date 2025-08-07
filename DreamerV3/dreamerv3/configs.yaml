@@ -53,7 +53,7 @@ defaults:
     log_every: 60 # in seconds
     report_every: 300
     save_every: 600
-    envs: 16
+    envs: 32
     eval_envs: 4
     eval_eps: 1
     report_batches: 1
