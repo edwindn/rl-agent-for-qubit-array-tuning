@@ -86,7 +86,7 @@ simulator:
     - [-0.05, -0.05, 0]
 
   vqvae:
-   checkpoint: "qarray_model/vae/checkpoints2/vqvae_epoch_5.pth"  # Path to the VQVAE model checkpoint
+   checkpoint: "qarray_model/vae/checkpoints/vqvae_epoch_5.pth"  # Path to the VQVAE model checkpoint
 
    top_latent_size: [16, 16]  # Size of the top latent space
    bottom_latent_size: [32, 32]  # Size of the bottom latent space
@@ -102,7 +102,6 @@ env:
   
   observation_space:
     image_size: [128, 128]
-    channels: 1
     normalization_range: [0.0, 1.0]
     dtype: "float32"
   

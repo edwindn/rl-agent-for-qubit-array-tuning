@@ -222,20 +222,15 @@ def make_env(config, index, **overrides):
     import sys
     import os
     
-    if task == 'nav':
-      # Import the NavEnv from nav_env.py
-      nav_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'nav_env.py')
-      sys.path.insert(0, os.path.dirname(nav_env_path))
-      from nav_env import NavEnv
-    elif task == 'qarray':
+    if task == 'qarray':
       # Import the QuantumDeviceEnv from qarray_env.py
       qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_env.py')
       sys.path.insert(0, os.path.dirname(qarray_env_path))
       from qarray_env import QuantumDeviceEnv
-    elif task == 'qarraylatent':
-      qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_env_latent.py')
+    elif task == 'qarray4dot':
+      qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_4dot_env.py')
       sys.path.insert(0, os.path.dirname(qarray_env_path))
-      from qarray_env_latent import QuantumDeviceEnv
+      from qarray_4dot_env import QuantumDeviceEnv
   
   ctor = {
       'dummy': 'embodied.envs.dummy:Dummy',
@@ -258,7 +253,7 @@ def make_env(config, index, **overrides):
       'custom': lambda task, **kw: (
           from_gym.FromGym(NavEnv(**kw)) if task == 'nav' 
           else from_gym.FromGym(QuantumDeviceEnv(**kw)) if task == 'qarray'
-          else from_gym.FromGym(QuantumDeviceEnv(**kw)) if task == 'qarraylatent'
+          else from_gym.FromGym(QuantumDeviceEnv(**kw)) if task == 'qarray4dot'
           else None
       ),
   }[suite]

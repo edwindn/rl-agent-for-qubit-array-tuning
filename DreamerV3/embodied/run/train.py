@@ -29,8 +29,10 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
 
   @elements.timer.section('logfn')
   def logfn(tran, worker):
+    # print('Calling logfn...') # REMOVE
     episode = episodes[worker]
     tran['is_first'] and episode.reset()
+    # print('reward: ', tran['reward']) # REMOVE
     episode.add('score', tran['reward'], agg='sum')
     episode.add('length', 1, agg='sum')
     episode.add('rewards', tran['reward'], agg='stack')

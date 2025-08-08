@@ -21,7 +21,7 @@ class QuantumDeviceEnv(gym.Env):
     #rendering info
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    COUNTER_FILE = f"/tmp/qarray_global_rollout_counter.json"
+    COUNTER_FILE = "/tmp/qarray_global_rollout_counter.json"
 
     @staticmethod
     def _init_counter_file():
@@ -79,6 +79,8 @@ class QuantumDeviceEnv(gym.Env):
         """
         super().__init__()
 
+        print('Initialising qarray env with 4 dots ...')
+
         QuantumDeviceEnv._instance_count += 1
         self._instance_id = QuantumDeviceEnv._instance_count
         self._local_rollouts = 0
@@ -100,28 +102,31 @@ class QuantumDeviceEnv(gym.Env):
         self.action_voltage_min = self.config['env']['action_space']['voltage_range'][0]
         self.action_voltage_max = self.config['env']['action_space']['voltage_range'][1]
 
-        matrix_shape = np.array(self.config['simulator']['Cgd']).shape
+        matrix_shape = np.array(self.config['simulator']['model']['Cgd']).shape
         matrix_length = np.prod(matrix_shape)
-        matrix_low = np.array(self.config['simulator']['Cgd_low']).flatten()
-        matrix_high = np.array(self.config['simulator']['Cgd_high']).flatten()
+        matrix_low = np.array(self.config['simulator']['model']['Cgd_low']).flatten()
+        matrix_high = np.array(self.config['simulator']['model']['Cgd_high']).flatten()
 
         assert len(matrix_low) == len(matrix_high) == matrix_length
 
         self.capacitances = None
+        self.capacitance_shape = matrix_shape
         self.cgd_max = matrix_high.max()
         self.cgd_min = matrix_low.min()
         self.max_cgd_dist = np.linalg.norm(np.ones_like(matrix_low)) # since we normalise the capacitances in get_reward
 
         self.action_space = spaces.Dict({
-            'voltages': spaces.Box(
+            'action_voltages': spaces.Box(
                 low=self.action_voltage_min,
                 high=self.action_voltage_max,
                 shape=(self.num_voltages,),
                 dtype=np.float32
             ),
             'capacitances': spaces.Box(
-                low=matrix_low,
-                high=matrix_high,
+                #low=matrix_low,
+                #high=matrix_high,
+                low=self.cgd_min,
+                high=self.cgd_max,
                 shape=(matrix_length,),
                 dtype=np.float32
             )
@@ -130,7 +135,7 @@ class QuantumDeviceEnv(gym.Env):
         # Observation space for quantum device state - multi-modal with image and voltages
         obs_config = self.config['env']['observation_space']
         self.obs_image_size = obs_config['image_size']
-        self.obs_channels = obs_config['channels']
+        self.obs_channels = self.num_voltages - 1
         self.obs_normalization_range = obs_config['normalization_range']
         self.obs_dtype = obs_config['dtype']
         
@@ -142,7 +147,7 @@ class QuantumDeviceEnv(gym.Env):
                 shape=(self.obs_image_size[0], self.obs_image_size[1], self.obs_channels),
                 dtype=np.uint8
             ),
-            'voltages': spaces.Box(
+            'obs_voltages': spaces.Box(
                 low=self.action_voltage_min,
                 high=self.action_voltage_max,
                 shape=(self.num_voltages,),
@@ -261,7 +266,8 @@ class QuantumDeviceEnv(gym.Env):
         
         return normalized
 
-    def _get_charge_sensor_data(self, voltages):
+
+    def _get_charge_sensor_data(self, voltages, gate1, gate2):
         """
         Get charge sensor data for given voltages.
         
@@ -271,21 +277,32 @@ class QuantumDeviceEnv(gym.Env):
         Returns:
             np.ndarray: Charge sensor data of shape (height, width, channels)
         """
-        z, _ = self.device_state["model"].charge_sensor_open(voltages)
+        # z, _ = self.device_state["model"].charge_sensor_open(voltages)
+
+        # vg_current = self.model.gate_voltage_composer.do2d(
+        #     gate1, center[0]+self.obs_voltage_min, center[0]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
+        #     gate2, center[1]+self.obs_voltage_min, center[1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
+        # )
+
+        z, _ = self.device_state["model"].do2d_open(
+            gate1, voltages[gate1-1]+self.obs_voltage_min, voltages[gate1-1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
+            gate2, voltages[gate2-1]+self.obs_voltage_min, voltages[gate2-1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
+        )
         return z
 
-    def get_raw_observation(self):
+
+    def get_raw_observation(self, gate1, gate2):
         """
         Get raw (unnormalized) observation data for debugging purposes.
         
         Returns:
             np.ndarray: Raw charge sensor data of shape (height, width)
         """
-        current_voltages = self.device_state["current_voltages"]
-        z = self._get_charge_sensor_data(current_voltages)
+        voltage_centers = self.device_state["voltage_centers"]
+        z = self._get_charge_sensor_data(voltage_centers, gate1, gate2)
         return z[:, :, 0]
 
-    def reset(self, gate1, gate2, seed=None, options=None):
+    def reset(self, seed=None, options=None):
         """
         Resets the environment to an initial state and returns the initial observation.
 
@@ -301,9 +318,6 @@ class QuantumDeviceEnv(gym.Env):
             observation (np.ndarray): The initial observation of the space.
             info (dict): A dictionary with auxiliary diagnostic information.
         """
-        
-        assert gate1 in range(self.num_voltages)
-        assert gate2 in range(self.num_voltages)
 
         if self._count_rollouts:
             global_rollouts, elapsed = QuantumDeviceEnv.increment_global_rollout_counter()
@@ -328,24 +342,25 @@ class QuantumDeviceEnv(gym.Env):
         #center of current window
         center = self._random_center()
 
-        #current window
-        vg_current = self.model.gate_voltage_composer.do2d(
-            gate1, center[0]+self.obs_voltage_min, center[0]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
-            gate2, center[1]+self.obs_voltage_min, center[1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
-        )
+        # #current window
+        # vg_current = self.model.gate_voltage_composer.do2d(
+        #     1, center[0]+self.obs_voltage_min, center[0]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
+        #     2, center[1]+self.obs_voltage_min, center[1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
+        # )
 
-        optimal_VG_center = self.model.optimal_Vg(self.config['simulator']['measurement']['optimal_VG_center']) 
+        optimal_VG_center = self.model.optimal_Vg(self.config['simulator']['measurement']['optimal_VG_center'])
 
         # Device state variables (episode-specific)
         self.device_state = {
             "model": self.model,
-            "current_voltages": vg_current,
+            # "current_voltages": vg_current,
             "ground_truth_center": optimal_VG_center,
+            "voltage_centers": center
         }
 
 
         # --- Return the initial observation ---
-        observation = self._get_obs() 
+        observation = self._get_obs()
         info = self._get_info() 
 
         return observation, info
@@ -373,7 +388,7 @@ class QuantumDeviceEnv(gym.Env):
         self.current_step += 1
         # action is now a numpy array of shape (num_voltages,) containing voltage values
 
-        voltages, capacitances = action['voltages'], action['capacitances']
+        voltages, capacitances = action['action_voltages'], action['capacitances']
 
         self._apply_voltages(voltages) #this step will update the voltages stored in self.device_state
         self._update_capacitances(capacitances)  # Update capacitance matrix in the model
@@ -392,13 +407,13 @@ class QuantumDeviceEnv(gym.Env):
             if self.debug:
                 print("Max steps reached")
         
-        # Check if the centers of the voltage sweeps are aligned (ignoring third dimension)
-        ground_truth_center = self.device_state["ground_truth_center"][:2]
+        # Check if the centers of the voltage sweeps are aligned
+        ground_truth_center = self.device_state["ground_truth_center"]
 
         # Get current voltage settings (what the agent controls)
-        current_voltage_center = self._extract_voltage_centers(self.device_state["current_voltages"])
+        current_voltage_center = self.device_state["voltage_centers"]
 
-        # Compare only the first 2 dimensions (ignoring third dimension)
+        # Compare only the first num_voltages dimensions (ignoring last dimension)
         at_target = np.all(np.abs(ground_truth_center - current_voltage_center) <= self.tolerance)
         
         if at_target:
@@ -431,19 +446,18 @@ class QuantumDeviceEnv(gym.Env):
         The reward is also penalized by the number of steps taken to encourage efficiency.
         """
 
-        ground_truth_center = self.device_state["ground_truth_center"][:2]
+        ground_truth_center = self.device_state["ground_truth_center"]
         
         # Get current voltage settings (what the agent controls)
         # We need to get this from the action that was just applied
         # Since action is passed to step(), we need to store it or calculate it
-        current_voltage_center = self._extract_voltage_centers(self.device_state["current_voltages"])
+        current_voltage_center = self.device_state["voltage_centers"]
         
-
-        # Calculate distance between target and current (2D)
+        # Calculate distance between target and current (N-dim)
         distance = np.linalg.norm(ground_truth_center - current_voltage_center)
         
-        # Calculate maximum possible distance in 2D voltage space
-        max_possible_distance = np.sqrt(2) * (self.obs_voltage_max - self.obs_voltage_min)
+        # Calculate maximum possible distance in voltage space
+        max_possible_distance = np.sqrt(self.num_voltages) * (self.obs_voltage_max - self.obs_voltage_min)
         
         # Reward = max_possible_distance - current_distance
         # This gives maximum reward when distance = 0 (perfect alignment)
@@ -451,12 +465,14 @@ class QuantumDeviceEnv(gym.Env):
         reward = max(max_possible_distance - distance, 0)*0.01
 
         # Capacitance reward
-        Cgd = np.array(self.config['simulator']['Cgd'])
+        Cgd = np.array(self.config['simulator']['model']['Cgd'])
         cgd_max, cgd_min = self.cgd_max, self.cgd_min
         Cgd = (Cgd - cgd_min) / (cgd_max - cgd_min)  # Normalize capacitance matrix to [0, 1]
         if self.capacitances is not None:
             cap = (self.capacitances - cgd_min) / (cgd_max - cgd_min)
             cgd_dist = np.linalg.norm(cap - Cgd)
+        else:
+            raise RuntimeError("_get_reward called before model capacitance output was set")
 
         # Penalize for taking too many steps (small penalty to encourage efficiency)
         reward -= self.current_step * 0.1
@@ -512,35 +528,48 @@ class QuantumDeviceEnv(gym.Env):
         Returns a multi-modal observation with image and voltage data as numpy arrays.
         """
         # Get current voltage configuration
-        current_voltages = self.device_state["current_voltages"]
+        # current_voltages = self.device_state["current_voltages"]
+        voltage_centers = self.device_state["voltage_centers"]
         
         # Get charge sensor data
-        self.z = self._get_charge_sensor_data(current_voltages)
-        z = self.z
-        # Extract first channel and normalize for image observation
-        channel_data = z[:, :, 0]  # Shape: (height, width)
-        image_obs = self._normalize_observation(channel_data)  # Shape: (height, width, 1)
+        # self.z = self._get_charge_sensor_data(current_voltages, gate1, gate2)
+        allgates = list(range(1, self.num_voltages+1))
+        self.all_z = []
+        for (gate1, gate2) in zip(allgates[:-1], allgates[1:]):
+            z = self._get_charge_sensor_data(voltage_centers, gate1, gate2)
+            self.all_z.append(z)
+
+
+        all_images = []
+        voltage_centers = self.device_state["voltage_centers"]
+
+        expected_voltage_shape = (self.num_voltages,)
         
-        # Extract voltage centers for voltage observation
-        voltage_centers = self._extract_voltage_centers(current_voltages)  # Shape: (num_voltages,)
-        
-        # Create multi-modal observation dictionary with numpy arrays 
-        observation = {
-            'image': image_obs,  # numpy array
-            'voltages': voltage_centers  # numpy array
-        }
-        
+        if voltage_centers.shape != expected_voltage_shape:
+            raise ValueError(f"Voltage observation shape {voltage_centers.shape} does not match expected {expected_voltage_shape}")
+
+
+        for z in self.all_z:
+            # Extract first channel and normalize for image observation
+            channel_data = z[:, :, 0]  # Shape: (height, width)
+            image_obs = self._normalize_observation(channel_data)  # Shape: (height, width, 1)
+            
+            # Create multi-modal observation dictionary with numpy arrays 
+            all_images.append(image_obs)
+
+        all_images = np.concatenate(all_images, axis=-1)
+        # all_images = all_images.squeeze(-1).transpose(1, 2, 0)
+            
         # Validate observation structure
         expected_image_shape = (self.obs_image_size[0], self.obs_image_size[1], self.obs_channels)
-        expected_voltage_shape = (2,)
-        
-        if observation['image'].shape != expected_image_shape:
-            raise ValueError(f"Image observation shape {observation['image'].shape} does not match expected {expected_image_shape}")
-        
-        if observation['voltages'].shape != expected_voltage_shape:
-            raise ValueError(f"Voltage observation shape {observation['voltages'].shape} does not match expected {expected_voltage_shape}")
-        
-        return observation
+
+        if all_images.shape != expected_image_shape:
+            raise ValueError(f"Image observation shape {all_images.shape} does not match expected {expected_image_shape}")
+
+        return {
+            "image": all_images, # creates a multi-channel image with each adjacent pair of voltage sweeps
+            "obs_voltages": voltage_centers
+        }
 
 
     def _get_info(self):
@@ -570,23 +599,28 @@ class QuantumDeviceEnv(gym.Env):
         Args:
             voltages (np.ndarray): Array of voltage values for each gate
         """
-        
-        # Create two grids centered around voltages[0] and voltages[1]
-        # Grid extent from obs_vmin to obs_vmax
-        x_grid = np.linspace(self.obs_voltage_min, self.obs_voltage_max, self.obs_image_size[1])
-        y_grid = np.linspace(self.obs_voltage_min, self.obs_voltage_max, self.obs_image_size[0])
-        
-        # Create 2D grids centered around the voltage values
-        X, Y = np.meshgrid(x_grid + voltages[0], y_grid + voltages[1])
 
-        # Update the first two channels with the new grids
-        self.device_state["current_voltages"][:,:,0] = X
-        self.device_state["current_voltages"][:,:,1] = Y
-        
-        # Keep the third channel unchanged (as per the TODO comment)
-        # self.device_state["current_voltages"][:,:,2] remains as initialized
+        voltages = np.array(voltages).flatten().astype(np.float32)
+        assert len(voltages) == self.num_voltages, f"Expected voltages to be of size {self.num_voltages}, got {len(voltages)}"
 
-        self.device_state["current_voltages"][:,:,:2] = np.clip(self.device_state["current_voltages"][:,:,:2], self.action_voltage_min, self.action_voltage_max)
+        self.device_state["voltage_centers"] = voltages
+        
+        # # Create two grids centered around voltages[0] and voltages[1]
+        # # Grid extent from obs_vmin to obs_vmax
+        # x_grid = np.linspace(self.obs_voltage_min, self.obs_voltage_max, self.obs_image_size[1])
+        # y_grid = np.linspace(self.obs_voltage_min, self.obs_voltage_max, self.obs_image_size[0])
+        
+        # # Create 2D grids centered around the voltage values
+        # X, Y = np.meshgrid(x_grid + voltages[0], y_grid + voltages[1])
+
+        # # Update the first two channels with the new grids
+        # self.device_state["current_voltages"][:,:,0] = X
+        # self.device_state["current_voltages"][:,:,1] = Y
+        # self.device_state["voltage_centers"] = np.array(voltages)
+        
+        # # self.device_state["current_voltages"][:,:,2] remains as initialized
+
+        # self.device_state["current_voltages"][:,:,:2] = np.clip(self.device_state["current_voltages"][:,:,:2], self.action_voltage_min, self.action_voltage_max)
     
 
     def _extract_voltage_centers(self, voltages):
@@ -612,7 +646,7 @@ class QuantumDeviceEnv(gym.Env):
 
     
     def _update_capacitances(self, capacitances):
-        self.capacitances = capacitances.reshape(self.config['simulator']['Cgd'].shape)
+        self.capacitances = capacitances.reshape(self.capacitance_shape)
          
 
     def render(self):
@@ -632,14 +666,18 @@ class QuantumDeviceEnv(gym.Env):
             return None
 
 
-    def _render_frame(self, inference_plot=False):
+    def _render_frame(self, gate1, inference_plot=False):
         """
         Internal method to create the render image.
+
+        We plot the CSD between gate1 and its successor
         
         Returns:
             np.ndarray: RGB array representation of the environment state
         """
-        z = self.z
+        assert gate1 in range(1, self.num_voltages), f"gate1 must be between 1 and {self.num_voltages}, got {gate1}"
+
+        z = self.all_z[gate1-1]
 
         if inference_plot:
             vmin, vmax = (self.obs_voltage_min, self.obs_voltage_max)
@@ -763,13 +801,14 @@ class QuantumDeviceEnv(gym.Env):
 
 
 if __name__ == "__main__":
+    import sys
     env = QuantumDeviceEnv()
-    env.reset(gate1=1, gate2=3) # change to reset all dots
+    env.reset()
 
-    voltages = [-3.0, 1.0]
+    voltages = [-3.0, 1.0, 0.0, 0.0]
     env._apply_voltages(voltages)
 
-    frame = env._render_frame(inference_plot=True)
+    frame = env._render_frame(gate1=1, inference_plot=True)
     path = "quantum_dot_plot.png"
     plt.imsave(path, frame, cmap='viridis')
     # sample_action = np.array([-1, -1])
