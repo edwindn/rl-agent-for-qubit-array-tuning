@@ -8,3 +8,8 @@ fix low and high bounds for capacitances per element
 
 
 capacitance reward find optimal weight
+
+currently running without capacitive output (do not push)
+
+modify only dots 2 and 3
+try with 1 vs 3 scans

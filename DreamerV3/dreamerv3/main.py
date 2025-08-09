@@ -15,7 +15,16 @@ import numpy as np
 import portal
 import ruamel.yaml as yaml
 import threading
+import json
+import time
 
+COUNTER_FILE = "/tmp/qarray_global_rollout_counter.json"
+if os.path.exists(COUNTER_FILE):
+  os.remove(COUNTER_FILE)
+os.makedirs(os.path.dirname(COUNTER_FILE), exist_ok=True)
+with open(COUNTER_FILE, 'w') as f:
+  json.dump({"total_rollouts": 0, "start_time": time.time()}, f)
+os.system(f"cat {COUNTER_FILE}")
 
 def main(argv=None):
   from .agent import Agent
@@ -34,6 +43,13 @@ def main(argv=None):
   if 'JOB_COMPLETION_INDEX' in os.environ:
     config = config.update(replica=int(os.environ['JOB_COMPLETION_INDEX']))
   print('Replica:', config.replica, '/', config.replicas)
+
+  log_to_wandb = config.logger.wandb
+  if log_to_wandb:
+    import wandb
+    wandb.init(
+        project='dreamer-qarray',
+    )
 
   logdir = elements.Path(config.logdir)
   print('Logdir:', logdir)
@@ -64,6 +80,7 @@ def main(argv=None):
       consec_train=config.consec_train,
       consec_report=config.consec_report,
       replay_context=config.replay_context,
+      log_to_wandb=log_to_wandb,
   )
 
   if config.script == 'train':

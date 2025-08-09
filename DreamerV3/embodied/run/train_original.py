@@ -17,7 +17,6 @@ def get_global_rollout_counter(counter_file="/tmp/qarray_global_rollout_counter.
       return data.get("total_rollouts", 0), elapsed
 
 def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
-  print(f"Initialising train with {args.envs} environments")
 
   agent = make_agent()
   replay = make_replay()
@@ -58,28 +57,15 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
 
   @elements.timer.section('logfn')
   def logfn(tran, worker):
+    # print('Calling logfn...') # REMOVE
     episode = episodes[worker]
-    
-    # Debug episode state
-    if tran['is_first']:
-        episode.reset()
-        # print(f"DEBUG EPISODE START: Worker {worker} starting new episode")
-    
-    # Track episode progress
-    if not hasattr(logfn, 'step_counts'):
-        logfn.step_counts = {}
-    if worker not in logfn.step_counts:
-        logfn.step_counts[worker] = 0
-    
-    if tran['is_first']:
-        logfn.step_counts[worker] = 0
-    else:
-        logfn.step_counts[worker] += 1
-    
+    tran['is_first'] and episode.reset()
+    # print('reward: ', tran['reward']) # REMOVE
+    # manual_tracker.add(worker, tran['reward'])
+
     episode.add('score', tran['reward'], agg='sum')
     episode.add('length', 1, agg='sum')
     episode.add('rewards', tran['reward'], agg='stack')
-    
     for key, value in tran.items():
       if value.dtype == np.uint8 and value.ndim == 3:
         if worker == 0:
@@ -90,41 +76,34 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
         episode.add(key + '/max', value, agg='max')
         episode.add(key + '/sum', value, agg='sum')
     if tran['is_last']:
-        # print(f"EPISODE COMPLETED: Worker {worker} after {logfn.step_counts[worker]} steps")
-        
-        result = episode.result()
-        episode_score = result.pop('score')
-        episode_length = result.pop('length')
-        
-        print(f"Worker {worker} episode score={episode_score}, length={episode_length}")
-        
-        if args.log_to_wandb:
-            # print(f"DEBUG: log_to_wandb is True, worker={worker}")
-            if worker == 0:
-                # print('Logging to Wandb ...')
-                rollouts, elapsed = get_global_rollout_counter()
-                wandb.log({
-                  "score": episode_score,
-                  "length": episode_length,
-                  "rollouts": rollouts,
-                  "time elapsed": elapsed
-                })
-        
-        rew = result.pop('rewards')
-        if len(rew) > 1:
-          result['reward_rate'] = (np.abs(rew[1:] - rew[:-1]) >= 0.01).mean()
-        # Add score back to result for epstats aggregation
-        result['score'] = episode_score
-        result['length'] = episode_length
-        epstats.add(result)
-        
-        # Reset step counter
-        logfn.step_counts[worker] = 0
-    else:
-        # Debug why episode isn't ending
-        if logfn.step_counts[worker] > 200:  # If episode is getting very long
-            print(f"DEBUG LONG EPISODE: Worker {worker} step {logfn.step_counts[worker]} - is_last={tran['is_last']}, is_terminal={tran.get('is_terminal', 'N/A')}")
-            
+      # Add reward to manual tracker
+      # manual_tracker.add(worker, tran['reward'])
+      # manual_total = manual_tracker.get_total(worker)
+      # print(f"[MANUAL] Worker {worker} Episode ended - total reward: {manual_total:.3f}")
+      
+      result = episode.result()
+      episode_score = result.pop('score')
+      episode_length = result.pop('length')
+      logger.add({
+          'score': episode_score,
+          'length': episode_length,
+      }, prefix='episode')
+      if args.log_to_wandb:
+        print('Logging to Wandb ...')
+        rollouts, elapsed = get_global_rollout_counter()
+        wandb.log({
+          "score": episode_score,
+          "length": episode_length,
+          "rollouts": rollouts,
+          "time elapsed": elapsed
+        })
+      rew = result.pop('rewards')
+      if len(rew) > 1:
+        result['reward_rate'] = (np.abs(rew[1:] - rew[:-1]) >= 0.01).mean()
+      # Add score back to result for epstats aggregation
+      result['score'] = episode_score
+      result['length'] = episode_length
+      epstats.add(result)
 
   fns = [bind(make_env, i) for i in range(args.envs)]
   driver = embodied.Driver(fns, parallel=not args.debug)

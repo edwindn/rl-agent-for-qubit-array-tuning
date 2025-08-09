@@ -27,17 +27,9 @@ class QuantumDeviceEnv(gym.Env):
     def _init_counter_file():
         """Ensure the counter file exists and has a start_time."""
         if not os.path.exists(QuantumDeviceEnv.COUNTER_FILE):
+            print("counter file not found, creating")
             with open(QuantumDeviceEnv.COUNTER_FILE, 'w') as f:
                 json.dump({"total_rollouts": 0, "start_time": time.time()}, f)
-        else:
-            # Add start_time if missing (for backward compatibility)
-            with open(QuantumDeviceEnv.COUNTER_FILE, 'r+') as f:
-                data = json.load(f)
-                if "start_time" not in data:
-                    data["start_time"] = time.time()
-                    f.seek(0)
-                    json.dump(data, f)
-                    f.truncate()
 
     @staticmethod
     def increment_global_rollout_counter():
@@ -115,22 +107,29 @@ class QuantumDeviceEnv(gym.Env):
         self.cgd_min = matrix_low.min()
         self.max_cgd_dist = np.linalg.norm(np.ones_like(matrix_low)) # since we normalise the capacitances in get_reward
 
-        self.action_space = spaces.Dict({
-            'action_voltages': spaces.Box(
-                low=self.action_voltage_min,
-                high=self.action_voltage_max,
-                shape=(self.num_voltages,),
-                dtype=np.float32
-            ),
-            'capacitances': spaces.Box(
-                #low=matrix_low,
-                #high=matrix_high,
-                low=self.cgd_min,
-                high=self.cgd_max,
-                shape=(matrix_length,),
-                dtype=np.float32
-            )
-        })
+        # self.action_space = spaces.Dict({
+        #     'action_voltages': spaces.Box(
+        #         low=self.action_voltage_min,
+        #         high=self.action_voltage_max,
+        #         shape=(self.num_voltages,),
+        #         dtype=np.float32
+        #     ),
+        #     'capacitances': spaces.Box(
+        #         #low=matrix_low,
+        #         #high=matrix_high,
+        #         low=self.cgd_min,
+        #         high=self.cgd_max,
+        #         shape=(matrix_length,),
+        #         dtype=np.float32
+        #     )
+        # })
+
+        self.action_space = spaces.Box(
+            low=self.action_voltage_min,
+            high=self.action_voltage_max,
+            shape=(self.num_voltages,),
+            dtype=np.float32
+        )
 
         # Observation space for quantum device state - multi-modal with image and voltages
         obs_config = self.config['env']['observation_space']
@@ -319,10 +318,9 @@ class QuantumDeviceEnv(gym.Env):
             info (dict): A dictionary with auxiliary diagnostic information.
         """
 
-        if self._count_rollouts:
-            global_rollouts, elapsed = QuantumDeviceEnv.increment_global_rollout_counter()
-            if global_rollouts % 10 == 0:
-                print(f"[GLOBAL] Total rollouts across all processes: {global_rollouts} | Elapsed: {elapsed:.1f} seconds")
+        global_rollouts, elapsed = QuantumDeviceEnv.increment_global_rollout_counter()
+        if self._count_rollouts and global_rollouts % 10 == 0:
+            print(f"[GLOBAL] Total rollouts across all processes: {global_rollouts} | Elapsed: {elapsed:.1f} seconds")
         
         # Handle seed if provided
         if seed is not None:
@@ -388,10 +386,11 @@ class QuantumDeviceEnv(gym.Env):
         self.current_step += 1
         # action is now a numpy array of shape (num_voltages,) containing voltage values
 
-        voltages, capacitances = action['action_voltages'], action['capacitances']
+        # voltages, capacitances = action['action_voltages'], action['capacitances']
+        voltages = action
 
         self._apply_voltages(voltages) #this step will update the voltages stored in self.device_state
-        self._update_capacitances(capacitances)  # Update capacitance matrix in the model
+        # self._update_capacitances(capacitances)
 
         # --- Determine the reward ---
         reward = self._get_reward()  #will compare current state to target state
@@ -457,12 +456,27 @@ class QuantumDeviceEnv(gym.Env):
         distance = np.linalg.norm(ground_truth_center - current_voltage_center)
         
         # Calculate maximum possible distance in voltage space
-        max_possible_distance = np.sqrt(self.num_voltages) * (self.obs_voltage_max - self.obs_voltage_min)
+        # max_possible_distance = np.sqrt(self.num_voltages) * (self.obs_voltage_max - self.obs_voltage_min)
+        max_possible_distance = np.sqrt(self.num_voltages) * (self.action_voltage_max - self.action_voltage_min)
         
         # Reward = max_possible_distance - current_distance
         # This gives maximum reward when distance = 0 (perfect alignment)
         # and minimum reward (0) when distance = max_possible_distance (worst case)
-        reward = max(max_possible_distance - distance, 0)*0.01
+
+        if self.current_step == self.max_steps:
+            # reward = max(max_possible_distance - distance, 0)*0.01
+            reward = (1 - distance / max_possible_distance) * 100
+        else:
+            reward = 0.0
+
+        # Penalize for taking too many steps (small penalty to encourage efficiency)
+        reward -= self.current_step * 0.1
+
+        at_target = np.all(np.abs(ground_truth_center - current_voltage_center) <= self.tolerance)
+        if at_target:
+            reward += 200.0
+
+        return reward
 
         # Capacitance reward
         Cgd = np.array(self.config['simulator']['model']['Cgd'])
@@ -473,15 +487,6 @@ class QuantumDeviceEnv(gym.Env):
             cgd_dist = np.linalg.norm(cap - Cgd)
         else:
             raise RuntimeError("_get_reward called before model capacitance output was set")
-
-        # Penalize for taking too many steps (small penalty to encourage efficiency)
-        reward -= self.current_step * 0.1
-
-        # ADDED (should be more? what is the maximal reward we can achieve without terminating)
-        # could have a length-based reward, eg. 1000*exp(-current_step)
-        at_target = np.all(np.abs(ground_truth_center - current_voltage_center) <= self.tolerance)
-        if at_target:
-            reward += 200.0
 
         if at_target or self.current_step == self.max_steps:
             reward += 100 * (1 - cgd_dist/self.max_cgd_dist)
