@@ -53,7 +53,7 @@ defaults:
     train_ratio: 32.0
     log_every: 60 # in seconds
     report_every: 300
-    save_every: 600
+    save_every: 7200
     envs: 16
     eval_envs: 4
     eval_eps: 1

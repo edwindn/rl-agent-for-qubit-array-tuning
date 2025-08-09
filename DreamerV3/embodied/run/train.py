@@ -99,16 +99,19 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
         print(f"Worker {worker} episode score={episode_score}, length={episode_length}")
         
         if args.log_to_wandb:
-            # print(f"DEBUG: log_to_wandb is True, worker={worker}")
-            if worker == 0:
-                # print('Logging to Wandb ...')
-                rollouts, elapsed = get_global_rollout_counter()
-                wandb.log({
-                  "score": episode_score,
-                  "length": episode_length,
-                  "rollouts": rollouts,
-                  "time elapsed": elapsed
-                })
+          if worker == 0:
+            rollouts, elapsed = get_global_rollout_counter()
+            wandb.log({
+              "score": episode_score,
+              "length": episode_length,
+              "rollouts": rollouts,
+              "time elapsed": elapsed
+            })
+          else:
+            wandb.log({
+              "score": episode_score,
+              "length": episode_length,
+            })
         
         rew = result.pop('rewards')
         if len(rew) > 1:

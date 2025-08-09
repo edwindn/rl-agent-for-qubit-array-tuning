@@ -1,4 +1,6 @@
 TRAIN:
+python dreamerv3/main.py --task custom_qarray4dot --logger.wandb True
+
 python dreamerv3/main.py --task custom_qarraylatent --configs size12m
 python dreamerv3/main.py --task custom_qarraylatent --jax.platform cpu
 (default task is custom_qarray)
@@ -14,6 +16,7 @@ MODIFIED:
 dreamerv3/main.py
 dreamerv3/configs.yaml
 embodied/envs/from_gym.py
+embodied/run/train.py
 
 ADDED:
 qarray_env.py
