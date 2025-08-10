@@ -8,7 +8,7 @@ import wandb
 import json
 import time
 
-def get_global_rollout_counter(counter_file="/tmp/qarray_global_rollout_counter.json"):
+def get_global_rollout_counter(counter_file):
   with open(counter_file, 'r') as f:
       data = json.load(f)
       now = time.time()
@@ -37,24 +37,6 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
   should_log = embodied.LocalClock(args.log_every)
   should_report = embodied.LocalClock(args.report_every)
   should_save = embodied.LocalClock(args.save_every)
-
-  class ManualRewardTracker:
-      def __init__(self):
-          self.rewards = {}  # worker_id -> accumulated_reward
-      
-      def reset(self, worker):
-          self.rewards[worker] = 0.0
-      
-      def add(self, worker, reward):
-          if worker not in self.rewards:
-              self.rewards[worker] = 0.0
-          self.rewards[worker] += reward
-      
-      def get_total(self, worker):
-          return self.rewards.get(worker, 0.0)
-
-  # Create tracker instance
-  # manual_tracker = ManualRewardTracker()
 
   @elements.timer.section('logfn')
   def logfn(tran, worker):
@@ -100,7 +82,7 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
         
         if args.log_to_wandb:
           if worker == 0:
-            rollouts, elapsed = get_global_rollout_counter()
+            rollouts, elapsed = get_global_rollout_counter(counter_file=args.counter_file)
             wandb.log({
               "score": episode_score,
               "length": episode_length,

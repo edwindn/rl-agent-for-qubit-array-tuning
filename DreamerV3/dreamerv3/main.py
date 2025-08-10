@@ -18,13 +18,17 @@ import threading
 import json
 import time
 
-COUNTER_FILE = "/tmp/qarray_global_rollout_counter.json"
-if os.path.exists(COUNTER_FILE):
-  os.remove(COUNTER_FILE)
-os.makedirs(os.path.dirname(COUNTER_FILE), exist_ok=True)
-with open(COUNTER_FILE, 'w') as f:
-  json.dump({"total_rollouts": 0, "start_time": time.time()}, f)
-os.system(f"cat {COUNTER_FILE}")
+
+def create_counter(COUNTER_FILE):
+  if os.path.exists(COUNTER_FILE):
+    print(f"Removing counter file {COUNTER_FILE} ...")
+    os.remove(COUNTER_FILE)
+  os.makedirs(os.path.dirname(COUNTER_FILE), exist_ok=True)
+  with open(COUNTER_FILE, 'w') as f:
+    json.dump({"total_rollouts": 0, "start_time": time.time()}, f)
+  print(f"Created counter file {COUNTER_FILE}")
+  os.system(f"cat {COUNTER_FILE}")
+  print("\n")
 
 def main(argv=None):
   from .agent import Agent
@@ -39,6 +43,7 @@ def main(argv=None):
   config = elements.Flags(config).parse(other)
   config = config.update(logdir=(
       config.logdir.format(timestamp=elements.timestamp())))
+  config = config.update(counter_file=COUNTER_FILE)
 
   if 'JOB_COMPLETION_INDEX' in os.environ:
     config = config.update(replica=int(os.environ['JOB_COMPLETION_INDEX']))
@@ -81,6 +86,7 @@ def main(argv=None):
       consec_report=config.consec_report,
       replay_context=config.replay_context,
       log_to_wandb=log_to_wandb,
+      counter_file=COUNTER_FILE,
   )
 
   if config.script == 'train':
@@ -248,6 +254,10 @@ def make_env(config, index, **overrides):
       qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_4dot_env.py')
       sys.path.insert(0, os.path.dirname(qarray_env_path))
       from qarray_4dot_env import QuantumDeviceEnv
+    elif task == 'qarray2dot':
+      qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_2dot_env.py')
+      sys.path.insert(0, os.path.dirname(qarray_env_path))
+      from qarray_2dot_env import QuantumDeviceEnv
   
   ctor = {
       'dummy': 'embodied.envs.dummy:Dummy',
@@ -270,7 +280,7 @@ def make_env(config, index, **overrides):
       'custom': lambda task, **kw: (
           from_gym.FromGym(NavEnv(**kw)) if task == 'nav' 
           else from_gym.FromGym(QuantumDeviceEnv(**kw)) if task == 'qarray'
-          else from_gym.FromGym(QuantumDeviceEnv(**kw)) if task == 'qarray4dot'
+          else from_gym.FromGym(QuantumDeviceEnv(counter_file=config.counter_file, **kw)) if task in ['qarray4dot', 'qarray2dot']
           else None
       ),
   }[suite]
@@ -316,4 +326,7 @@ def make_stream(config, replay, mode):
 
 
 if __name__ == '__main__':
+  date_time = time.strftime("%Y-%m-%d-%H:%M:%S", time.gmtime())
+  COUNTER_FILE = f"/tmp/qarray_global_rollout_counter_{date_time}.json"
+  create_counter(COUNTER_FILE)
   main()

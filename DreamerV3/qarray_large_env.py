@@ -61,7 +61,7 @@ class QuantumDeviceEnv(gym.Env):
     _total_rollouts = 0  # Class-level counter shared across all instances
     _instance_count = 0
     
-    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, count_rollouts=False, counter_file=COUNTER_FILE, **kwargs):
+    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, count_rollouts=False, counter_file=QuantumDeviceEnv.COUNTER_FILE, **kwargs):
         """
         constructor for the environment
 

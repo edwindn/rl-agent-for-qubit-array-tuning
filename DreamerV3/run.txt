@@ -1,5 +1,5 @@
 TRAIN:
-python dreamerv3/main.py --task custom_qarray4dot --logger.wandb True
+python dreamerv3/main.py --task custom_qarray2dot --logger.wandb True
 
 python dreamerv3/main.py --task custom_qarraylatent --configs size12m
 python dreamerv3/main.py --task custom_qarraylatent --jax.platform cpu

@@ -15,8 +15,6 @@ import embodied
 import ruamel.yaml as yaml
 from dreamerv3.agent import Agent
 
-from qarray_env import QuantumDeviceEnv
-
 
 def load_config(config_path='dreamerv3/configs.yaml'):
     """Load DreamerV3 configuration."""
@@ -26,12 +24,13 @@ def load_config(config_path='dreamerv3/configs.yaml'):
     return config
 
 
-def make_env(config, render_mode='rgb_array'):
+def make_env(env, config, render_mode='rgb_array'):
     """Create the quantum environment."""
     from embodied.envs import from_gym
     
     # Create environment with rgb_array render mode for image capture
-    env = from_gym.FromGym(QuantumDeviceEnv(render_mode=render_mode))
+    env = from_gym.FromGym(env(render_mode=render_mode))
+    # env = from_gym.FromGym(QuantumDeviceEnv(render_mode=render_mode))
     
     # Apply wrappers
     for name, space in env.act_space.items():
@@ -46,10 +45,10 @@ def make_env(config, render_mode='rgb_array'):
     return env
 
 
-def load_agent(config, checkpoint_path):
+def load_agent(env, config, checkpoint_path):
     """Load the trained DreamerV3 agent."""
     # Create a temporary environment to get observation and action spaces
-    env = make_env(config)
+    env = make_env(env, config)
     notlog = lambda k: not k.startswith('log/')
     obs_space = {k: v for k, v in env.obs_space.items() if notlog(k)}
     act_space = {k: v for k, v in env.act_space.items() if k != 'reset'}
@@ -78,7 +77,7 @@ def load_agent(config, checkpoint_path):
 
 
 def run_inference(checkpoint_path, num_episodes=5, max_steps_per_episode=50, 
-                 output_dir='inference_frames', config_path='dreamerv3/configs.yaml'):
+                 output_dir='inference_frames', config_path='dreamerv3/configs.yaml', platform='cuda'):
     """Run inference and save frames."""
     
     print(f"Loading configuration from {config_path}")
@@ -87,17 +86,17 @@ def run_inference(checkpoint_path, num_episodes=5, max_steps_per_episode=50,
     # Override some config settings for inference
     config = config.update({
         'task': 'custom_qarray',
-        'jax': {'platform': 'cpu', 'debug': False, 'prealloc': False},
+        'jax': {'platform': platform, 'debug': False, 'prealloc': False},
         'logdir': '/tmp/inference_logdir',
     })
     
     print(f"Loading agent from checkpoint: {checkpoint_path}")
-    agent = load_agent(config, checkpoint_path)
+    agent = load_agent(QuantumDeviceEnv, config, checkpoint_path)
     
     print("Creating environment...")
     
     # Create driver for proper environment interaction
-    make_env_fn = lambda: make_env(config, render_mode='rgb_array')
+    make_env_fn = lambda: make_env(QuantumDeviceEnv, config, render_mode='rgb_array')
     driver = embodied.Driver([make_env_fn], parallel=False)
     
     print(f"Starting inference for {num_episodes} episodes...")
@@ -217,8 +216,8 @@ def main():
     parser = argparse.ArgumentParser(description='Run DreamerV3 inference on QuantumDeviceEnv')
     parser.add_argument('--checkpoint', type=str, required=True,
                        help='Path to the checkpoint directory (e.g., /root/logdir/20250721T102619/ckpt/20250721T112751F343270)')
-    parser.add_argument('--episodes', type=int, default=5,
-                       help='Number of episodes to run (default: 5)')
+    parser.add_argument('--episodes', type=int, default=1,
+                       help='Number of episodes to run')
     parser.add_argument('--max-steps', type=int, default=50,
                        help='Maximum steps per episode (default: 50)')
     parser.add_argument('--output-dir', type=str, default='inference_frames',
@@ -254,4 +253,5 @@ def main():
 
 
 if __name__ == '__main__':
+    from qarray_2dot_env import QuantumDeviceEnv
     main()

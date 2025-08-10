@@ -21,33 +21,6 @@ class QuantumDeviceEnv(gym.Env):
     #rendering info
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    COUNTER_FILE = "/tmp/qarray_global_rollout_counter.json"
-
-    @staticmethod
-    def _init_counter_file():
-        """Ensure the counter file exists and has a start_time."""
-        if not os.path.exists(QuantumDeviceEnv.COUNTER_FILE):
-            print("counter file not found, creating")
-            with open(QuantumDeviceEnv.COUNTER_FILE, 'w') as f:
-                json.dump({"total_rollouts": 0, "start_time": time.time()}, f)
-
-    @staticmethod
-    def increment_global_rollout_counter():
-        """Atomically increment and return the global rollout counter and elapsed time."""
-        QuantumDeviceEnv._init_counter_file()
-        with open(QuantumDeviceEnv.COUNTER_FILE, 'r+') as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            data = json.load(f)
-            data["total_rollouts"] += 1
-            now = time.time()
-            start_time = data.get("start_time", now)
-            elapsed = now - start_time
-            f.seek(0)
-            json.dump(data, f)
-            f.truncate()
-            fcntl.flock(f, fcntl.LOCK_UN)
-            return data["total_rollouts"], elapsed
-
     @staticmethod
     def get_global_rollout_counter():
         QuantumDeviceEnv._init_counter_file()
@@ -61,7 +34,7 @@ class QuantumDeviceEnv(gym.Env):
     _total_rollouts = 0  # Class-level counter shared across all instances
     _instance_count = 0
     
-    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, count_rollouts=False, counter_file=COUNTER_FILE, **kwargs):
+    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, counter_file=None, **kwargs):
         """
         constructor for the environment
 
@@ -76,7 +49,7 @@ class QuantumDeviceEnv(gym.Env):
         QuantumDeviceEnv._instance_count += 1
         self._instance_id = QuantumDeviceEnv._instance_count
         self._local_rollouts = 0
-        self._count_rollouts = count_rollouts
+        self.counter_file = counter_file
 
         # --- Load Configuration ---
         config_path = os.path.join(os.path.dirname(__file__), config_path)
@@ -90,7 +63,7 @@ class QuantumDeviceEnv(gym.Env):
 
 
         # --- Define Action and Observation Spaces ---
-        self.num_voltages = self.config['env']['action_space']['num_voltages']
+        self.num_voltages = 2
         self.action_voltage_min = self.config['env']['action_space']['voltage_range'][0]
         self.action_voltage_max = self.config['env']['action_space']['voltage_range'][1]
 
@@ -134,7 +107,7 @@ class QuantumDeviceEnv(gym.Env):
         # Observation space for quantum device state - multi-modal with image and voltages
         obs_config = self.config['env']['observation_space']
         self.obs_image_size = obs_config['image_size']
-        self.obs_channels = self.num_voltages - 1
+        self.obs_channels = 1
         self.obs_normalization_range = obs_config['normalization_range']
         self.obs_dtype = obs_config['dtype']
         
@@ -166,6 +139,23 @@ class QuantumDeviceEnv(gym.Env):
         # --- For Rendering --- 
         self.render_fps = self.config['training']['render_fps'] #unused for now
         self.render_mode = render_mode or self.config['training']['render_mode']
+
+
+    def _increment_global_counter(self):
+        if self.counter_file is not None:
+            with open(self.counter_file, 'r+') as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                data = json.load(f)
+                data["total_rollouts"] += 1
+                now = time.time()
+                start_time = data.get("start_time", now)
+                elapsed = now - start_time
+                f.seek(0)
+                json.dump(data, f)
+                f.truncate()
+                fcntl.flock(f, fcntl.LOCK_UN)
+                return data["total_rollouts"], elapsed
+
 
     def _init_normalization_params(self):
         """
@@ -284,13 +274,13 @@ class QuantumDeviceEnv(gym.Env):
         # )
 
         z, _ = self.device_state["model"].do2d_open(
-            gate1, voltages[gate1-1]+self.obs_voltage_min, voltages[gate1-1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
-            gate2, voltages[gate2-1]+self.obs_voltage_min, voltages[gate2-1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
+            gate1, voltages[0]+self.obs_voltage_min, voltages[0]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
+            gate2, voltages[1]+self.obs_voltage_min, voltages[1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
         )
         return z
 
 
-    def get_raw_observation(self, gate1, gate2):
+    def get_raw_observation(self):
         """
         Get raw (unnormalized) observation data for debugging purposes.
         
@@ -298,7 +288,7 @@ class QuantumDeviceEnv(gym.Env):
             np.ndarray: Raw charge sensor data of shape (height, width)
         """
         voltage_centers = self.device_state["voltage_centers"]
-        z = self._get_charge_sensor_data(voltage_centers, gate1, gate2)
+        z = self._get_charge_sensor_data(voltage_centers, gate1=2, gate2=3)
         return z[:, :, 0]
 
     def reset(self, seed=None, options=None):
@@ -318,10 +308,8 @@ class QuantumDeviceEnv(gym.Env):
             info (dict): A dictionary with auxiliary diagnostic information.
         """
 
-        global_rollouts, elapsed = QuantumDeviceEnv.increment_global_rollout_counter()
-        if self._count_rollouts and global_rollouts % 10 == 0:
-            print(f"[GLOBAL] Total rollouts across all processes: {global_rollouts} | Elapsed: {elapsed:.1f} seconds")
-        
+        _, _ = self._increment_global_counter()
+
         # Handle seed if provided
         if seed is not None:
             super().reset(seed=seed)
@@ -352,7 +340,7 @@ class QuantumDeviceEnv(gym.Env):
         self.device_state = {
             "model": self.model,
             # "current_voltages": vg_current,
-            "ground_truth_center": optimal_VG_center,
+            "ground_truth_center": optimal_VG_center[1:3],
             "voltage_centers": center
         }
 
@@ -537,42 +525,26 @@ class QuantumDeviceEnv(gym.Env):
         voltage_centers = self.device_state["voltage_centers"]
         
         # Get charge sensor data
-        # self.z = self._get_charge_sensor_data(current_voltages, gate1, gate2)
-        allgates = list(range(1, self.num_voltages+1))
-        self.all_z = []
-        for (gate1, gate2) in zip(allgates[:-1], allgates[1:]):
-            z = self._get_charge_sensor_data(voltage_centers, gate1, gate2)
-            self.all_z.append(z)
-
-
-        all_images = []
-        voltage_centers = self.device_state["voltage_centers"]
+        self.z = self._get_charge_sensor_data(voltage_centers, gate1=2, gate2=3)
 
         expected_voltage_shape = (self.num_voltages,)
         
         if voltage_centers.shape != expected_voltage_shape:
             raise ValueError(f"Voltage observation shape {voltage_centers.shape} does not match expected {expected_voltage_shape}")
 
-
-        for z in self.all_z:
-            # Extract first channel and normalize for image observation
-            channel_data = z[:, :, 0]  # Shape: (height, width)
-            image_obs = self._normalize_observation(channel_data)  # Shape: (height, width, 1)
-            
-            # Create multi-modal observation dictionary with numpy arrays 
-            all_images.append(image_obs)
-
-        all_images = np.concatenate(all_images, axis=-1)
-        # all_images = all_images.squeeze(-1).transpose(1, 2, 0)
+        z = self.z
+        # Extract first channel and normalize for image observation
+        channel_data = z[:, :, 0]  # Shape: (height, width)
+        image_obs = self._normalize_observation(channel_data)  # Shape: (height, width, 1)
             
         # Validate observation structure
         expected_image_shape = (self.obs_image_size[0], self.obs_image_size[1], self.obs_channels)
 
-        if all_images.shape != expected_image_shape:
-            raise ValueError(f"Image observation shape {all_images.shape} does not match expected {expected_image_shape}")
+        if image_obs.shape != expected_image_shape:
+            raise ValueError(f"Image observation shape {image_obs.shape} does not match expected {expected_image_shape}")
 
         return {
-            "image": all_images, # creates a multi-channel image with each adjacent pair of voltage sweeps
+            "image": image_obs, # image for only the middle voltage sweep
             "obs_voltages": voltage_centers
         }
 
@@ -671,7 +643,7 @@ class QuantumDeviceEnv(gym.Env):
             return None
 
 
-    def _render_frame(self, gate1, inference_plot=False):
+    def _render_frame(self, inference_plot=False):
         """
         Internal method to create the render image.
 
@@ -680,9 +652,7 @@ class QuantumDeviceEnv(gym.Env):
         Returns:
             np.ndarray: RGB array representation of the environment state
         """
-        assert gate1 in range(1, self.num_voltages), f"gate1 must be between 1 and {self.num_voltages}, got {gate1}"
-
-        z = self.all_z[gate1-1]
+        z = self.z
 
         if inference_plot:
             vmin, vmax = (self.obs_voltage_min, self.obs_voltage_max)
