@@ -308,7 +308,7 @@ class QuantumDeviceEnv(gym.Env):
             info (dict): A dictionary with auxiliary diagnostic information.
         """
 
-        _, _ = self._increment_global_counter()
+        self._increment_global_counter()
 
         # Handle seed if provided
         if seed is not None:
@@ -339,7 +339,6 @@ class QuantumDeviceEnv(gym.Env):
         # Device state variables (episode-specific)
         self.device_state = {
             "model": self.model,
-            # "current_voltages": vg_current,
             "ground_truth_center": optimal_VG_center[1:3],
             "voltage_centers": center
         }
@@ -434,22 +433,13 @@ class QuantumDeviceEnv(gym.Env):
         """
 
         ground_truth_center = self.device_state["ground_truth_center"]
-        
-        # Get current voltage settings (what the agent controls)
-        # We need to get this from the action that was just applied
-        # Since action is passed to step(), we need to store it or calculate it
         current_voltage_center = self.device_state["voltage_centers"]
         
-        # Calculate distance between target and current (N-dim)
         distance = np.linalg.norm(ground_truth_center - current_voltage_center)
         
-        # Calculate maximum possible distance in voltage space
-        # max_possible_distance = np.sqrt(self.num_voltages) * (self.obs_voltage_max - self.obs_voltage_min)
+        # max_possible_distance = np.sqrt(self.num_voltages) * (self.obs_voltage_max - self.obs_voltage_min)
         max_possible_distance = np.sqrt(self.num_voltages) * (self.action_voltage_max - self.action_voltage_min)
         
-        # Reward = max_possible_distance - current_distance
-        # This gives maximum reward when distance = 0 (perfect alignment)
-        # and minimum reward (0) when distance = max_possible_distance (worst case)
 
         if self.current_step == self.max_steps:
             # reward = max(max_possible_distance - distance, 0)*0.01
@@ -457,7 +447,6 @@ class QuantumDeviceEnv(gym.Env):
         else:
             reward = 0.0
 
-        # Penalize for taking too many steps (small penalty to encourage efficiency)
         reward -= self.current_step * 0.1
 
         at_target = np.all(np.abs(ground_truth_center - current_voltage_center) <= self.tolerance)
@@ -466,7 +455,9 @@ class QuantumDeviceEnv(gym.Env):
 
         return reward
 
-        # Capacitance reward
+        # ---- #
+
+        # Capacitance reward (not implemented in training yet)
         Cgd = np.array(self.config['simulator']['model']['Cgd'])
         cgd_max, cgd_min = self.cgd_max, self.cgd_min
         Cgd = (Cgd - cgd_min) / (cgd_max - cgd_min)  # Normalize capacitance matrix to [0, 1]

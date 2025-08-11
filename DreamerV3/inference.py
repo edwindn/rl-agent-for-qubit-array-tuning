@@ -200,7 +200,7 @@ def run_inference(checkpoint_path, num_episodes=5, max_steps_per_episode=50,
     driver.reset(agent.init_policy)
     
     # Run episodes using the driver's episode-based approach
-    print(f"Running {num_episodes} episodes (will terminate naturally when agent reaches target)...")
+    print(f"Running {num_episodes} episodes (will terminate when agent reaches target)...")
     
     # Use the driver's built-in episode counting - this respects is_last signals
     driver(policy, episodes=num_episodes)

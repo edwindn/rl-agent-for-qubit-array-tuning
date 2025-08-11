@@ -21,33 +21,6 @@ class QuantumDeviceEnv(gym.Env):
     #rendering info
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    COUNTER_FILE = "/tmp/qarray_global_rollout_counter.json"
-
-    @staticmethod
-    def _init_counter_file():
-        """Ensure the counter file exists and has a start_time."""
-        if not os.path.exists(QuantumDeviceEnv.COUNTER_FILE):
-            print("counter file not found, creating")
-            with open(QuantumDeviceEnv.COUNTER_FILE, 'w') as f:
-                json.dump({"total_rollouts": 0, "start_time": time.time()}, f)
-
-    @staticmethod
-    def increment_global_rollout_counter():
-        """Atomically increment and return the global rollout counter and elapsed time."""
-        QuantumDeviceEnv._init_counter_file()
-        with open(QuantumDeviceEnv.COUNTER_FILE, 'r+') as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            data = json.load(f)
-            data["total_rollouts"] += 1
-            now = time.time()
-            start_time = data.get("start_time", now)
-            elapsed = now - start_time
-            f.seek(0)
-            json.dump(data, f)
-            f.truncate()
-            fcntl.flock(f, fcntl.LOCK_UN)
-            return data["total_rollouts"], elapsed
-
     @staticmethod
     def get_global_rollout_counter():
         QuantumDeviceEnv._init_counter_file()
@@ -61,7 +34,7 @@ class QuantumDeviceEnv(gym.Env):
     _total_rollouts = 0  # Class-level counter shared across all instances
     _instance_count = 0
     
-    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, count_rollouts=False, counter_file=QuantumDeviceEnv.COUNTER_FILE, **kwargs):
+    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, counter_file=None, **kwargs):
         """
         constructor for the environment
 
@@ -76,7 +49,7 @@ class QuantumDeviceEnv(gym.Env):
         QuantumDeviceEnv._instance_count += 1
         self._instance_id = QuantumDeviceEnv._instance_count
         self._local_rollouts = 0
-        self._count_rollouts = count_rollouts
+        self.counter_file = counter_file
 
         # --- Load Configuration ---
         config_path = os.path.join(os.path.dirname(__file__), config_path)
@@ -166,6 +139,23 @@ class QuantumDeviceEnv(gym.Env):
         # --- For Rendering --- 
         self.render_fps = self.config['training']['render_fps'] #unused for now
         self.render_mode = render_mode or self.config['training']['render_mode']
+
+
+    def _increment_global_counter(self):
+        if self.counter_file is not None:
+            with open(self.counter_file, 'r+') as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                data = json.load(f)
+                data["total_rollouts"] += 1
+                now = time.time()
+                start_time = data.get("start_time", now)
+                elapsed = now - start_time
+                f.seek(0)
+                json.dump(data, f)
+                f.truncate()
+                fcntl.flock(f, fcntl.LOCK_UN)
+                return data["total_rollouts"], elapsed
+
 
     def _init_normalization_params(self):
         """
@@ -446,37 +436,28 @@ class QuantumDeviceEnv(gym.Env):
         """
 
         ground_truth_center = self.device_state["ground_truth_center"]
-        
-        # Get current voltage settings (what the agent controls)
-        # We need to get this from the action that was just applied
-        # Since action is passed to step(), we need to store it or calculate it
         current_voltage_center = self.device_state["voltage_centers"]
         
-        # Calculate distance between target and current (N-dim)
         distance = np.linalg.norm(ground_truth_center - current_voltage_center)
         
-        # Calculate maximum possible distance in voltage space
-        # max_possible_distance = np.sqrt(self.num_voltages) * (self.obs_voltage_max - self.obs_voltage_min)
-        max_possible_distance = np.sqrt(self.num_voltages) * (self.action_voltage_max - self.action_voltage_min)
-        
-        # Reward = max_possible_distance - current_distance
-        # This gives maximum reward when distance = 0 (perfect alignment)
-        # and minimum reward (0) when distance = max_possible_distance (worst case)
-
+        max_possible_distance = np.sqrt(self.num_voltages) * (self.obs_voltage_max - self.obs_voltage_min)
+        # max_possible_distance = np.sqrt(self.num_voltages) * (self.action_voltage_max - self.action_voltage_min)
+    
         if self.current_step == self.max_steps:
-            # reward = max(max_possible_distance - distance, 0)*0.01
-            reward = (1 - distance / max_possible_distance) * 100
+            reward = max(max_possible_distance - distance, 0)*0.01
+            # reward = (1 - distance / max_possible_distance) * 100
         else:
             reward = 0.0
 
-        # Penalize for taking too many steps (small penalty to encourage efficiency)
         reward -= self.current_step * 0.1
 
         at_target = np.all(np.abs(ground_truth_center - current_voltage_center) <= self.tolerance)
         if at_target:
             reward += 200.0
-
+        
         return reward
+
+        # ---- #
 
         # Capacitance reward
         Cgd = np.array(self.config['simulator']['model']['Cgd'])

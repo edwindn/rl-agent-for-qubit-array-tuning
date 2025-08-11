@@ -137,3 +137,6 @@ class FromGym(embodied.Env):
     if hasattr(space, 'n'):
       return elements.Space(np.int32, (), 0, space.n)
     return elements.Space(space.dtype, space.shape, space.low, space.high)
+
+  def reset(self):
+    return self._env.reset()
