@@ -14,6 +14,8 @@ import io
 import fcntl
 import json
 
+from utils import sigmoid
+
 class QuantumDeviceEnv(gym.Env):
     """
     Represents the device with its quantum dots 
@@ -61,6 +63,7 @@ class QuantumDeviceEnv(gym.Env):
         self.current_step = 0
         self.tolerance = self.config['env']['tolerance']
 
+        self.done_threshold = self.config['env']['done_threshold']
 
         # --- Define Action and Observation Spaces ---
         self.num_voltages = 2
@@ -97,12 +100,20 @@ class QuantumDeviceEnv(gym.Env):
         #     )
         # })
 
-        self.action_space = spaces.Box(
-            low=self.action_voltage_min,
-            high=self.action_voltage_max,
-            shape=(self.num_voltages,),
-            dtype=np.float32
-        )
+        self.action_space = spaces.Dict({
+            'action_voltages': spaces.Box(
+                low=self.action_voltage_min,
+                high=self.action_voltage_max,
+                shape=(self.num_voltages,),
+                dtype=np.float32
+            ),
+            'done': spaces.Box(
+                shape=(1,),
+                low=float('-inf'),
+                high=float('inf'),
+                dtype=np.float32
+            )
+        })
 
         # Observation space for quantum device state - multi-modal with image and voltages
         obs_config = self.config['env']['observation_space']
@@ -374,13 +385,14 @@ class QuantumDeviceEnv(gym.Env):
         # action is now a numpy array of shape (num_voltages,) containing voltage values
 
         # voltages, capacitances = action['action_voltages'], action['capacitances']
-        voltages = action
+        voltages = action['action_voltages'] if 'action_voltages' in action.keys() else action
+        done = action.get('done', None)
 
         self._apply_voltages(voltages) #this step will update the voltages stored in self.device_state
         # self._update_capacitances(capacitances)
 
         # --- Determine the reward ---
-        reward = self._get_reward()  #will compare current state to target state
+        reward = self._get_reward(done)  #will compare current state to target state
         if self.debug:
             print(f"reward: {reward}")
 
@@ -419,7 +431,7 @@ class QuantumDeviceEnv(gym.Env):
         """
         return np.random.uniform(self.action_voltage_min-self.obs_voltage_min, self.action_voltage_max-self.obs_voltage_max, self.num_voltages)
     
-    def _get_reward(self):
+    def _get_reward(self, done=None):
         """
         Get the reward for the current state.
 
@@ -452,6 +464,17 @@ class QuantumDeviceEnv(gym.Env):
         at_target = np.all(np.abs(ground_truth_center - current_voltage_center) <= self.tolerance)
         if at_target:
             reward += 200.0
+
+        if done is not None:
+            prob = sigmoid(done)
+            if prob > self.done_threshold:
+                if at_target:
+                    reward += 100.0
+                else:
+                    reward -= 10.0
+            elif prob <= self.done_threshold:
+                if at_target:
+                    reward -= 100.0
 
         return reward
 

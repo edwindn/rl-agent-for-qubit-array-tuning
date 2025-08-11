@@ -109,6 +109,7 @@ env:
   
   #tolerance for termination criteria
   tolerance: 0.2
+  done_threshold: 0.5
 
 
 training:

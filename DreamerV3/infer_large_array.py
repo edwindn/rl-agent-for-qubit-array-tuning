@@ -8,6 +8,7 @@ import json
 import matplotlib.image as mpimg
 from functools import partial
 
+from utils import sigmoid
 from qarray_ndot_env import QuantumDeviceEnv as LargeArrayEnv
 from qarray_2dot_env import QuantumDeviceEnv as _2DotEnv
 from inference import load_agent, make_env, load_config
@@ -18,7 +19,7 @@ Runs inference on large array using pairwise predictions on the voltages
 currently merges action voltages using mean
 """
 
-def run_inference(ckpt, ndots, max_steps, platform='cuda', merge_type='mean'):
+def run_inference(ckpt, ndots, max_steps, platform='cuda', merge_type='mean', done_threshold=0.5):
     assert merge_type in ['centered', 'mean', 'override']
     assert merge_type == 'mean', "Currently only 'mean' merge type is supported"
 
@@ -79,7 +80,8 @@ def run_inference(ckpt, ndots, max_steps, platform='cuda', merge_type='mean'):
             out_voltages = acts['action'].flatten()
             outs.append(out_voltages)
 
-            done = acts.get('done', False)
+            done_prob = acts.get('done', float('-inf'))
+            done = sigmoid(done_prob) > done_threshold
             dones.append(done)
 
         if merge_type == 'mean':
