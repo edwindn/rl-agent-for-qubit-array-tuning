@@ -37,7 +37,7 @@ simulator:
     Cds: [[0.08, 0.08, 0.08, 0.08]]
     
     # Gate-to-source capacitance matrix
-    Cgs: [[0.03, 0.03, 0.03, 1]]
+    Cgs: [[0.03, 0.03, 0.03, 0.03]]
     
     # White noise amplitude for charge stability diagram
     white_noise_amplitude: 0.001

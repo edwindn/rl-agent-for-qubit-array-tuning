@@ -4,21 +4,22 @@ import numpy as np
 import yaml
 import os
 from qarray import ChargeSensedDotArray, WhiteNoise, TelegraphNoise, LatchingModel
+from qarray_4dot_env import QuantumDeviceEnv as BaseEnv
 # Set matplotlib backend before importing pyplot to avoid GUI issues
 import matplotlib
 matplotlib.use('Agg')
 import time
-
+from scipy.linalg import block_diag
 import matplotlib.pyplot as plt
 import io
 import fcntl
 import json
 
-class QuantumDeviceEnv(gym.Env):
+class QuantumDeviceEnv(BaseEnv):
     """
-    Represents the device with its quantum dots 
+    Defines the quantum dot array class for multi-agent rollouts
+    note: this class should not be used to train any models, use only at inference time
     """
-    #rendering info
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
     @staticmethod
@@ -34,7 +35,7 @@ class QuantumDeviceEnv(gym.Env):
     _total_rollouts = 0  # Class-level counter shared across all instances
     _instance_count = 0
     
-    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, counter_file=None, **kwargs):
+    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, counter_file=None, ndots=4, **kwargs):
         """
         constructor for the environment
 
@@ -42,9 +43,12 @@ class QuantumDeviceEnv(gym.Env):
 
         init state and variables
         """
-        super().__init__()
+        super(gym.Env).__init__()
 
-        print('Initialising qarray env with 4 dots ...')
+        print(f'Initialising qarray env with {ndots} dots ...')
+
+        assert ndots%4==0, "Currently we only support multiples of 4 dots."
+        self.ndots = ndots
 
         QuantumDeviceEnv._instance_count += 1
         self._instance_id = QuantumDeviceEnv._instance_count
@@ -61,18 +65,20 @@ class QuantumDeviceEnv(gym.Env):
         self.current_step = 0
         self.tolerance = self.config['env']['tolerance']
 
+        optimal_VG_center = self.config['simulator']['measurement']['optimal_VG_center']
+        ovgc = optimal_VG_center[:-1]
+        self.optimal_VG_center = ovgc * (self.ndots//4) + [optimal_VG_center[-1]]
+
 
         # --- Define Action and Observation Spaces ---
-        self.num_voltages = self.config['env']['action_space']['num_voltages']
+        self.num_voltages = self.ndots
         self.action_voltage_min = self.config['env']['action_space']['voltage_range'][0]
         self.action_voltage_max = self.config['env']['action_space']['voltage_range'][1]
 
-        matrix_shape = np.array(self.config['simulator']['model']['Cgd']).shape
+        matrix_shape = (self.ndots, self.ndots)
         matrix_length = np.prod(matrix_shape)
         matrix_low = np.array(self.config['simulator']['model']['Cgd_low']).flatten()
         matrix_high = np.array(self.config['simulator']['model']['Cgd_high']).flatten()
-
-        assert len(matrix_low) == len(matrix_high) == matrix_length
 
         self.capacitances = None
         self.capacitance_shape = matrix_shape
@@ -141,156 +147,6 @@ class QuantumDeviceEnv(gym.Env):
         self.render_mode = render_mode or self.config['training']['render_mode']
 
 
-    def _increment_global_counter(self):
-        if self.counter_file is not None:
-            with open(self.counter_file, 'r+') as f:
-                fcntl.flock(f, fcntl.LOCK_EX)
-                data = json.load(f)
-                data["total_rollouts"] += 1
-                now = time.time()
-                start_time = data.get("start_time", now)
-                elapsed = now - start_time
-                f.seek(0)
-                json.dump(data, f)
-                f.truncate()
-                fcntl.flock(f, fcntl.LOCK_UN)
-                return data["total_rollouts"], elapsed
-
-
-    def _init_normalization_params(self):
-        """
-        Initialize adaptive normalization parameters.
-        Start with conservative bounds and update them as new data is encountered.
-        """
-        if self.debug:
-            print("Initializing adaptive normalization parameters...")
-        
-        # Start with conservative bounds based on typical charge sensor data ranges
-        # These will be updated as we encounter actual data
-        self.data_min = 0.13
-        self.data_max = 0.16
-        self.bounds_initialized = False
-        
-        # Track statistics for adaptive updates
-        self.episode_min = float('inf')
-        self.episode_max = float('-inf')
-        self.global_min = float('inf')
-        self.global_max = float('-inf')
-        self.update_count = 0
-        
-        if self.debug:
-            print(f"Initial normalization range: [{self.data_min:.4f}, {self.data_max:.4f}]")
-
-    def _update_normalization_bounds(self, raw_data):
-        """
-        Update normalization bounds based on new data encountered.
-        Uses adaptive approach to gradually expand bounds while maintaining stability.
-        
-        Args:
-            raw_data (np.ndarray): Raw charge sensor data
-        """
-        # Update episode statistics
-        self.episode_min = min(self.episode_min, np.min(raw_data))
-        self.episode_max = max(self.episode_max, np.max(raw_data))
-        
-        # Update global statistics
-        self.global_min = min(self.global_min, np.min(raw_data))
-        self.global_max = max(self.global_max, np.max(raw_data))
-        
-        # Check if we need to expand bounds
-        needs_update = False
-        new_min = self.data_min
-        new_max = self.data_max
-        
-        # Expand lower bound if needed (with safety margin)
-        if self.global_min < self.data_min:
-            safety_margin = (self.data_max - self.data_min) * 0.05  # 5% safety margin
-            new_min = self.global_min - safety_margin
-            needs_update = True
-            
-        # Expand upper bound if needed (with safety margin)
-        if self.global_max > self.data_max:
-            safety_margin = (self.data_max - self.data_min) * 0.05  # 5% safety margin
-            new_max = self.global_max + safety_margin
-            needs_update = True
-        
-        # Update bounds if needed
-        if needs_update:
-            self.data_min = new_min
-            self.data_max = new_max
-            self.update_count += 1
-            
-            if self.debug:
-                print(f"Updated normalization bounds to [{self.data_min:.4f}, {self.data_max:.4f}] (update #{self.update_count})")
-
-    def _normalize_observation(self, raw_data):
-        """
-        Normalize the raw charge sensor data to the observation space range.
-        Uses adaptive bounds that update as new data is encountered.
-        
-        Args:
-            raw_data (np.ndarray): Raw charge sensor data of shape (height, width)
-            
-        Returns:
-            np.ndarray: Normalized observation of shape (height, width, 1)
-        """
-        # Ensure input is 2D
-        if raw_data.ndim != 2:
-            raise ValueError(f"Expected 2D array, got shape {raw_data.shape}")
-        
-        # Update bounds based on new data
-        self._update_normalization_bounds(raw_data)
-        
-        # Normalize to [0, 1] range
-        normalized = (raw_data - self.data_min) / (self.data_max - self.data_min)
-        
-        # Clip to ensure values are within bounds
-        normalized = np.clip(normalized, 0.0, 1.0)
-        
-        # Scale to uint8 range [0, 255]
-        normalized = (normalized * 255).astype(np.uint8)
-        
-        # Reshape to add channel dimension
-        normalized = normalized.reshape(normalized.shape[0], normalized.shape[1], 1)
-        
-        return normalized
-
-
-    def _get_charge_sensor_data(self, voltages, gate1, gate2):
-        """
-        Get charge sensor data for given voltages.
-        
-        Args:
-            voltages (np.ndarray): 2D voltage grid or voltage center configuration
-            
-        Returns:
-            np.ndarray: Charge sensor data of shape (height, width, channels)
-        """
-        # z, _ = self.device_state["model"].charge_sensor_open(voltages)
-
-        # vg_current = self.model.gate_voltage_composer.do2d(
-        #     gate1, center[0]+self.obs_voltage_min, center[0]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
-        #     gate2, center[1]+self.obs_voltage_min, center[1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
-        # )
-
-        z, _ = self.device_state["model"].do2d_open(
-            gate1, voltages[gate1-1]+self.obs_voltage_min, voltages[gate1-1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
-            gate2, voltages[gate2-1]+self.obs_voltage_min, voltages[gate2-1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
-        )
-        return z
-
-
-    def get_raw_observation(self, gate1, gate2):
-        """
-        Get raw (unnormalized) observation data for debugging purposes.
-        
-        Returns:
-            np.ndarray: Raw charge sensor data of shape (height, width)
-        """
-        voltage_centers = self.device_state["voltage_centers"]
-        z = self._get_charge_sensor_data(voltage_centers, gate1, gate2)
-        return z[:, :, 0]
-
     def reset(self, seed=None, options=None):
         """
         Resets the environment to an initial state and returns the initial observation.
@@ -308,15 +164,12 @@ class QuantumDeviceEnv(gym.Env):
             info (dict): A dictionary with auxiliary diagnostic information.
         """
 
-        global_rollouts, elapsed = QuantumDeviceEnv.increment_global_rollout_counter()
-        if self._count_rollouts and global_rollouts % 10 == 0:
-            print(f"[GLOBAL] Total rollouts across all processes: {global_rollouts} | Elapsed: {elapsed:.1f} seconds")
-        
-        # Handle seed if provided
+        self._increment_global_counter()
+
         if seed is not None:
-            super().reset(seed=seed)
+            gym.Env.reset(self, seed=seed)
         else:
-            super().reset(seed=None)
+            gym.Env.reset(self, seed=None)
 
         # --- Reset the environment's state ---
         self.current_step = 0
@@ -336,7 +189,7 @@ class QuantumDeviceEnv(gym.Env):
         #     2, center[1]+self.obs_voltage_min, center[1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
         # )
 
-        optimal_VG_center = self.model.optimal_Vg(self.config['simulator']['measurement']['optimal_VG_center'])
+        optimal_VG_center = self.model.optimal_Vg(self.optimal_VG_center)
 
         # Device state variables (episode-specific)
         self.device_state = {
@@ -416,12 +269,7 @@ class QuantumDeviceEnv(gym.Env):
         
         return observation, reward, terminated, truncated, info
     
-    def _random_center(self):
-        """
-        Randomly generate a center voltage for the voltage sweep.
-        """
-        return np.random.uniform(self.action_voltage_min-self.obs_voltage_min, self.action_voltage_max-self.obs_voltage_max, self.num_voltages)
-    
+
     def _get_reward(self):
         """
         Get the reward for the current state.
@@ -455,6 +303,7 @@ class QuantumDeviceEnv(gym.Env):
         if at_target:
             reward += 200.0
         
+        # print(reward)
         return reward
 
         # ---- #
@@ -487,12 +336,32 @@ class QuantumDeviceEnv(gym.Env):
         latching_params = self.config['simulator']['model']['latching_model_parameters']
         latching_model = LatchingModel(**{k: v for k, v in latching_params.items() if k != "Exists"}) if latching_params["Exists"] else None
 
+        Cdd_base = self.config['simulator']['model']['Cdd']
+        Cgd_base = self.config['simulator']['model']['Cgd']
+        Cds_base = self.config['simulator']['model']['Cds']
+        Cgs_base = self.config['simulator']['model']['Cgs']
+
+        model_mats = []
+        for mat in [Cdd_base, Cgd_base]:
+            block_size = np.array(mat).shape[0]
+            num_blocks = self.ndots // block_size
+            out_mat = block_diag(*([mat]*num_blocks))
+            model_mats.append(out_mat)
+
+        Cdd, Cgd = model_mats
+        Cds = [np.array(Cds_base).flatten().tolist() * (self.ndots // 4)]
+        Cgs = [np.array(Cgs_base).flatten().tolist() * (self.ndots // 4)]
+
+        # print(np.array(Cdd).shape)
+        # print(np.array(Cgd).shape)
+        # print(np.array(Cds).shape)
+        # print(np.array(Cgs).shape)
 
         model = ChargeSensedDotArray(
-            Cdd=self.config['simulator']['model']['Cdd'],
-            Cgd=self.config['simulator']['model']['Cgd'],
-            Cds=self.config['simulator']['model']['Cds'],
-            Cgs=self.config['simulator']['model']['Cgs'],
+            Cdd=Cdd,
+            Cgd=Cgd,
+            Cds=Cds,
+            Cgs=Cgs,
             coulomb_peak_width=self.config['simulator']['model']['coulomb_peak_width'],
             T=self.config['simulator']['model']['T'],
             noise_model=noise_model,
@@ -558,238 +427,12 @@ class QuantumDeviceEnv(gym.Env):
         }
 
 
-    def _get_info(self):
-        """
-        Helper method to get auxiliary information about the environment's state.
-
-        Can be used for debugging or logging, but the agent should not use it for learning.
-        """
-        return {
-            "device_state": self.device_state,
-            "current_step": self.current_step,
-            "normalization_range": [self.data_min, self.data_max],
-            "normalization_updates": self.update_count,
-            "global_data_range": [self.global_min, self.global_max],
-            "episode_data_range": [self.episode_min, self.episode_max],
-            "observation_structure": {
-                "image_shape": (self.obs_image_size[0], self.obs_image_size[1], self.obs_channels),
-                "voltage_shape": (self.num_voltages,),
-                "total_modalities": 2
-            }
-        }
-
-    def _apply_voltages(self, voltages):
-        """
-        Apply voltage settings to the quantum device.
-        
-        Args:
-            voltages (np.ndarray): Array of voltage values for each gate
-        """
-
-        voltages = np.array(voltages).flatten().astype(np.float32)
-        assert len(voltages) == self.num_voltages, f"Expected voltages to be of size {self.num_voltages}, got {len(voltages)}"
-
-        self.device_state["voltage_centers"] = voltages
-        
-        # # Create two grids centered around voltages[0] and voltages[1]
-        # # Grid extent from obs_vmin to obs_vmax
-        # x_grid = np.linspace(self.obs_voltage_min, self.obs_voltage_max, self.obs_image_size[1])
-        # y_grid = np.linspace(self.obs_voltage_min, self.obs_voltage_max, self.obs_image_size[0])
-        
-        # # Create 2D grids centered around the voltage values
-        # X, Y = np.meshgrid(x_grid + voltages[0], y_grid + voltages[1])
-
-        # # Update the first two channels with the new grids
-        # self.device_state["current_voltages"][:,:,0] = X
-        # self.device_state["current_voltages"][:,:,1] = Y
-        # self.device_state["voltage_centers"] = np.array(voltages)
-        
-        # # self.device_state["current_voltages"][:,:,2] remains as initialized
-
-        # self.device_state["current_voltages"][:,:,:2] = np.clip(self.device_state["current_voltages"][:,:,:2], self.action_voltage_min, self.action_voltage_max)
-    
-
-    def _extract_voltage_centers(self, voltages):
-        """
-        Extract the voltage center values from the current voltage configuration.
-        This inverses the process in _apply_voltages by finding the center of each 2D grid.
-        
-        Returns:
-            tuple: (voltage[0], voltage[1]) representing the center values of the voltage grids
-        """
-        
-        # Extract the first two channels (voltage grids)
-        v1_grid = voltages[:, :, 0]  # First voltage grid
-        v2_grid = voltages[:, :, 1]  # Second voltage grid
-        
-        # Calculate the center of each grid by taking the median
-        # Since the grids are created by adding voltage centers to linspace grids,
-        # the median of each grid gives us the voltage center
-        voltage_center_1 = np.median(v1_grid)
-        voltage_center_2 = np.median(v2_grid)
-        
-        return np.array([voltage_center_1, voltage_center_2])
-
-    
-    def _update_capacitances(self, capacitances):
-        self.capacitances = capacitances.reshape(self.capacitance_shape)
-         
-
-    def render(self):
-        """
-        Render the environment state.
-        
-        Returns:
-            np.ndarray: RGB array representation of the environment state
-        """
-        if self.render_mode == "rgb_array":
-            return self._render_frame()
-        elif self.render_mode == "human":
-            # For human mode, save the plot and return None
-            self._render_frame()
-            return None
-        else:
-            return None
-
-
-    def _render_frame(self, gate1, inference_plot=False):
-        """
-        Internal method to create the render image.
-
-        We plot the CSD between gate1 and its successor
-        
-        Returns:
-            np.ndarray: RGB array representation of the environment state
-        """
-        assert gate1 in range(1, self.num_voltages), f"gate1 must be between 1 and {self.num_voltages}, got {gate1}"
-
-        z = self.all_z[gate1-1]
-
-        if inference_plot:
-            vmin, vmax = (self.obs_voltage_min, self.obs_voltage_max)
-
-            plt.figure(figsize=(5, 5))
-            plt.imshow(z, extent=[vmin, vmax, vmin, vmax], origin='lower', aspect='auto', cmap='viridis')
-            plt.xlabel('$Vx$')
-            plt.ylabel('$Vy$')
-            plt.title('$z$')
-            plt.axis('equal')
-            #plt.savefig('test_image.png')
-            #plt.close()
-            #return None
-
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            plt.close()
-
-            from PIL import Image
-            img = Image.open(buf)
-            img = np.array(img)
-            return img
-
-        # Get the normalized observation that the agent sees
-        channel_data = z[:, :, 0]  # Shape: (height, width)
-        normalized_obs = self._normalize_observation(channel_data)  # Shape: (height, width, 1)
-        normalized_data = normalized_obs[:, :, 0]  # Remove channel dimension for plotting
-        
-        # Create figure and plot
-        vmin, vmax = (self.obs_voltage_min, self.obs_voltage_max)
-        num_ticks = 5
-        tick_values = np.linspace(vmin, vmax, num_ticks)
-
-        fig, ax = plt.subplots(figsize=(8, 6))
-        im = ax.imshow(normalized_data, cmap='viridis', aspect='auto', vmin=0.0, vmax=1.0)
-        
-        # Set x and y axis ticks to correspond to voltage range
-        ax.set_xticks(np.linspace(0, z.shape[1]-1, num_ticks))
-        ax.set_xticklabels([f'{v:.0f}' for v in tick_values])
-        ax.set_yticks(np.linspace(0, z.shape[0]-1, num_ticks))
-        ax.set_yticklabels([f'{v:.0f}' for v in tick_values])
-        
-        ax.set_xlabel("$\Delta$PL (V)")
-        ax.set_ylabel("$\Delta$PR (V)")
-        ax.set_title("Normalized $|S_{11}|$ (Agent Observation)")
-        
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0])
-        cbar.set_ticklabels([f"{tick:.2f}" for tick in cbar.get_ticks()])
-
-
-        if self.render_mode == "human":
-            # Save plot for human mode
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            plot_path = os.path.join(script_dir, 'quantum_dot_plot.png')
-            plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            print(f"Plot saved as '{plot_path}'")
-            return None
-        else:
-            # Convert to RGB array for rgb_array mode
-            fig.canvas.draw()
-            
-            # Simple approach: save to bytes and load as image
-            try:
-                # Save to bytes buffer
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-                buf.seek(0)
-                
-                # Load as image using PIL
-                from PIL import Image
-                img = Image.open(buf)
-                data = np.array(img)
-                
-                # Convert RGBA to RGB if needed
-                if data.shape[-1] == 4:
-                    data = data[:, :, :3]
-                    
-            except Exception as e:
-                print(f"Error getting RGB data from canvas: {e}")
-                # Last resort: create a simple colored array
-                height, width = normalized_data.shape
-                data = np.zeros((height, width, 3), dtype=np.uint8)
-                # Create a simple visualization based on the normalized data
-                data[:, :, 0] = (normalized_data * 255).astype(np.uint8)  # Red channel
-                data[:, :, 1] = (normalized_data * 255).astype(np.uint8)  # Green channel
-                data[:, :, 2] = (normalized_data * 255).astype(np.uint8)  # Blue channel
-            
-            plt.close()
-            return data
- 
-
-
-    def close(self):
-        """
-        Performs any necessary cleanup.
-        """
-  
-        pass
-    
-
-    def _load_config(self, config_path):
-        """
-        Load configuration from YAML file.
-        
-        Args:
-            config_path (str): Path to the YAML configuration file
-            
-        Returns:
-            dict: Configuration dictionary
-        """
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-            
-        with open(config_path, 'r') as file:
-            config = yaml.safe_load(file)
-            
-        return config
-
-
 if __name__ == "__main__":
     import sys
-    env = QuantumDeviceEnv()
-    env.reset()
+    env = QuantumDeviceEnv(ndots=12)
+    obs, _ = env.reset()
+    print(obs['image'].shape)
+    sys.exit(0)
 
     voltages = [-3.0, 1.0, 0.0, 0.0]
     env._apply_voltages(voltages)

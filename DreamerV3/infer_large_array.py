@@ -6,8 +6,9 @@ import pickle
 from pathlib import Path
 import json
 import matplotlib.image as mpimg
+from functools import partial
 
-from qarray_4dot_env import QuantumDeviceEnv as LargeArrayEnv
+from qarray_ndot_env import QuantumDeviceEnv as LargeArrayEnv
 from qarray_2dot_env import QuantumDeviceEnv as _2DotEnv
 from inference import load_agent, make_env, load_config
 
@@ -17,8 +18,15 @@ Runs inference on large array using pairwise predictions on the voltages
 currently merges action voltages using mean
 """
 
-def run_inference(ckpt, max_steps, platform='cuda', merge_type='centered'):
+def run_inference(ckpt, ndots, max_steps, platform='cuda', merge_type='mean'):
     assert merge_type in ['centered', 'mean', 'override']
+    assert merge_type == 'mean', "Currently only 'mean' merge type is supported"
+
+    if ndots == 2:
+        array_env = _2DotEnv
+    else:
+        array_env = partial(LargeArrayEnv, ndots=ndots)
+    num_scans = ndots - 1
 
     dreamer_config = load_config()
     dreamer_config = dreamer_config.update({
@@ -27,15 +35,14 @@ def run_inference(ckpt, max_steps, platform='cuda', merge_type='centered'):
         'logdir': '/tmp/inference_logdir',
     })
 
-    env = make_env(LargeArrayEnv, dreamer_config, render_mode='rgb_array')
+    env = make_env(array_env, dreamer_config, render_mode='rgb_array')
 
     agent = load_agent(_2DotEnv, dreamer_config, ckpt) # for action size compatibility
 
     obs, _ = env.reset()
     carry = agent.init_policy(batch_size=1) # initial encoder embeddings
-    carry1 = carry
-    carry2 = carry
-    carry3 = carry
+    carry_list = [carry] * num_scans
+
     reward = 0.0
     ep_reward = 0.0
 
@@ -44,20 +51,6 @@ def run_inference(ckpt, max_steps, platform='cuda', merge_type='centered'):
         step += 1
         is_first = (step == 1)
 
-        img1 = obs['image'][:,:,0:1]
-        img1 = np.expand_dims(img1, axis=0)
-        img2 = obs['image'][:,:,1:2]
-        img2 = np.expand_dims(img2, axis=0)
-        img3 = obs['image'][:,:,2:3]
-        img3 = np.expand_dims(img3, axis=0)
-
-        v1 = obs['obs_voltages'][0:2]
-        v1 = np.expand_dims(v1, axis=0)
-        v2 = obs['obs_voltages'][1:3]
-        v2 = np.expand_dims(v2, axis=0)
-        v3 = obs['obs_voltages'][2:]
-        v3 = np.expand_dims(v3, axis=0)
-
         meta_dict = {
             'is_first': np.array([is_first], dtype=bool),
             'is_last': np.array([False], dtype=bool),
@@ -65,23 +58,37 @@ def run_inference(ckpt, max_steps, platform='cuda', merge_type='centered'):
             'reward': np.array([reward], dtype=np.float32)
         }
 
-        obs1 = {'image': img1, 'obs_voltages': v1, **meta_dict}
-        obs2 = {'image': img2, 'obs_voltages': v2, **meta_dict}
-        obs3 = {'image': img3, 'obs_voltages': v3, **meta_dict}
+        outs = []
+        img_list = []
+        dones = []
 
-        carry1, acts1, _ = agent.policy(carry1, obs1)
-        carry2, acts2, _ = agent.policy(carry2, obs2)
-        carry3, acts3, _ = agent.policy(carry3, obs3)
+        for i in range(num_scans):
+            img = obs['image'][:,:,i:i+1]
+            img = np.expand_dims(img, axis=0)
+            img_list.append(img)
+            
+            v = obs['obs_voltages'][i:i+2]
+            assert len(v) == 2, f"Expected 2 voltages, got {len(v)}"
+            v = np.expand_dims(v, axis=0)
 
-        out_voltages1 = acts1['action'].flatten()
-        out_voltages2 = acts2['action'].flatten()
-        out_voltages3 = acts3['action'].flatten()
-        if merge_type == 'centered':
-            out_voltages = [out_voltages1[0]] + out_voltages2.tolist() + [out_voltages3[1]]
-        elif merge_type == 'mean':
-            out_voltages = [out_voltages1[0], (out_voltages1[1]+out_voltages2[0])/2, (out_voltages2[1]+out_voltages3[0])/2, out_voltages3[1]]
-        elif merge_type == 'override':
-            out_voltages = [out_voltages1[0]] + [out_voltages2[0]] + out_voltages3.tolist()
+            input_obs = {'image': img, 'obs_voltages': v, **meta_dict}
+
+            carry, acts, _ = agent.policy(carry_list[i], input_obs)
+            carry_list[i] = carry
+
+            out_voltages = acts['action'].flatten()
+            outs.append(out_voltages)
+
+            done = acts.get('done', False)
+            dones.append(done)
+
+        if merge_type == 'mean':
+            out_voltages = [outs[0][0]]
+            for i in range(num_scans-1):
+                out_voltages.append((outs[i][1]+outs[i+1][0])/2)
+            out_voltages.append(outs[-1][1])
+        else:
+            raise NotImplementedError
 
         action = {
             'action': np.array(out_voltages, dtype=np.float32),
@@ -99,17 +106,14 @@ def run_inference(ckpt, max_steps, platform='cuda', merge_type='centered'):
 
         ep_reward += reward
 
-        if terminated:
-            print(f"Episode terminated successfully with reward {ep_reward} after {step} steps")
+        dones = np.array(dones, dtype=np.bool)
+
+        if np.all(dones) or terminated or truncated or (max_steps is not None and step >= max_steps):
+            print(f"Episode terminated with reward {ep_reward:.2f} ({reward:.2f}) after {step} steps")
             break
 
-        if truncated or (max_steps is not None and step >= max_steps):
-            print(f"Episode truncated with reward {ep_reward} after {step} steps")
-            break
-
-    mpimg.imsave('final_img1.png', img1.squeeze())
-    mpimg.imsave('final_img2.png', img2.squeeze())
-    mpimg.imsave('final_img3.png', img3.squeeze())
+    for i, img in enumerate(img_list):
+        mpimg.imsave(f'final_img_{i}.png', img.squeeze())
 
 
 def run_inference2(ckpt, max_steps, platform='cuda'):
@@ -181,10 +185,11 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("--ckpt", type=str, required=True, help="Path to the model checkpoint")
     parser.add_argument("--max_steps", type=int, default=None, help="Maximum number of steps for agent")
+    parser.add_argument("--ndots", type=int, default=4, help="Number of dots in the quantum device")
     args = parser.parse_args()
     # later extend to large arrays
 
-    run_inference(args.ckpt, args.max_steps, merge_type='mean')
+    run_inference(args.ckpt, args.ndots, args.max_steps, merge_type='mean')
 
 
 if __name__ == "__main__":
