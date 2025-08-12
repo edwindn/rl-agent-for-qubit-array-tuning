@@ -4,62 +4,40 @@
 simulator:
   model:
     # Capacitance matrices for quantum dots (dot-to-dot coupling)
-    Cdd: [
-            [0., 0.3, 0.05, 0.01],
-            [0.3, 0., 0.3, 0.05],
-            [0.05, 0.3, 0., 0.3],
-            [0.01, 0.05, 0.3, 0]
-        ]
+    Cdd: {"min": 0.08, "max": 0.5}
     
     # Gate-to-dot capacitance matrix
-    Cgd: [
-            [1., 0.2, 0.05, 0.01],
-            [0.2, 1., 0.2, 0.05],
-            [0.05, 0.2, 1., 0.2],
-            [0.01, 0.05, 0.2, 1]
-        ]
-
-    Cgd_low: [
-            [0.7, 0.0, 0.0, 0.0],
-            [0.0, 0.7, 0.0, 0.0],
-            [0.0, 0.0, 0.7, 0.0],
-            [0.0, 0.0, 0.0, 0.7]
-        ]
-      
-    Cgd_high: [
-            [1.0, 0.35, 0.35, 0.35],
-            [0.35, 1.0, 0.35, 0.35],
-            [0.35, 0.35, 1.0, 0.35],
-            [0.35, 0.35, 0.35, 1.0]
-    ]
+    Cgd:
+      diagonal: {"min": 0.7, "max": 1.0}
+      off_diagonal: {"min": 0.0, "max": 0.35}
     
     # Dot-to-source capacitance matrix
-    Cds: [[0.08, 0.08, 0.08, 0.08]]
+    Cds: {"min": 0.0, "max": 0.08}
     
     # Gate-to-source capacitance matrix
-    Cgs: [[0.03, 0.03, 0.03, 0.03]]
-    
+    Cgs: {"min": 0.0, "max": 0.1}
+
     # White noise amplitude for charge stability diagram
-    white_noise_amplitude: 0.001
+    white_noise_amplitude: {"min": 0.00, "max": 0.001}
     
     # Telegraph noise parameters (random telegraph noise)
     telegraph_noise_parameters:
-      p01: 0.005  # Probability of transition from 0 to 1
-      p10: 0.1    # Probability of transition from 1 to 0
-      amplitude: 0.02  # Amplitude of telegraph noise
+      p01: {"min": 0.0, "max": 0.01}  # Probability of transition from 0 to 1
+      p10_factor: {"min": 0, "max": 100}    # Factor for probability of transition from 1 to 0
+      amplitude: {"min": 0.0, "max": 0.012}  # Amplitude of telegraph noise
     
     # Latching model parameters for charge state transitions
     latching_model_parameters:
       Exists: false  # Whether latching model is enabled
       n_dots: 4     # Number of quantum dots
-      p_leads: [0.5, 0.5]  # Lead coupling probabilities
-      p_inter: [[0.0, 0.8], [0.8, 0.0]]  # Inter-dot coupling probabilities
+      p_leads: {"min": 0.2, "max": 1.0}  # Lead coupling probabilities
+      p_inter: {"min": 0.2, "max": 1.0}  # Inter-dot coupling probabilities
     
     # Temperature in mK
-    T: 50.0
+    T: {"min": 50, "max": 100}
     
     # Width of coulomb peaks
-    coulomb_peak_width: 0.2
+    coulomb_peak_width: {"min": 0.1, "max": 0.2}
 
     # Algorithm for charge stability diagram
     algorithm: "default"
