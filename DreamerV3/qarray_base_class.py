@@ -16,11 +16,13 @@ import json
 
 from utils import sigmoid
 
-class QuantumDeviceEnv(gym.Env):
-    """
-    Represents the device with its quantum dots 
-    """
-    #rendering info
+"""
+Qarray base class with full randomisation
+
+supports environment initialisation for both training and inference
+"""
+
+class QarrayBaseClass(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
     @staticmethod
@@ -35,7 +37,7 @@ class QuantumDeviceEnv(gym.Env):
 
     _instance_count = 0
     
-    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, counter_file=None, **kwargs):
+    def __init__(self, num_dots, config_path='qarray_4dot_config.yaml', num_voltages=None, render_mode=None, counter_file=None, **kwargs):
         """
         constructor for the environment
 
@@ -44,8 +46,6 @@ class QuantumDeviceEnv(gym.Env):
         init state and variables
         """
         super().__init__()
-
-        print('Initialising qarray env with 4 dots ...')
 
         QuantumDeviceEnv._instance_count += 1
         self._instance_id = QuantumDeviceEnv._instance_count
@@ -64,13 +64,15 @@ class QuantumDeviceEnv(gym.Env):
 
         self.done_threshold = self.config['env']['done_threshold']
 
+        optimal_VG_center = self.config['simulator']['measurement']['optimal_VG_center']
+        ovgc = optimal_VG_center[:-1]
+        self.optimal_VG_center = ovgc * (num_dots//4) + [optimal_VG_center[-1]]
+
         # --- Define Action and Observation Spaces ---
-        self.num_voltages = 2
-        self.num_dots = 4
+        self.num_voltages = num_voltages if num_voltages is not None else num_dots
+        self.num_dots = num_dots
         self.action_voltage_min = self.config['env']['action_space']['voltage_range'][0]
         self.action_voltage_max = self.config['env']['action_space']['voltage_range'][1]
-
-        self.optimal_VG_center = self.config['simulator']['measurement']['optimal_VG_center']
 
         matrix_shape = (self.num_voltages, self.num_voltages)
         matrix_length = np.prod(matrix_shape)
@@ -114,7 +116,7 @@ class QuantumDeviceEnv(gym.Env):
         # Observation space for quantum device state - multi-modal with image and voltages
         obs_config = self.config['env']['observation_space']
         self.obs_image_size = obs_config['image_size']
-        self.obs_channels = 1
+        self.obs_channels = self.num_voltages - 1
         self.obs_normalization_range = obs_config['normalization_range']
         self.obs_dtype = obs_config['dtype']
         
@@ -673,8 +675,8 @@ class QuantumDeviceEnv(gym.Env):
         voltages = np.array(voltages).flatten().astype(np.float32)
         assert len(voltages) == self.num_voltages, f"Expected voltages to be of size {self.num_voltages}, got {len(voltages)}"
 
-        self.device_state["voltage_centers"] = np.clip(voltages, self.action_voltage_min, self.action_voltage_max)
-
+        self.device_state["voltage_centers"] = voltages
+        
         # # Create two grids centered around voltages[0] and voltages[1]
         # # Grid extent from obs_vmin to obs_vmax
         # x_grid = np.linspace(self.obs_voltage_min, self.obs_voltage_max, self.obs_image_size[1])
