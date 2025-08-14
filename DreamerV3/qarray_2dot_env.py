@@ -35,7 +35,7 @@ class QuantumDeviceEnv(gym.Env):
 
     _instance_count = 0
     
-    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, counter_file=None, **kwargs):
+    def __init__(self, config_path='qarray_base_config.yaml', render_mode=None, counter_file=None, **kwargs):
         """
         constructor for the environment
 
@@ -45,7 +45,7 @@ class QuantumDeviceEnv(gym.Env):
         """
         super().__init__()
 
-        print('Initialising qarray env with 4 dots ...')
+        print('Initialising 4-dot env with 2 voltages ...')
 
         QuantumDeviceEnv._instance_count += 1
         self._instance_id = QuantumDeviceEnv._instance_count
@@ -70,7 +70,9 @@ class QuantumDeviceEnv(gym.Env):
         self.action_voltage_min = self.config['env']['action_space']['voltage_range'][0]
         self.action_voltage_max = self.config['env']['action_space']['voltage_range'][1]
 
-        self.optimal_VG_center = self.config['simulator']['measurement']['optimal_VG_center']
+        optimal_center_dots = self.config['simulator']['measurement']['optimal_VG_center']['dots']
+        optimal_center_sensor = self.config['simulator']['measurement']['optimal_VG_center']['sensor']
+        self.optimal_VG_center = [optimal_center_dots] * self.num_dots + [optimal_center_sensor]
 
         matrix_shape = (self.num_voltages, self.num_voltages)
         matrix_length = np.prod(matrix_shape)
@@ -137,14 +139,7 @@ class QuantumDeviceEnv(gym.Env):
         self.obs_voltage_min = self.config['simulator']['measurement']['v_min']
         self.obs_voltage_max = self.config['simulator']['measurement']['v_max']
 
-        self.action_scale_factor = []
-        self.action_offset = []
-        for _ in range(self.num_voltages):
-            self.action_scale_factor.append(np.random.uniform(self.config['env']['action_scale_factor']['min'], self.config['env']['action_scale_factor']['max']))
-            action_offset_fraction = np.random.uniform(self.config['env']['action_offset_fraction']['min'], self.config['env']['action_offset_fraction']['max'])
-            self.action_offset.append(action_offset_fraction * (self.obs_voltage_max - self.obs_voltage_min))
-        self.action_scale_factor = np.array(self.action_scale_factor).astype(np.float32)
-        self.action_offset = np.array(self.action_offset).astype(np.float32)
+        self._init_random_action_scaling()
 
         # --- Initialize Model (one-time setup) ---
         self.model = self._load_model()
@@ -171,6 +166,17 @@ class QuantumDeviceEnv(gym.Env):
                 f.truncate()
                 fcntl.flock(f, fcntl.LOCK_UN)
                 return data["total_rollouts"], elapsed
+
+
+    def _init_random_action_scaling(self):
+        self.action_scale_factor = []
+        self.action_offset = []
+        for _ in range(self.num_voltages):
+            self.action_scale_factor.append(np.random.uniform(self.config['env']['action_scale_factor']['min'], self.config['env']['action_scale_factor']['max']))
+            action_offset_fraction = np.random.uniform(self.config['env']['action_offset_fraction']['min'], self.config['env']['action_offset_fraction']['max'])
+            self.action_offset.append(action_offset_fraction * (self.obs_voltage_max - self.obs_voltage_min))
+        self.action_scale_factor = np.array(self.action_scale_factor).astype(np.float32)
+        self.action_offset = np.array(self.action_offset).astype(np.float32)
 
 
     def _init_normalization_params(self):
@@ -341,6 +347,8 @@ class QuantumDeviceEnv(gym.Env):
 
 
         # Initialize episode-specific voltage state
+        #random action scaling
+        self._init_random_action_scaling()
         #center of current window
         center = self._random_center()
 

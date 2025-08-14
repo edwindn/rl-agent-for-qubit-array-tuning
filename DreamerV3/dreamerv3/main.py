@@ -18,6 +18,13 @@ import threading
 import json
 import time
 
+# modify this to add new environments
+task_dict = {
+  'qarray': 'qarray_env',
+  'qarray2dot': 'qarray_2dot_env_v2',
+  'qarray4dot': 'qarray_4dot_env'
+}
+
 
 def create_counter(COUNTER_FILE):
   if os.path.exists(COUNTER_FILE):
@@ -244,20 +251,26 @@ def make_env(config, index, **overrides):
     from embodied.envs import from_gym
     import sys
     import os
-    
-    if task == 'qarray':
-      # Import the QuantumDeviceEnv from qarray_env.py
-      qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_env.py')
-      sys.path.insert(0, os.path.dirname(qarray_env_path))
-      from qarray_env import QuantumDeviceEnv
-    elif task == 'qarray4dot':
-      qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_4dot_env.py')
-      sys.path.insert(0, os.path.dirname(qarray_env_path))
-      from qarray_4dot_env import QuantumDeviceEnv
-    elif task == 'qarray2dot':
-      qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_2dot_env.py')
-      sys.path.insert(0, os.path.dirname(qarray_env_path))
-      from qarray_2dot_env import QuantumDeviceEnv
+
+    file = task_dict.get(task)
+    qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), f'{file}.py')
+    sys.path.insert(0, os.path.dirname(qarray_env_path))
+    module = importlib.import_module(file)
+    assert hasattr(module, 'QuantumDeviceEnv'), f'Module {file} does not have QuantumDeviceEnv class'
+    QuantumDeviceEnv = getattr(module, 'QuantumDeviceEnv')
+
+    # if task == 'qarray':
+    #   qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_env.py')
+    #   sys.path.insert(0, os.path.dirname(qarray_env_path))
+    #   from qarray_env import QuantumDeviceEnv
+    # elif task == 'qarray4dot':
+    #   qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_4dot_env.py')
+    #   sys.path.insert(0, os.path.dirname(qarray_env_path))
+    #   from qarray_4dot_env import QuantumDeviceEnv
+    # elif task == 'qarray2dot':
+    #   qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_2dot_env_v2.py')
+    #   sys.path.insert(0, os.path.dirname(qarray_env_path))
+    #   from qarray_2dot_env_v2 import QuantumDeviceEnv
   
   ctor = {
       'dummy': 'embodied.envs.dummy:Dummy',
@@ -280,7 +293,7 @@ def make_env(config, index, **overrides):
       'custom': lambda task, **kw: (
           from_gym.FromGym(NavEnv(**kw)) if task == 'nav' 
           else from_gym.FromGym(QuantumDeviceEnv(**kw)) if task == 'qarray'
-          else from_gym.FromGym(QuantumDeviceEnv(counter_file=config.counter_file, **kw)) if task in ['qarray4dot', 'qarray2dot']
+          else from_gym.FromGym(QuantumDeviceEnv(counter_file=config.counter_file, **kw)) if task in task_dict.keys()
           else None
       ),
   }[suite]

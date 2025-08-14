@@ -3,6 +3,8 @@
 # Dreamer config
 DreamerV3/dreamerv3/configs.yaml
 
+model_cache/
+
 # Python
 __pycache__/
 *.py[cod]

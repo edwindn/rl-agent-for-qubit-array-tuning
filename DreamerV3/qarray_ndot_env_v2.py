@@ -17,238 +17,43 @@ import json
 
 """
 Defines the main class for running n-1 dreamers in parallel on n dots.
+
 do NOT train the model on this class
+
+returns n-1 scans and expects n voltages for an update
 """
 
 class QuantumDeviceEnv(QarrayBaseClass):
     """
     Defines the quantum dot array class for multi-agent rollouts
-    note: this class should not be used to train any models, use only at inference time
     """
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    @staticmethod
-    def get_global_rollout_counter():
-        QuantumDeviceEnv._init_counter_file()
-        with open(QuantumDeviceEnv.COUNTER_FILE, 'r') as f:
-            data = json.load(f)
-            now = time.time()
-            start_time = data.get("start_time", now)
-            elapsed = now - start_time
-            return data.get("total_rollouts", 0), elapsed
-
-    _total_rollouts = 0  # Class-level counter shared across all instances
-    _instance_count = 0
-    
-    def __init__(self, config_path='qarray_4dot_config.yaml', render_mode=None, counter_file=None, ndots=4, **kwargs):
-        """
-        constructor for the environment
-
-        define action and observation spaces
-
-        init state and variables
-        """
-
+    def __init__(self, config_path='qarray_base_config.yaml', render_mode=None, counter_file=None, ndots=4, **kwargs):
+        
         assert ndots%4==0, "Currently we only support multiples of 4 dots."
 
         print(f'Initialising qarray env with {ndots} dots ...')
 
-        super().__init__(num_dots=ndots, num_voltages=ndots, config_path=config_path, render_mode=render_mode, counter_file=counter_file, **kwargs)
-
-
-    def reset(self, seed=None, options=None):
-        """
-        Resets the environment to an initial state and returns the initial observation.
-
-        This method is called at the beginning of each new episode. It should
-        reset the state of the environment and return the first observation that
-        the agent will see.
-
-        Args:
-            seed (int, optional): Random seed for reproducibility.
-            options (dict, optional): Additional options for reset.
-
-        Returns:
-            observation (np.ndarray): The initial observation of the space.
-            info (dict): A dictionary with auxiliary diagnostic information.
-        """
-
-        self._increment_global_counter()
-
-        if seed is not None:
-            gym.Env.reset(self, seed=seed)
-        else:
-            gym.Env.reset(self, seed=None)
-
-        # --- Reset the environment's state ---
-        self.current_step = 0
-        
-        # Reset episode-specific normalization statistics
-        self.episode_min = float('inf')
-        self.episode_max = float('-inf')
-
-
-        # Initialize episode-specific voltage state
-        #center of current window
-        center = self._random_center()
-
-        # #current window
-        # vg_current = self.model.gate_voltage_composer.do2d(
-        #     1, center[0]+self.obs_voltage_min, center[0]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
-        #     2, center[1]+self.obs_voltage_min, center[1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
-        # )
-
-        optimal_VG_center = self.model.optimal_Vg(self.optimal_VG_center)
-
-        # Device state variables (episode-specific)
-        self.device_state = {
-            "model": self.model,
-            # "current_voltages": vg_current,
-            "ground_truth_center": optimal_VG_center,
-            "voltage_centers": center
-        }
-
-
-        # --- Return the initial observation ---
-        observation = self._get_obs()
-        info = self._get_info() 
-
-        return observation, info
-
-    def step(self, action):
-        """
-        Updates the environment state based on the agent's action.
-
-        This method is the core of the environment. It takes an action from the
-        agent and calculates the next state, the reward, and whether the
-        episode has ended.
-
-        Args:
-            action: An action provided by the agent.
-
-        Returns:
-            observation (np.ndarray): The observation of the environment's state.
-            reward (float): The amount of reward returned after previous action.
-            terminated (bool): Whether the episode has ended (e.g., reached a goal).
-            truncated (bool): Whether the episode was cut short (e.g., time limit).
-            info (dict): A dictionary with auxiliary diagnostic information.
-        """
-
-        # --- Update the environment's state based on the action ---
-        self.current_step += 1
-        # action is now a numpy array of shape (num_voltages,) containing voltage values
-
-        # voltages, capacitances = action['action_voltages'], action['capacitances']
-        voltages = action
-
-        self._apply_voltages(voltages) #this step will update the voltages stored in self.device_state
-        # self._update_capacitances(capacitances)
-
-        # --- Determine the reward ---
-        reward = self._get_reward()  #will compare current state to target state
-        if self.debug:
-            print(f"reward: {reward}")
-
-        # --- Check for termination or truncation conditions ---
-        terminated = False
-        truncated = False
-        
-        if self.current_step >= self.max_steps:
-            truncated = True
-            if self.debug:
-                print("Max steps reached")
-        
-        # Check if the centers of the voltage sweeps are aligned
-        ground_truth_center = self.device_state["ground_truth_center"]
-
-        # Get current voltage settings (what the agent controls)
-        current_voltage_center = self.device_state["voltage_centers"]
-
-        # Compare only the first num_voltages dimensions (ignoring last dimension)
-        at_target = np.all(np.abs(ground_truth_center - current_voltage_center) <= self.tolerance)
-        
-        if at_target:
-            terminated = True
-            if self.debug:
-                print("Target voltage sweep center reached")
-
-        # --- Get the new observation and info ---
-        observation = self._get_obs() #new state
-        info = self._get_info() #diagnostic info
-        
-        return observation, reward, terminated, truncated, info
-    
-
-    def _get_reward(self):
-        """
-        Get the reward for the current state.
-
-        Reward is based on the distance from the target voltage sweep center, with maximum reward
-        when the agent aligns the centers of the voltage sweeps. The reward is calculated
-        as: max_possible_distance - current_distance, where max_possible_distance is the maximum
-        possible distance in the 2D voltage space to ensure positive rewards.
-
-        Only considers the first 2 dimensions (ignoring the third dimension).
-        The reward is also penalized by the number of steps taken to encourage efficiency.
-        """
-
-        ground_truth_center = self.device_state["ground_truth_center"]
-        current_voltage_center = self.device_state["voltage_centers"]
-        
-        distance = np.linalg.norm(ground_truth_center - current_voltage_center)
-        
-        max_possible_distance = np.sqrt(self.num_voltages) * (self.obs_voltage_max - self.obs_voltage_min)
-        # max_possible_distance = np.sqrt(self.num_voltages) * (self.action_voltage_max - self.action_voltage_min)
-    
-        if self.current_step == self.max_steps:
-            reward = max(max_possible_distance - distance, 0)*0.01
-            # reward = (1 - distance / max_possible_distance) * 100
-        else:
-            reward = 0.0
-
-        reward -= self.current_step * 0.1
-
-        at_target = np.all(np.abs(ground_truth_center - current_voltage_center) <= self.tolerance)
-        if at_target:
-            reward += 200.0
-        
-        # print(reward)
-        return reward
-
-        # ---- #
-
-        # Capacitance reward
-        Cgd = np.array(self.config['simulator']['model']['Cgd'])
-        cgd_max, cgd_min = self.cgd_max, self.cgd_min
-        Cgd = (Cgd - cgd_min) / (cgd_max - cgd_min)  # Normalize capacitance matrix to [0, 1]
-        if self.capacitances is not None:
-            cap = (self.capacitances - cgd_min) / (cgd_max - cgd_min)
-            cgd_dist = np.linalg.norm(cap - Cgd)
-        else:
-            raise RuntimeError("_get_reward called before model capacitance output was set")
-
-        if at_target or self.current_step == self.max_steps:
-            reward += 100 * (1 - cgd_dist/self.max_cgd_dist)
-            if self.debug:
-                print(f"Applied capacitance reward of {100 * (1 - cgd_dist/self.max_cgd_dist):.2f}")
-
-        return reward
+        super().__init__(num_dots=ndots, num_voltages=ndots, randomise_actions=False, config_path=config_path, render_mode=render_mode, counter_file=counter_file, **kwargs)
 
 
     def _load_model(self):
         """
         Load the model from the config file.
         """
-        white_noise = WhiteNoise(amplitude=self.config['simulator']['model']['white_noise_amplitude'])
-        telegraph_noise = TelegraphNoise(**self.config['simulator']['model']['telegraph_noise_parameters'])
+
+        model_params = self._gen_random_qarray_params()
+
+        white_noise = WhiteNoise(amplitude=model_params['white_noise_amplitude'])
+        telegraph_noise = TelegraphNoise(**model_params['telegraph_noise_parameters'])
         noise_model = white_noise + telegraph_noise
-        latching_params = self.config['simulator']['model']['latching_model_parameters']
+        latching_params = model_params['latching_model_parameters']
         latching_model = LatchingModel(**{k: v for k, v in latching_params.items() if k != "Exists"}) if latching_params["Exists"] else None
 
-        Cdd_base = self.config['simulator']['model']['Cdd']
-        Cgd_base = self.config['simulator']['model']['Cgd']
-        Cds_base = self.config['simulator']['model']['Cds']
-        Cgs_base = self.config['simulator']['model']['Cgs']
+        Cdd_base = model_params['Cdd']
+        Cgd_base = model_params['Cgd']
+        Cds_base = model_params['Cds']
+        Cgs_base = model_params['Cgs']
 
         model_mats = []
         for mat in [Cdd_base, Cgd_base]:
@@ -271,19 +76,19 @@ class QuantumDeviceEnv(QarrayBaseClass):
             Cgd=Cgd,
             Cds=Cds,
             Cgs=Cgs,
-            coulomb_peak_width=self.config['simulator']['model']['coulomb_peak_width'],
-            T=self.config['simulator']['model']['T'],
+            coulomb_peak_width=model_params['coulomb_peak_width'],
+            T=model_params['T'],
             noise_model=noise_model,
             latching_model=latching_model,
-            algorithm=self.config['simulator']['model']['algorithm'],
-            implementation=self.config['simulator']['model']['implementation'],
-            max_charge_carriers=self.config['simulator']['model']['max_charge_carriers'],
+            algorithm=model_params['algorithm'],
+            implementation=model_params['implementation'],
+            max_charge_carriers=model_params['max_charge_carriers'],
         )
-        
+
         model.gate_voltage_composer.virtual_gate_matrix = self.config['simulator']['virtual_gate_matrix']
 
-
         return model
+
 
     def _get_obs(self):
         """
@@ -334,6 +139,70 @@ class QuantumDeviceEnv(QarrayBaseClass):
             "image": all_images, # creates a multi-channel image with each adjacent pair of voltage sweeps
             "obs_voltages": voltage_centers
         }
+
+    
+
+    def reset(self, seed=None, options=None):
+        """
+        Resets the environment to an initial state and returns the initial observation.
+
+        This method is called at the beginning of each new episode. It should
+        reset the state of the environment and return the first observation that
+        the agent will see.
+
+        Args:
+            seed (int, optional): Random seed for reproducibility.
+            options (dict, optional): Additional options for reset.
+
+        Returns:
+            observation (np.ndarray): The initial observation of the space.
+            info (dict): A dictionary with auxiliary diagnostic information.
+        """
+
+        self._increment_global_counter()
+
+        # Handle seed if provided
+        if seed is not None:
+            super().reset(seed=seed)
+        else:
+            super().reset(seed=None)
+
+        # --- Reset the environment's state ---
+        self.current_step = 0
+        
+        # Reset episode-specific normalization statistics
+        self.episode_min = float('inf')
+        self.episode_max = float('-inf')
+
+
+        # Initialize episode-specific voltage state
+        #random actions scaling
+        self._init_random_action_scaling()
+        #center of current window
+        center = self._random_center()
+
+        # #current window
+        # vg_current = self.model.gate_voltage_composer.do2d(
+        #     1, center[0]+self.obs_voltage_min, center[0]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution'],
+        #     2, center[1]+self.obs_voltage_min, center[1]+self.obs_voltage_max, self.config['simulator']['measurement']['resolution']
+        # )
+
+        optimal_VG_center = self.model.optimal_Vg(self.optimal_VG_center)
+
+        # Device state variables (episode-specific)
+        self.device_state = {
+            "model": self.model,
+            "ground_truth_center": optimal_VG_center,
+            "voltage_centers": center
+        }
+
+
+        # --- Return the initial observation ---
+        observation = self._get_obs()
+        info = self._get_info() 
+
+        return observation, info
+
 
 
 if __name__ == "__main__":

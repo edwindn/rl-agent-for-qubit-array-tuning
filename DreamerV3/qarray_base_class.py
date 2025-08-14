@@ -8,7 +8,6 @@ from qarray import ChargeSensedDotArray, WhiteNoise, TelegraphNoise, LatchingMod
 import matplotlib
 matplotlib.use('Agg')
 import time
-
 import matplotlib.pyplot as plt
 import io
 import fcntl
@@ -27,8 +26,8 @@ class QarrayBaseClass(gym.Env):
 
     @staticmethod
     def get_global_rollout_counter():
-        QuantumDeviceEnv._init_counter_file()
-        with open(QuantumDeviceEnv.COUNTER_FILE, 'r') as f:
+        QarrayBaseClass._init_counter_file()
+        with open(QarrayBaseClass.COUNTER_FILE, 'r') as f:
             data = json.load(f)
             now = time.time()
             start_time = data.get("start_time", now)
@@ -37,7 +36,7 @@ class QarrayBaseClass(gym.Env):
 
     _instance_count = 0
     
-    def __init__(self, num_dots, config_path='qarray_4dot_config.yaml', num_voltages=None, render_mode=None, counter_file=None, **kwargs):
+    def __init__(self, num_dots, randomise_actions, config_path='qarray_base_config.yaml', num_voltages=None, render_mode=None, counter_file=None, **kwargs):
         """
         constructor for the environment
 
@@ -47,8 +46,8 @@ class QarrayBaseClass(gym.Env):
         """
         super().__init__()
 
-        QuantumDeviceEnv._instance_count += 1
-        self._instance_id = QuantumDeviceEnv._instance_count
+        QarrayBaseClass._instance_count += 1
+        self._instance_id = QarrayBaseClass._instance_count
         self._local_rollouts = 0
         self.counter_file = counter_file
 
@@ -64,9 +63,9 @@ class QarrayBaseClass(gym.Env):
 
         self.done_threshold = self.config['env']['done_threshold']
 
-        optimal_VG_center = self.config['simulator']['measurement']['optimal_VG_center']
-        ovgc = optimal_VG_center[:-1]
-        self.optimal_VG_center = ovgc * (num_dots//4) + [optimal_VG_center[-1]]
+        optimal_center_dots = self.config['simulator']['measurement']['optimal_VG_center']['dots']
+        optimal_center_sensor = self.config['simulator']['measurement']['optimal_VG_center']['sensor']
+        self.optimal_VG_center = [optimal_center_dots] * num_dots + [optimal_center_sensor]
 
         # --- Define Action and Observation Spaces ---
         self.num_voltages = num_voltages if num_voltages is not None else num_dots
@@ -76,27 +75,8 @@ class QarrayBaseClass(gym.Env):
 
         matrix_shape = (self.num_voltages, self.num_voltages)
         matrix_length = np.prod(matrix_shape)
-
-        self.capacitances = None
         self.capacitance_shape = matrix_shape
         self.max_cgd_dist = np.linalg.norm(np.ones(matrix_shape)) # since we normalise the capacitances in get_reward
-
-        # self.action_space = spaces.Dict({
-        #     'action_voltages': spaces.Box(
-        #         low=self.action_voltage_min,
-        #         high=self.action_voltage_max,
-        #         shape=(self.num_voltages,),
-        #         dtype=np.float32
-        #     ),
-        #     'capacitances': spaces.Box(
-        #         #low=matrix_low,
-        #         #high=matrix_high,
-        #         low=self.cgd_min,
-        #         high=self.cgd_max,
-        #         shape=(matrix_length,),
-        #         dtype=np.float32
-        #     )
-        # })
 
         self.action_space = spaces.Dict({
             'action_voltages': spaces.Box(
@@ -139,14 +119,8 @@ class QarrayBaseClass(gym.Env):
         self.obs_voltage_min = self.config['simulator']['measurement']['v_min']
         self.obs_voltage_max = self.config['simulator']['measurement']['v_max']
 
-        self.action_scale_factor = []
-        self.action_offset = []
-        for _ in range(self.num_voltages):
-            self.action_scale_factor.append(np.random.uniform(self.config['env']['action_scale_factor']['min'], self.config['env']['action_scale_factor']['max']))
-            action_offset_fraction = np.random.uniform(self.config['env']['action_offset_fraction']['min'], self.config['env']['action_offset_fraction']['max'])
-            self.action_offset.append(action_offset_fraction * (self.obs_voltage_max - self.obs_voltage_min))
-        self.action_scale_factor = np.array(self.action_scale_factor).astype(np.float32)
-        self.action_offset = np.array(self.action_offset).astype(np.float32)
+        self.randomise_actions = randomise_actions
+        self._init_random_action_scaling()
 
         # --- Initialize Model (one-time setup) ---
         self.model = self._load_model()
@@ -173,6 +147,21 @@ class QarrayBaseClass(gym.Env):
                 f.truncate()
                 fcntl.flock(f, fcntl.LOCK_UN)
                 return data["total_rollouts"], elapsed
+
+    
+    def _init_random_action_scaling(self):
+        if self.randomise_actions:
+            self.action_scale_factor = []
+            self.action_offset = []
+            for _ in range(self.num_voltages):
+                self.action_scale_factor.append(np.random.uniform(self.config['env']['action_scale_factor']['min'], self.config['env']['action_scale_factor']['max']))
+                action_offset_fraction = np.random.uniform(self.config['env']['action_offset_fraction']['min'], self.config['env']['action_offset_fraction']['max'])
+                self.action_offset.append(action_offset_fraction * (self.obs_voltage_max - self.obs_voltage_min))
+            self.action_scale_factor = np.array(self.action_scale_factor).astype(np.float32)
+            self.action_offset = np.array(self.action_offset).astype(np.float32)
+        else:
+            self.action_scale_factor = np.ones(self.num_voltages).astype(np.float32)
+            self.action_offset = np.zeros(self.num_voltages).astype(np.float32)
 
 
     def _init_normalization_params(self):
@@ -343,6 +332,8 @@ class QarrayBaseClass(gym.Env):
 
 
         # Initialize episode-specific voltage state
+        #random actions scaling
+        self._init_random_action_scaling()
         #center of current window
         center = self._random_center()
 
@@ -590,6 +581,9 @@ class QarrayBaseClass(gym.Env):
         latching_params = model_params['latching_model_parameters']
         latching_model = LatchingModel(**{k: v for k, v in latching_params.items() if k != "Exists"}) if latching_params["Exists"] else None
 
+        self.model_cgd = model_params['Cgd']
+        self.model_cdd = model_params['Cdd']
+        
         model = ChargeSensedDotArray(
             Cdd=model_params['Cdd'],
             Cgd=model_params['Cgd'],
@@ -675,50 +669,7 @@ class QarrayBaseClass(gym.Env):
         voltages = np.array(voltages).flatten().astype(np.float32)
         assert len(voltages) == self.num_voltages, f"Expected voltages to be of size {self.num_voltages}, got {len(voltages)}"
 
-        self.device_state["voltage_centers"] = voltages
-        
-        # # Create two grids centered around voltages[0] and voltages[1]
-        # # Grid extent from obs_vmin to obs_vmax
-        # x_grid = np.linspace(self.obs_voltage_min, self.obs_voltage_max, self.obs_image_size[1])
-        # y_grid = np.linspace(self.obs_voltage_min, self.obs_voltage_max, self.obs_image_size[0])
-        
-        # # Create 2D grids centered around the voltage values
-        # X, Y = np.meshgrid(x_grid + voltages[0], y_grid + voltages[1])
-
-        # # Update the first two channels with the new grids
-        # self.device_state["current_voltages"][:,:,0] = X
-        # self.device_state["current_voltages"][:,:,1] = Y
-        # self.device_state["voltage_centers"] = np.array(voltages)
-        
-        # # self.device_state["current_voltages"][:,:,2] remains as initialized
-
-        # self.device_state["current_voltages"][:,:,:2] = np.clip(self.device_state["current_voltages"][:,:,:2], self.action_voltage_min, self.action_voltage_max)
-    
-
-    def _extract_voltage_centers(self, voltages):
-        """
-        Extract the voltage center values from the current voltage configuration.
-        This inverses the process in _apply_voltages by finding the center of each 2D grid.
-        
-        Returns:
-            tuple: (voltage[0], voltage[1]) representing the center values of the voltage grids
-        """
-        
-        # Extract the first two channels (voltage grids)
-        v1_grid = voltages[:, :, 0]  # First voltage grid
-        v2_grid = voltages[:, :, 1]  # Second voltage grid
-        
-        # Calculate the center of each grid by taking the median
-        # Since the grids are created by adding voltage centers to linspace grids,
-        # the median of each grid gives us the voltage center
-        voltage_center_1 = np.median(v1_grid)
-        voltage_center_2 = np.median(v2_grid)
-        
-        return np.array([voltage_center_1, voltage_center_2])
-
-    
-    def _update_capacitances(self, capacitances):
-        self.capacitances = capacitances.reshape(self.capacitance_shape)
+        self.device_state["voltage_centers"] = np.clip(voltages, self.action_voltage_min, self.action_voltage_max)
          
 
     def render(self):
@@ -872,7 +823,7 @@ class QarrayBaseClass(gym.Env):
 
 if __name__ == "__main__":
     import sys
-    env = QuantumDeviceEnv()
+    env = QarrayBaseClass(num_dots=4, num_voltages=2, randomise_actions=False)
     env.reset()
 
     voltages = [-3.0, 1.0]
@@ -886,9 +837,4 @@ if __name__ == "__main__":
     frame = env._render_frame(inference_plot=True)
     path = "quantum_dot_plot.png"
     plt.imsave(path, frame, cmap='viridis')
-    # sample_action = np.array([-1, -1])
-    # env.step(sample_action)
-    # frame = env._render_frame(inference_plot=True)
-    # path = "quantum_dot_plot_2.png"
-    # plt.imsave(path, frame, cmap='viridis')
-    # env.close()
+    env.close()

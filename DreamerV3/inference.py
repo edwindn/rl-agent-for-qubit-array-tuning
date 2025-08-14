@@ -215,7 +215,7 @@ def run_inference(checkpoint_path, num_episodes=5, max_steps_per_episode=50,
 def main():
     parser = argparse.ArgumentParser(description='Run DreamerV3 inference on QuantumDeviceEnv')
     parser.add_argument('--checkpoint', type=str, required=True,
-                       help='Path to the checkpoint directory (e.g., /root/logdir/20250721T102619/ckpt/20250721T112751F343270)')
+                       help='Path to the model checkpoint')
     parser.add_argument('--episodes', type=int, default=1,
                        help='Number of episodes to run')
     parser.add_argument('--max-steps', type=int, default=50,
