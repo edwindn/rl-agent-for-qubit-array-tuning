@@ -16,7 +16,7 @@ def main():
         vf_coef=1e-5,
     )
 
-    model.learn(total_timesteps=1_000_000, progress_bar=True)
+    model.learn(total_timesteps=500_000, progress_bar=True)
     model.save("recurrent_ppo_v0")
 
 

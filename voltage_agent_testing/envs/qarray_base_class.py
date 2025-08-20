@@ -78,20 +78,27 @@ class QarrayBaseClass(gym.Env):
         self.capacitance_shape = matrix_shape
         self.max_cgd_dist = np.linalg.norm(np.ones(matrix_shape)) # since we normalise the capacitances in get_reward
 
-        self.action_space = spaces.Dict({
-            'action_voltages': spaces.Box(
-                low=self.action_voltage_min,
-                high=self.action_voltage_max,
-                shape=(self.num_voltages,),
-                dtype=np.float32
-            ),
-            'done': spaces.Box(
-                shape=(1,),
-                low=float('-inf'),
-                high=float('inf'),
-                dtype=np.float32
-            )
-        })
+        # self.action_space = spaces.Dict({
+        #     'action_voltages': spaces.Box(
+        #         low=self.action_voltage_min,
+        #         high=self.action_voltage_max,
+        #         shape=(self.num_voltages,),
+        #         dtype=np.float32
+        #     ),
+        #     'done': spaces.Box(
+        #         shape=(1,),
+        #         low=float('-inf'),
+        #         high=float('inf'),
+        #         dtype=np.float32
+        #     )
+        # })
+        # no need to add done here as we have a separate done model
+        self.action_space = spaces.Box(
+            low=self.action_voltage_min,
+            high=self.action_voltage_max,
+            shape=(self.num_voltages,),
+            dtype=np.float32
+        )
 
         # Observation space for quantum device state - multi-modal with image and voltages
         obs_config = self.config['env']['observation_space']

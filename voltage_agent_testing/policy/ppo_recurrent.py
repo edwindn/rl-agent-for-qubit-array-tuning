@@ -1,6 +1,6 @@
 from copy import deepcopy
 from typing import Any, ClassVar, Optional, TypeVar, Union
-
+from dataclasses import dataclass
 from tqdm import tqdm
 import wandb
 import numpy as np
@@ -15,21 +15,30 @@ from stable_baselines3.common.utils import FloatSchedule, explained_variance, ob
 from stable_baselines3.common.vec_env import VecEnv
 
 from sb3_contrib.common.recurrent.buffers import RecurrentDictRolloutBuffer, RecurrentRolloutBuffer
-from sb3_contrib.common.recurrent.policies import RecurrentActorCriticPolicy
 from sb3_contrib.common.recurrent.type_aliases import RNNStates
 from sb3_contrib.ppo_recurrent.policies import CnnLstmPolicy, MlpLstmPolicy, MultiInputLstmPolicy
 
 SelfRecurrentPPO = TypeVar("SelfRecurrentPPO", bound="RecurrentPPO")
 
-from policy import CustomFeatureExtractor, CustomAgentPolicy
+try:
+    from custom_policy import RecurrentActorCriticPolicy
+    from custom_feature_extractor import CustomFeatureExtractor
+except ModuleNotFoundError:
+    from policy.custom_policy import RecurrentActorCriticPolicy
+    from policy.custom_feature_extractor import CustomFeatureExtractor
+
 
 @dataclass
 class MultiAgentSetup:
+    num_dots: int = 4
     num_barrier_agents: int = 3
     num_gate_agents: int = 4
+    obs_image_size: int = 128
+    gate_obs_image_channels: int = 2
+    barrier_obs_image_channels: int = 1
+    num_agent_voltages: int = 1 # both obs and action
+
     
-
-
 
 class RecurrentPPO(OnPolicyAlgorithm):
     """
@@ -77,9 +86,8 @@ class RecurrentPPO(OnPolicyAlgorithm):
     """
 
     policy_aliases: ClassVar[dict[str, type[BasePolicy]]] = {
-        "MlpLstmPolicy": MlpLstmPolicy,
+        "CustomRecurrentPolicy": RecurrentActorCriticPolicy,
         "CnnLstmPolicy": CnnLstmPolicy,
-        "MultiInputLstmPolicy": MultiInputLstmPolicy,
     }
 
     def __init__(
@@ -104,6 +112,7 @@ class RecurrentPPO(OnPolicyAlgorithm):
         stats_window_size: int = 100,
         tensorboard_log: Optional[str] = None,
         policy_kwargs: Optional[dict[str, Any]] = None,
+        optimizer_kwargs: Optional[dict[str, Any]] = None,
         verbose: int = 0,
         use_wandb: bool = False,
         seed: Optional[int] = None,
@@ -134,6 +143,7 @@ class RecurrentPPO(OnPolicyAlgorithm):
                 spaces.Discrete,
                 spaces.MultiDiscrete,
                 spaces.MultiBinary,
+                spaces.Dict,
             ),
         )
 
@@ -143,9 +153,14 @@ class RecurrentPPO(OnPolicyAlgorithm):
         self.clip_range_vf = clip_range_vf
         self.normalize_advantage = normalize_advantage
         self.target_kl = target_kl
+        self.optimizer_kwargs = optimizer_kwargs
         self._last_lstm_states = None
 
         self.use_wandb = use_wandb
+
+        self.multi_agent_setup = MultiAgentSetup()
+        self.num_gates = self.multi_agent_setup.num_dots
+        self.num_barriers = self.num_gates - 1
 
         # for mean reward logging
         self.total_reward = 0.0
@@ -177,25 +192,45 @@ class RecurrentPPO(OnPolicyAlgorithm):
 
         buffer_cls = RecurrentDictRolloutBuffer if isinstance(self.observation_space, spaces.Dict) else RecurrentRolloutBuffer
 
-        self.policy = self.policy_class(
-            self.observation_space,
-            self.action_space,
-            self.lr_schedule,
-            use_sde=self.use_sde,
+        features_extractor_class = CustomFeatureExtractor
+        features_extractor_kwargs = {
+            "features_dim": 256,
+            "voltage_dim": 1,
+        }
+
+        policy_init_kwargs = {
+            "observation_space": self.observation_space,
+            "action_space": self.action_space,
+            "lr_schedule": self.lr_schedule,
+            "use_sde": self.use_sde,
+            "features_extractor_class": features_extractor_class,
+            "features_extractor_kwargs": features_extractor_kwargs,
+            #"shared_lstm": True,
             **self.policy_kwargs,
-        )
-        self.policy = self.policy.to(self.device)
+        }
 
-        # We assume that LSTM for the actor and the critic
-        # have the same architecture
-        lstm = self.policy.lstm_actor
+        self.gate_policy = self.policy_class(**policy_init_kwargs)
+        self.gate_policy = self.gate_policy.to(self.device)
 
-        if not isinstance(self.policy, RecurrentActorCriticPolicy):
+        self.barrier_policy = self.policy_class(**policy_init_kwargs)
+        self.barrier_policy = self.barrier_policy.to(self.device)
+
+
+        # set up one central optimizer for all the policies
+        optimizer_kwargs = {} if self.optimizer_kwargs is None else self.optimizer_kwargs
+        self.gate_optimizer = th.optim.Adam(self.gate_policy.parameters(), lr=self.lr_schedule(1), **optimizer_kwargs)
+        self.barrier_optimizer = th.optim.Adam(self.barrier_policy.parameters(), lr=self.lr_schedule(1), **optimizer_kwargs)
+
+        # We assume that LSTM for the actor and the critic have the same architecture
+        lstm = self.gate_policy.lstm_actor
+
+        if not isinstance(self.gate_policy, RecurrentActorCriticPolicy):
             raise ValueError("Policy must subclass RecurrentActorCriticPolicy")
 
         single_hidden_state_shape = (lstm.num_layers, self.n_envs, lstm.hidden_size)
-        # hidden and cell states for actor and critic
-        self._last_lstm_states = RNNStates(
+
+        # hidden and cell states for actor and critic for each agent
+        last_lstm_states = RNNStates(
             (
                 th.zeros(single_hidden_state_shape, device=self.device),
                 th.zeros(single_hidden_state_shape, device=self.device),
@@ -206,8 +241,15 @@ class RecurrentPPO(OnPolicyAlgorithm):
             ),
         )
 
+        self._last_lstm_states = {
+            "gates": [last_lstm_states] * self.multi_agent_setup.num_gate_agents,
+            "barriers": [last_lstm_states] * self.multi_agent_setup.num_barrier_agents,
+        }
+
         hidden_state_buffer_shape = (self.n_steps, lstm.num_layers, self.n_envs, lstm.hidden_size)
 
+
+        # TODO may need to assign a hidden state per agent to the buffer
         self.rollout_buffer = buffer_cls(
             self.n_steps,
             self.observation_space,
@@ -254,13 +296,15 @@ class RecurrentPPO(OnPolicyAlgorithm):
 
         assert self._last_obs is not None, "No previous observation was provided"
         # Switch to eval mode (this affects batch norm / dropout)
-        self.policy.set_training_mode(False)
+        self.gate_policy.set_training_mode(False)
+        self.barrier_policy.set_training_mode(False)
 
         n_steps = 0
         rollout_buffer.reset()
         # Sample new weights for the state dependent exploration
         if self.use_sde:
-            self.policy.reset_noise(env.num_envs)
+            self.gate_policy.reset_noise(env.num_envs)
+            self.barrier_policy.reset_noise(env.num_envs)
 
         callback.on_rollout_start()
 
@@ -269,12 +313,43 @@ class RecurrentPPO(OnPolicyAlgorithm):
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
-                self.policy.reset_noise(env.num_envs)
+                self.gate_policy.reset_noise(env.num_envs)
+                self.barrier_policy.reset_noise(env.num_envs)
 
             with th.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
                 episode_starts = th.tensor(self._last_episode_starts, dtype=th.float32, device=self.device)
+                # TODO
+                # first split the images and voltages and pass each through each agent's feature extractor
+
+                # print(obs_tensor.shape)
+                # import sys
+                # sys.exit(0)
+                # frames = torch.chunk(obs_tensor, chunks=self.num_gates, dim=-1)
+
+                image_obs = obs_tensor["image"]
+                voltage_obs = obs_tensor["obs_voltages"]
+
+                gate_observations = []
+
+                for i in range(self.num_gates):
+                    v = voltage_obs[i]
+                    img = image_obs[:,i:i+1,:,:]
+                    gate_observations.append({
+                        "image": img,
+                        "obs_voltages": v
+                    })
+
+                # TODO
+
+
+                gate_actions = []
+                for obs, gate_lstm_states in zip(gate_observations, lstm_states["gates"]):
+                    actions, values, log_probs, lstm_states = self.gate_policy.forward(obs, gate_lstm_states, episode_starts)
+                    gate_actions.append(actions)
+
+                # loop through the scans one by one
                 actions, values, log_probs, lstm_states = self.policy.forward(obs_tensor, lstm_states, episode_starts)
 
             actions = actions.cpu().numpy()
@@ -286,7 +361,16 @@ class RecurrentPPO(OnPolicyAlgorithm):
                 clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
-            
+
+            # TODO check obs assignment
+            image_obs = new_obs["image"]
+            print(image_obs.shape)
+            voltage_obs = new_obs["obs_voltages"]
+            print(voltage_obs.shape)
+            pairwise_scans = torch.chunk(image_obs, chunks=self.num_gates, dim=-1)
+            import sys
+            sys.exit(0)
+
             self.total_reward += np.sum(rewards)
             self.reward_count += len(rewards)
             if self.use_wandb:
