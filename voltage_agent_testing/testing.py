@@ -1,3 +1,4 @@
+from functools import partial
 import torch
 
 from envs.qarray_ndot_env import QuantumDeviceEnv
@@ -30,7 +31,8 @@ from stable_baselines3.common.env_util import make_vec_env
     
 
 def main():
-    env = make_vec_env(QuantumDeviceEnv, n_envs=1)
+    env_class = partial(QuantumDeviceEnv, ndots=4)
+    env = make_vec_env(env_class, n_envs=1)
     model = RecurrentPPO(
         "CustomRecurrentPolicy",
         env,

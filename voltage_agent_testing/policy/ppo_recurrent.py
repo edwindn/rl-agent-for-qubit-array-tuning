@@ -1,10 +1,11 @@
 from copy import deepcopy
-from typing import Any, ClassVar, Optional, TypeVar, Union
+from typing import Any, ClassVar, Optional, TypeVar, Union, List
 from dataclasses import dataclass
 from tqdm import tqdm
 import wandb
 import numpy as np
 import torch as th
+import torch
 from gymnasium import spaces
 from stable_baselines3.common.buffers import RolloutBuffer
 from stable_baselines3.common.callbacks import BaseCallback
@@ -30,9 +31,9 @@ except ModuleNotFoundError:
 
 @dataclass
 class MultiAgentSetup:
-    num_dots: int = 4
-    num_barrier_agents: int = 3
-    num_gate_agents: int = 4
+    num_dots: int
+    gate_voltage_range: List[float]
+    barrier_voltage_range: List[float]
     obs_image_size: int = 128
     gate_obs_image_channels: int = 2
     barrier_obs_image_channels: int = 1
@@ -158,9 +159,13 @@ class RecurrentPPO(OnPolicyAlgorithm):
 
         self.use_wandb = use_wandb
 
-        self.multi_agent_setup = MultiAgentSetup()
-        self.num_gates = self.multi_agent_setup.num_dots
-        self.num_barriers = self.num_gates - 1
+        self.multi_agent_setup = MultiAgentSetup(
+            num_dots=4,
+            gate_voltage_range=[-10.0, 2.0],
+            barrier_voltage_range=[-2.0, 2.0] # TODO placeholder for now
+        )
+        self.num_plungers = self.multi_agent_setup.num_dots
+        self.num_barriers = self.num_plungers - 1
 
         # for mean reward logging
         self.total_reward = 0.0
@@ -198,9 +203,43 @@ class RecurrentPPO(OnPolicyAlgorithm):
             "voltage_dim": 1,
         }
 
+        image_size = self.multi_agent_setup.obs_image_size
+        gate_voltage_range = self.multi_agent_setup.gate_voltage_range
+        barrier_voltage_range = self.multi_agent_setup.barrier_voltage_range
+
+        gate_observation_space = spaces.Dict({
+            "image": spaces.Box(
+                low=0, high=255, shape=(2, image_size, image_size), dtype=np.uint8
+            ),
+            "obs_voltages": spaces.Box(
+                low=gate_voltage_range[0], high=gate_voltage_range[1], shape=(1,), dtype=np.float32
+            )
+        })
+
+        barrier_observation_space = spaces.Dict({
+            "image": spaces.Box(
+                low=0, high=255, shape=(1, image_size, image_size), dtype=np.uint8
+            ),
+            "obs_voltages": spaces.Box(
+                low=barrier_voltage_range[0], high=barrier_voltage_range[1], shape=(1,), dtype=np.float32
+            )
+        })
+
+        self.gate_action_space = spaces.Box(
+            low=gate_voltage_range[0],
+            high=gate_voltage_range[1],
+            shape=(self.num_plungers,),
+            dtype=np.float32
+        )
+
+        self.barrier_action_space = spaces.Box(
+            low=barrier_voltage_range[0],
+            high=barrier_voltage_range[1],
+            shape=(self.num_barriers,),
+            dtype=np.float32
+        )
+
         policy_init_kwargs = {
-            "observation_space": self.observation_space,
-            "action_space": self.action_space,
             "lr_schedule": self.lr_schedule,
             "use_sde": self.use_sde,
             "features_extractor_class": features_extractor_class,
@@ -209,11 +248,13 @@ class RecurrentPPO(OnPolicyAlgorithm):
             **self.policy_kwargs,
         }
 
-        self.gate_policy = self.policy_class(**policy_init_kwargs)
+        self.gate_policy = self.policy_class(observation_space=gate_observation_space, action_space=self.gate_action_space, **policy_init_kwargs)
         self.gate_policy = self.gate_policy.to(self.device)
 
-        self.barrier_policy = self.policy_class(**policy_init_kwargs)
+        self.barrier_policy = self.policy_class(observation_space=barrier_observation_space, action_space=self.barrier_action_space, **policy_init_kwargs)
         self.barrier_policy = self.barrier_policy.to(self.device)
+
+        self.policy = None # ensure we are not using the default policy
 
 
         # set up one central optimizer for all the policies
@@ -242,8 +283,8 @@ class RecurrentPPO(OnPolicyAlgorithm):
         )
 
         self._last_lstm_states = {
-            "gates": [last_lstm_states] * self.multi_agent_setup.num_gate_agents,
-            "barriers": [last_lstm_states] * self.multi_agent_setup.num_barrier_agents,
+            "gates": [last_lstm_states] * self.num_plungers,
+            "barriers": [last_lstm_states] * self.num_barriers,
         }
 
         hidden_state_buffer_shape = (self.n_steps, lstm.num_layers, self.n_envs, lstm.hidden_size)
@@ -320,59 +361,123 @@ class RecurrentPPO(OnPolicyAlgorithm):
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
                 episode_starts = th.tensor(self._last_episode_starts, dtype=th.float32, device=self.device)
-                # TODO
+
                 # first split the images and voltages and pass each through each agent's feature extractor
 
-                # print(obs_tensor.shape)
-                # import sys
-                # sys.exit(0)
-                # frames = torch.chunk(obs_tensor, chunks=self.num_gates, dim=-1)
-
                 image_obs = obs_tensor["image"]
-                voltage_obs = obs_tensor["obs_voltages"]
+                gate_voltage_obs = obs_tensor["obs_voltages"].flatten()
 
                 gate_observations = []
+                barrier_observations = []
 
-                for i in range(self.num_gates):
-                    v = voltage_obs[i]
-                    img = image_obs[:,i:i+1,:,:]
+                first_img = image_obs[:,0,:,:]
+                gate_observations.append({
+                    "image": th.stack([first_img, first_img], dim=1),
+                    "obs_voltages": gate_voltage_obs[0],
+                })
+
+                for i in range(self.num_plungers-2):
+                    v = gate_voltage_obs[i+1]
+                    img = image_obs[:,i:i+2,:,:]
                     gate_observations.append({
                         "image": img,
                         "obs_voltages": v
                     })
 
-                # TODO
+                last_img = image_obs[:,-1,:,:]
+                gate_observations.append({
+                    "image": th.stack([last_img, last_img], dim=1),
+                    "obs_voltages": gate_voltage_obs[-1],
+                })
 
 
-                gate_actions = []
-                for obs, gate_lstm_states in zip(gate_observations, lstm_states["gates"]):
-                    actions, values, log_probs, lstm_states = self.gate_policy.forward(obs, gate_lstm_states, episode_starts)
+                for i in range(self.num_barriers):
+                    barrier_observations.append({
+                        "image": image_obs[:,i,:,:],
+                        "obs_voltages": torch.tensor([0], dtype=torch.float32), # TODO we will feed in the barrier voltages to the barrier agents, once qarray has this functionality
+                    })
+
+
+                gate_actions = [] # list of voltages of size self.num_plungers
+                gate_values = []
+                gate_lstm_states = []
+                gate_log_probs = []
+                for obs, gate_state in zip(gate_observations, lstm_states["gates"]):
+                    actions, values, log_probs, gate_state = self.gate_policy.forward(obs, gate_state, episode_starts)
                     gate_actions.append(actions)
+                    gate_values.append(values)
+                    gate_lstm_states.append(gate_state)
+                    gate_log_probs.append(log_probs)
 
-                # loop through the scans one by one
-                actions, values, log_probs, lstm_states = self.policy.forward(obs_tensor, lstm_states, episode_starts)
+                barrier_actions = [] # list of voltages of size self.num_barriers
+                barrier_values = []
+                barrier_lstm_states = []
+                barrier_log_probs = []
+                for obs, barrier_state in zip(barrier_observations, lstm_states["barriers"]):
+                    actions, values, log_probs, barrier_state = self.barrier_policy.forward(obs, barrier_state, episode_starts)
+                    barrier_actions.append(actions)
+                    barrier_values.append(values)
+                    barrier_lstm_states.append(barrier_state)
+                    barrier_log_probs.append(log_probs)
 
-            actions = actions.cpu().numpy()
+                # actions, values, log_probs, lstm_states = self.policy.forward(obs_tensor, lstm_states, episode_starts)
+
+            # TODO check handling of values in training since original code has tensor of shape (num_envs, 1) -> is this the most efficient way to do this
+            # note that first dim is n envs
+            gate_values = torch.stack(gate_values).swapaxes(0, 1) # (num_envs, num_gates, 1)
+            barrier_values = torch.stack(barrier_values).swapaxes(0, 1) # (num_envs, num_barriers, 1)
+
+            all_values = []
+            for i in range(gate_values.shape(0)):
+                all_values.append({
+                    "gates": gate_values[i],
+                    "barriers": barrier_values[i]
+                })
+
+            gate_log_probs = torch.stack(gate_log_probs).swapaxes(0, 1) # (num_envs, num_gates, 1)
+            barrier_log_probs = torch.stack(barrier_log_probs).swapaxes(0, 1) # (num_envs, num_barriers, 1)
+
+            all_log_probs = []
+            for i in range(gate_log_probs.shape(0)):
+                all_log_probs.append({
+                    "gates": gate_log_probs[i],
+                    "barriers": barrier_log_probs[i]
+                })
+
+            lstm_states = {
+                "gates": gate_lstm_states,
+                "barriers": barrier_lstm_states
+            }
+
+            # actions = actions.cpu().numpy()
+            gate_actions = th.stack(gate_actions).cpu().numpy()
+            barrier_actions = th.stack(barrier_actions).cpu().numpy()
 
             # Rescale and perform action
-            clipped_actions = actions
+            clipped_gate_actions = gate_actions
+            clipped_barrier_actions = barrier_actions
             # Clip the actions to avoid out of bound error
-            if isinstance(self.action_space, spaces.Box):
-                clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
+            if isinstance(self.gate_action_space, spaces.Box):
+                clipped_gate_actions = np.clip(clipped_gate_actions, self.gate_action_space.low, self.gate_action_space.high)
+            if isinstance(self.barrier_action_space, spaces.Box):
+                clipped_barrier_actions = np.clip(clipped_barrier_actions, self.barrier_action_space.low, self.barrier_action_space.high)
 
-            new_obs, rewards, dones, infos = env.step(clipped_actions)
+            action_dict = {
+                "gates": clipped_gate_actions,
+                "barriers": clipped_barrier_actions,
+            }
 
-            # TODO check obs assignment
-            image_obs = new_obs["image"]
-            print(image_obs.shape)
-            voltage_obs = new_obs["obs_voltages"]
-            print(voltage_obs.shape)
-            pairwise_scans = torch.chunk(image_obs, chunks=self.num_gates, dim=-1)
-            import sys
-            sys.exit(0)
+            # note all of these are arrays with the first dim = num of envs
+            new_obs, reward_dict, dones, infos = env.step(action_dict) # TODO let env accept an action dict and return a reward dict for the barriers and gates
 
-            self.total_reward += np.sum(rewards)
-            self.reward_count += len(rewards)
+
+            # add the raw observation and reward dictionaries to the buffer, only separate during training
+
+            if isinstance(reward_dict["gates"], np.array):
+                rewards = reward_dict["gates"].flatten().tolist() + reward_dict["barriers"].flatten().tolist()
+            else:
+                rewards = reward_dict["gates"] + reward_dict["barriers"]
+                
             if self.use_wandb:
                 wandb.log({
                     "reward": np.mean(rewards),
@@ -388,10 +493,6 @@ class RecurrentPPO(OnPolicyAlgorithm):
             self._update_info_buffer(infos, dones)
             n_steps += 1
 
-            if isinstance(self.action_space, spaces.Discrete):
-                # Reshape in case of discrete action
-                actions = actions.reshape(-1, 1)
-
             # Handle timeout by bootstraping with value function
             # see GitHub issue #633
             for idx, done_ in enumerate(dones):
@@ -400,24 +501,73 @@ class RecurrentPPO(OnPolicyAlgorithm):
                     and infos[idx].get("terminal_observation") is not None
                     and infos[idx].get("TimeLimit.truncated", False)
                 ):
-                    terminal_obs = self.policy.obs_to_tensor(infos[idx]["terminal_observation"])[0]
-                    with th.no_grad():
-                        terminal_lstm_state = (
-                            lstm_states.vf[0][:, idx : idx + 1, :].contiguous(),
-                            lstm_states.vf[1][:, idx : idx + 1, :].contiguous(),
-                        )
-                        # terminal_lstm_state = None
+                    
+                    # Original code:
+                    # terminal_obs = self.policy.obs_to_tensor(infos[idx]["terminal_observation"])[0]
+                    # with th.no_grad():
+                    #     terminal_lstm_state = (
+                    #         lstm_states.vf[0][:, idx : idx + 1, :].contiguous(),
+                    #         lstm_states.vf[1][:, idx : idx + 1, :].contiguous(),
+                    #     )
+                    #     # terminal_lstm_state = None
+                    #     episode_starts = th.tensor([False], dtype=th.float32, device=self.device)
+                    #     terminal_value = self.policy.predict_values(terminal_obs, terminal_lstm_state, episode_starts)[0]
+                    # rewards[idx] += self.gamma * terminal_value
+
+                    # use hidden value function states to bootstrap the value function
+
+                    # TODO check this loop
+
+                    with torch.no_grad():
                         episode_starts = th.tensor([False], dtype=th.float32, device=self.device)
-                        terminal_value = self.policy.predict_values(terminal_obs, terminal_lstm_state, episode_starts)[0]
-                    rewards[idx] += self.gamma * terminal_value
+
+                        full_image_obs = infos[idx]["terminal_observation"]["image"]
+                        full_gate_voltage_obs = infos[idx]["terminal_observation"]["obs_voltages"].flatten()
+
+                        for g in range(self.num_plungers):
+                            terminal_lstm_state = (
+                                lstm_states["gates"][g].vf[0][:, idx : idx + 1, :].contiguous(),
+                                lstm_states["gates"][g].vf[1][:, idx : idx + 1, :].contiguous(),
+                            )
+
+                            if g == 0:
+                                image_obs = torch.tensor(full_image_obs[:,0,:,:])
+                                image_obs = torch.cat([image_obs]*2, dim=1)
+                            elif g == self.num_plungers - 1:
+                                image_obs = torch.tensor(full_image_obs[:,-1,:,:])
+                                image_obs = torch.cat([image_obs]*2, dim=1)
+                            else:
+                                image_obs = torch.tensor(full_image_obs[:,g-1:g+1,:,:])
+                            
+                            terminal_gate_obs = {
+                                "image": image_obs,
+                                "obs_voltages": full_gate_voltage_obs[g],
+
+                            }
+                            terminal_value = self.gate_policy.predict_values(terminal_gate_obs, terminal_lstm_state, episode_starts)[0]
+                            reward_dict[idx]["gates"][g] += self.gamma * terminal_value
+
+                        for b in range(self.num_barriers):
+                            terminal_lstm_state = (
+                                lstm_states["barriers"][b].vf[0][:, idx : idx + 1, :].contiguous(),
+                                lstm_states["barriers"][b].vf[1][:, idx : idx + 1, :].contiguous(),
+                            )
+                            
+                            terminal_barrier_obs = {
+                                "image": torch.tensor(full_image_obs[:,b,:,:]),
+                                "obs_voltages": torch.zeros(1, dtype=torch.float32) # TODO add barrier voltages
+                            }
+                            terminal_value = self.barrier_policy.predict_values(terminal_barrier_obs, terminal_lstm_state, episode_starts)[0]
+                            reward_dict[idx]["barriers"][b] += self.gamma * terminal_value
+
 
             rollout_buffer.add(
                 self._last_obs,
-                actions,
-                rewards,
+                action_dict,
+                reward_dict,
                 self._last_episode_starts,
-                values,
-                log_probs,
+                all_values,
+                all_log_probs,
                 lstm_states=self._last_lstm_states,
             )
 
@@ -425,9 +575,15 @@ class RecurrentPPO(OnPolicyAlgorithm):
             self._last_episode_starts = dones
             self._last_lstm_states = lstm_states
 
+        #######
         with th.no_grad():
             # Compute value for the last timestep
             episode_starts = th.tensor(dones, dtype=th.float32, device=self.device)
+            for g in range(self.num_plungers):
+                pass
+                
+            for b in range(self.num_barriers):
+                pass
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device), lstm_states.vf, episode_starts)
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
