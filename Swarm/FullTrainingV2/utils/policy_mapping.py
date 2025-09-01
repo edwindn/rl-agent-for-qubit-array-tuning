@@ -18,14 +18,15 @@ try:
 except ModuleNotFoundError:
     from utils.custom_image_catalog import CustomImageCatalog
 
-def create_rl_module_spec(env_instance) -> MultiRLModuleSpec:
+def create_rl_module_spec(env_instance, config) -> MultiRLModuleSpec:
     """
     Create policy specifications for RLlib with the plunger and barrier policies
     (note there are only TWO policies although each has multiple agent instances)
     
     Args:
         env_instance: Instance of the quantum device environment
-        
+        config: Configuration dictionary for the RL module
+
     Returns:
         MultiRLModuleSpec object
     """
@@ -118,10 +119,9 @@ def create_rl_module_spec(env_instance) -> MultiRLModuleSpec:
     # )
     model_config = {
         "max_seq_len": 50,
-        "batch_mode": "complete_episodes",
-
+        "batch_mode": config['batch_mode'],
         "use_lstm": True,
-        "lstm_cell_size": 128,
+        "lstm_cell_size": config['lstm_cell_size'],
         "lstm_use_prev_action": True,
         "lstm_use_prev_reward": False,
     }
