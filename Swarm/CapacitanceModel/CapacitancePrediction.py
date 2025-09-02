@@ -54,7 +54,7 @@ class CapacitancePredictionModel(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(128, 3),
-            nn.Sigmoid()  # 3 continuous values
+            #nn.Sigmoid()  # 3 continuous values
         )
         
         # Confidence head (outputs log variance for uncertainty estimation)
@@ -153,7 +153,7 @@ if __name__ == "__main__":
     
     # Example input (batch_size=4, channels=2, height=224, width=224)
     batch_size = 4
-    x = torch.randn(batch_size, 2, 224, 224)
+    x = torch.randn(batch_size, 1, 224, 224)
     targets = torch.randn(batch_size, 3)  # Ground truth values
     
     # Forward pass
