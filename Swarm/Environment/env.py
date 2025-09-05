@@ -6,6 +6,7 @@ import yaml
 import os
 import sys
 import torch
+import ray
 
 # Import qarray_base_class - multiple approaches for Ray compatibility
 try:
@@ -58,12 +59,13 @@ class QuantumDeviceEnv(gym.Env):
     Simulator environment that handles all env related logic
     loads in the qarray/ device model to extract observations
     """
-    def __init__(self, num_dots=None, training=True, gpu='auto', capacitance_model=None, config_path="env_config.yaml"):
+    def __init__(self, num_dots=None, training=True, capacitance_actor_ref=None, config_path="env_config.yaml"):
         """
         Setup for the base qarray environment class
 
         Args:
             capacitance_model: if not None, we use the external model passed for better memory management
+            capacitance_actor_ref: Ray actor reference for capacitance predictions (alternative to capacitance_model)
         """
         super().__init__()
 
@@ -71,18 +73,7 @@ class QuantumDeviceEnv(gym.Env):
         self.training = training # if we are training or not
         self.num_dots = num_dots if num_dots else self.config['simulator']['num_dots']
 
-        # Assign the correct env device
-        if gpu=='auto':
-            self.gpu = gpu
-        else:
-            try:
-                gpu = int(gpu) if isinstance(gpu, str) and gpu.isdigit() else gpu
-                visible_devices = [i for i in range(torch.cuda.device_count())]
-                assert gpu in visible_devices, f"GPU device not found, got {gpu} but expected one of {visible_devices}"
-                self.gpu = gpu
-            except Exception as e:
-                print(f"Warning, setting gpu='auto': {e}")
-                self.gpu = 'auto'
+        print(f'[ENV DEBUG] Worker visible devices: {os.environ.get("CUDA_VISIBLE_DEVICES", "None")}')
 
         # obs voltage min/max define the range over which we sweep the 2d csd pairs
         self.obs_voltage_min = self.config['simulator']['measurement']['gate_voltage_sweep_range']['min']
@@ -144,25 +135,47 @@ class QuantumDeviceEnv(gym.Env):
         })
 
         # Initialize capacitance prediction model
-        if capacitance_model is None:
-            self._init_capacitance_model()
+        if capacitance_actor_ref is None:
+            # self._init_capacitance_model()
+            self.capacitance_model = None
         else:
             try:
                 bayesian_predictor = CapacitancePredictor(
                     n_dots=self.num_dots,
-                    prior_config=distance_prior
+                    prior_config=self._distance_prior
                 )
                 self.capacitance_model = {
-                    "ml_model": capacitance_model["ml_model"],
+                    "ml_model": capacitance_actor_ref,
                     "bayesian_predictor": bayesian_predictor,
-                    "device": capacitance_model["ml_model"].device
+                    "mode": "remote_actor",
                 }
             except Exception as e:
-                print(f"Invalid capacitance model: {e}")
+                print(f"Error creating capacitance model: {e}")
                 raise
 
         self.reset()
 
+    def _distance_prior(self, i: int, j: int) -> tuple:
+        """
+        Distance-based prior configuration for capacitance matrix elements.
+        
+        Args:
+            i, j: Dot indices
+            
+        Returns:
+            (prior_mean, prior_variance): Prior distribution parameters
+        """
+        if i == j:
+            # Self-capacitance (diagonal elements)
+            return (1, 0.01)
+        elif abs(i - j) == 1:
+            # Nearest neighbors
+            return (0.40, 0.2)
+        elif abs(i - j) == 2:
+            # Distant pairs
+            return (0.2, 0.1)
+        else:
+            return (0., 0.1)
 
     def reset(self, seed=None, options=None):
         """
@@ -384,6 +397,11 @@ class QuantumDeviceEnv(gym.Env):
         """
         if self.capacitance_model is None:
             return  # Skip if capacitance model not available
+
+        elif self.capacitance_model["mode"] == "remote_actor":
+            # not implemented yet
+            # note we should move the tensor to the device in the forward pass here
+            return
             
         # Get the multi-channel scan: shape (resolution, resolution, num_dots-1)
         image = obs["image"]  # Each channel is one dot pair's charge stability diagram
@@ -450,15 +468,23 @@ class QuantumDeviceEnv(gym.Env):
         """
         try:
             # Determine device (GPU if available, otherwise CPU)
-            if torch.cuda.is_available():
-                if self.gpu == 'auto':
-                    device = torch.device('cuda')
-                else:
-                    device = torch.device(f'cuda:{self.gpu}')
+            worker_gpus = ray.get_gpu_ids()
+            if worker_gpus:
+                device = torch.device(f"cuda:{worker_gpus[0]}")
                 print(f"Running capacitance model on {device}")
             else:
-                device = torch.device('cpu')
+                device = torch.device("cpu")
                 print("Warning: Failed to find available CUDA device, running on CPU")
+                
+            # if torch.cuda.is_available():
+            #     if self.gpu == 'auto':
+            #         device = torch.device('cuda')
+            #     else:
+            #         device = torch.device(self.gpu)
+            #     print(f"Running capacitance model on {device}")
+            # else:
+            #     device = torch.device('cpu')
+            #     print("Warning: Failed to find available CUDA device, running on CPU")
 
             # Initialize the neural network model
             ml_model = CapacitancePredictionModel()
@@ -494,40 +520,18 @@ class QuantumDeviceEnv(gym.Env):
             ml_model.to(device)
             ml_model.eval()  # Set to evaluation mode
             
-            # Define distance-based prior configuration for Bayesian predictor
-            def distance_prior(i: int, j: int) -> tuple:
-                """
-                Distance-based prior configuration for capacitance matrix elements.
-                
-                Args:
-                    i, j: Dot indices
-                    
-                Returns:
-                    (prior_mean, prior_variance): Prior distribution parameters
-                """
-                if i == j:
-                    # Self-capacitance (diagonal elements)
-                    return (1, 0.01)
-                elif abs(i - j) == 1:
-                    # Nearest neighbors
-                    return (0.40, 0.2)
-                elif abs(i - j) == 2:
-                    # Distant pairs
-                    return (0.2, 0.1)
-                else:
-                    return (0., 0.1)
-            
             # Initialize Bayesian predictor
             bayesian_predictor = CapacitancePredictor(
                 n_dots=self.num_dots,
-                prior_config=distance_prior
+                prior_config=self._distance_prior
             )
             
             # Store both components in the capacitance model
             self.capacitance_model = {
                 'ml_model': ml_model,
                 'bayesian_predictor': bayesian_predictor,
-                'device': device
+                'device': device,
+                'mode': 'model'
             }
 
             print("Successfully loaded capacitance model.")

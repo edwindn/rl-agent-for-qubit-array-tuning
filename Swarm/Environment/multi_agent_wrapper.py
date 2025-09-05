@@ -43,7 +43,7 @@ class MultiAgentQuantumWrapper(MultiAgentEnv):
     The wrapper combines individual agent actions into global environment actions.
     """
     
-    def __init__(self, num_dots: int, training: bool = True, gpu: str | int = 'auto', capacitance_model=None):
+    def __init__(self, num_dots: int, training: bool = True, capacitance_actor_ref=None):
         """
         Initialize multi-agent wrapper.
 
@@ -54,7 +54,7 @@ class MultiAgentQuantumWrapper(MultiAgentEnv):
         """
         super().__init__()
 
-        self.base_env = QuantumDeviceEnv(num_dots=num_dots, training=training, gpu=gpu, capacitance_model=capacitance_model)
+        self.base_env = QuantumDeviceEnv(num_dots=num_dots, training=training, capacitance_actor_ref=capacitance_actor_ref)
         self.num_gates = num_dots
         self.num_barriers = num_dots - 1
         self.num_image_channels = num_dots - 1  # N-1 charge stability diagrams

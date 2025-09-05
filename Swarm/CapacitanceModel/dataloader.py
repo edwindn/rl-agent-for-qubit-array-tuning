@@ -3,11 +3,11 @@ import torch.utils.data as data
 import numpy as np
 import os
 import glob
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Union
 from sklearn.model_selection import train_test_split
 
 
-def get_channel_targets(channel_idx: int, cgd_matrix: np.ndarray, num_dots: int) -> List[float]:
+def get_channel_targets(channel_idx: int, cgd_matrix: np.ndarray, num_dots: int) -> np.ndarray:
     """
     Get the target CGD values for a specific channel.
     
@@ -25,38 +25,61 @@ def get_channel_targets(channel_idx: int, cgd_matrix: np.ndarray, num_dots: int)
     Returns:
         List of 3 target values for this channel
     """
-    # Convert to 1-indexed for the logic as specified
-    channel_1indexed = channel_idx + 1
+    assert channel_idx in list(range(num_dots-1)), f"Out-of-bounds channel index given for {num_dots} dots."
+    assert cgd_matrix.shape[0] == cgd_matrix.shape[1] - 1 == num_dots, f"CGD matrix must have shape ({num_dots}, {num_dots+1})"
+
+    # Extract the pairs of dots to consider for the channel index (0-indexed)
+    left_pair = (channel_idx-1, channel_idx+1) # out of bounds for channel 0
+    middle_pair = (channel_idx, channel_idx+1)
+    right_pair = (channel_idx, channel_idx+2) # out of bounds for last channel
+
+    # # Convert to 1-indexed for the logic as specified
+    # channel_1indexed = channel_idx + 1
     
-    # Calculate the three target indices for this channel (1-indexed)
-    target1_row = channel_1indexed - 1  # Will be -1 for channel 0, which doesn't exist
-    target1_col = channel_1indexed + 1
+    # # Calculate the three target indices for this channel (1-indexed)
+    # target1_row = channel_1indexed - 1  # Will be -1 for channel 0, which doesn't exist
+    # target1_col = channel_1indexed + 1
     
-    target2_row = channel_1indexed
-    target2_col = channel_1indexed + 1
+    # target2_row = channel_1indexed
+    # target2_col = channel_1indexed + 1
     
-    target3_row = channel_1indexed - 1  # Will be -1 for channel 0
-    target3_col = channel_1indexed + 2
+    # target3_row = channel_1indexed - 1  # Will be -1 for channel 0  - ? should be not minus 1??
+    # target3_col = channel_1indexed + 2
     
     targets = []
-    
-    # Target 1: Check if indices are valid (convert back to 0-indexed for array access)
-    if target1_row < 0 or target1_row >= num_dots or target1_col >= cgd_matrix.shape[1]:
-        targets.append(0.0)  # Pad with zero if doesn't exist
-    else:
-        targets.append(float(cgd_matrix[target1_row, target1_col]))
-    
-    # Target 2: Check if indices are valid
-    if target2_row >= num_dots or target2_col >= cgd_matrix.shape[1]:
+
+    if left_pair[0] < 0:
         targets.append(0.0)
     else:
-        targets.append(float(cgd_matrix[target2_row, target2_col]))
-    
-    # Target 3: Check if indices are valid
-    if target3_row < 0 or target3_row >= num_dots or target3_col >= cgd_matrix.shape[1]:
+        targets.append(float(cgd_matrix[left_pair[0], left_pair[1]]))
+
+    targets.append(float(cgd_matrix[middle_pair[0], middle_pair[1]]))
+
+    if right_pair[1] > num_dots - 1:
         targets.append(0.0)
     else:
-        targets.append(float(cgd_matrix[target3_row, target3_col]))
+        targets.append(float(cgd_matrix[right_pair[0], right_pair[1]]))
+
+    # # Target 1: Check if indices are valid (convert back to 0-indexed for array access)
+    # if target1_row < 0 or target1_row >= num_dots or target1_col >= cgd_matrix.shape[1]:
+    #     targets.append(0.0)  # Pad with zero if doesn't exist
+    # else:
+    #     targets.append(float(cgd_matrix[target1_row, target1_col]))
+    
+    # # Target 2: Check if indices are valid
+    # if target2_row >= num_dots or target2_col >= cgd_matrix.shape[1]:
+    #     targets.append(0.0)
+    # else:
+    #     targets.append(float(cgd_matrix[target2_row, target2_col]))
+    
+    # # Target 3: Check if indices are valid
+    # if target3_row < 0 or target3_row >= num_dots or target3_col >= cgd_matrix.shape[1]:
+    #     targets.append(0.0)
+    # else:
+    #     targets.append(float(cgd_matrix[target3_row, target3_col]))
+
+    # reorder to match expected model output: l, m, r -> m, r, l
+    targets = np.array(targets, dtype=np.float32)[[1, 2, 0]]
     
     return targets
 
@@ -71,7 +94,7 @@ class CapacitanceDataset(data.Dataset):
     
     def __init__(
         self, 
-        data_dir: str, 
+        data_dirs: Union[str, List[str]], 
         transform: Optional[callable] = None,
         load_to_memory: bool = False,
         validate_data: bool = True
@@ -80,18 +103,23 @@ class CapacitanceDataset(data.Dataset):
         Initialize dataset.
         
         Args:
-            data_dir: Path to dataset directory containing images/ and parameters/
+            data_dir: Path to dataset directory containing images/ and parameters/ (can be a list of datasets)
             transform: Optional image transforms
             load_to_memory: If True, load all data to memory (requires ~11.5GB)
             validate_data: If True, validate data consistency during initialization
         """
-        self.data_dir = data_dir
+        self.data_dirs = data_dirs if isinstance(data_dirs, list) else [data_dirs]
         self.transform = transform
         self.load_to_memory = load_to_memory
-        
+
+        print(f"Loading data files from the following directories: {' '.join(self.data_dirs)}")
+
         # Get all batch files
-        self.image_files = sorted(glob.glob(os.path.join(data_dir, "images", "batch_*.npy")))
-        self.cgd_files = sorted(glob.glob(os.path.join(data_dir, "cgd_matrices", "batch_*.npy")))
+        self.image_files = []
+        self.cgd_files = []
+        for data_dir in self.data_dirs:
+            self.image_files.extend(sorted(glob.glob(os.path.join(data_dir, "images", "batch_*.npy"))))
+            self.cgd_files.extend(sorted(glob.glob(os.path.join(data_dir, "cgd_matrices", "batch_*.npy"))))
         
         assert len(self.image_files) == len(self.cgd_files), \
             f"Mismatch: {len(self.image_files)} image files vs {len(self.cgd_files)} cgd files"
@@ -201,7 +229,6 @@ class CapacitanceDataset(data.Dataset):
         # Get targets for this specific channel
         num_dots = cgd_matrix.shape[0]
         targets = get_channel_targets(channel_idx, cgd_matrix, num_dots)
-        targets = np.array(targets, dtype=np.float32)
         
         # Convert to torch tensors
         image = torch.from_numpy(image).unsqueeze(0)  # Add channel dimension (1, H, W)
@@ -215,7 +242,7 @@ class CapacitanceDataset(data.Dataset):
 
 
 def create_data_loaders(
-    data_dir: str,
+    data_dirs: Union[str, List[str]],
     batch_size: int = 32,
     val_split: float = 0.2,
     num_workers: int = 4,
@@ -227,7 +254,7 @@ def create_data_loaders(
     Create train and validation data loaders.
     
     Args:
-        data_dir: Path to dataset directory
+        data_dirs: Path(s) to dataset directory
         batch_size: Batch size for data loaders
         val_split: Fraction of data to use for validation
         num_workers: Number of worker processes for data loading
@@ -240,7 +267,7 @@ def create_data_loaders(
     """
     # Create full dataset
     full_dataset = CapacitanceDataset(
-        data_dir=data_dir,
+        data_dirs=data_dirs,
         transform=transform,
         load_to_memory=load_to_memory
     )
@@ -332,8 +359,13 @@ def get_transforms(normalize: bool = True):
 
 
 if __name__ == "__main__":
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend for file output
+    import matplotlib.pyplot as plt
+    import random
+    
     # Test the dataset
-    data_dir = "/home/rahul/Summer2025/rl-agent-for-qubit-array-tuning/Swarm/CapacitanceModel/dataset"
+    data_dir = "/home/edn/rl-agent-for-qubit-array-tuning/Swarm/CapacitanceModel/dataset"
     
     print("Testing dataset loading...")
     dataset = CapacitanceDataset(data_dir, load_to_memory=False)
@@ -354,4 +386,69 @@ if __name__ == "__main__":
     for batch_imgs, batch_targets in train_loader:
         print(f"Batch: images {batch_imgs.shape}, targets {batch_targets.shape}")
         print(f"Target range: {batch_targets.min():.3f} to {batch_targets.max():.3f}")
-        break 
+        break
+    
+    def save_random_images(loader, loader_name: str, num_images: int = 16):
+        """Save random images from a dataloader to a PNG file"""
+        # Collect images and targets from loader
+        all_images = []
+        all_targets = []
+        
+        # Sample random batches to get 9+ images
+        sampled_batches = 0
+        max_batches = min(5, len(loader))  # Limit to avoid loading too much
+        
+        for batch_imgs, batch_targets in loader:
+            all_images.append(batch_imgs.cpu())
+            all_targets.append(batch_targets.cpu())
+            sampled_batches += 1
+            if sampled_batches >= max_batches:
+                break
+        
+        if not all_images:
+            print(f"No images found in {loader_name} loader")
+            return
+            
+        # Concatenate all collected images and targets
+        all_images = torch.cat(all_images, dim=0)
+        all_targets = torch.cat(all_targets, dim=0)
+        
+        # Randomly select 9 images
+        total_available = len(all_images)
+        num_to_plot = min(num_images, total_available)
+        random_indices = random.sample(range(total_available), num_to_plot)
+        
+        fig, axes = plt.subplots(4, 4, figsize=(12, 12))
+        axes = axes.flatten()
+        
+        for plot_idx, img_idx in enumerate(random_indices):
+            image = all_images[img_idx].squeeze().numpy()  # Remove channel dim and convert to numpy
+            targets = all_targets[img_idx].numpy()
+            
+            # Plot the image
+            im = axes[plot_idx].imshow(image, cmap='viridis', aspect='equal')
+            axes[plot_idx].set_title(f'Sample {img_idx}\nTargets: [{targets[0]:.3f}, {targets[1]:.3f}, {targets[2]:.3f}]', 
+                                   fontsize=8)
+            axes[plot_idx].set_xlabel('Gate Voltage')
+            axes[plot_idx].set_ylabel('Gate Voltage') 
+            
+            # Add colorbar
+            plt.colorbar(im, ax=axes[plot_idx], shrink=0.8)
+        
+        for idx in range(num_to_plot, 16):
+            axes[idx].axis('off')
+            
+        plt.suptitle(f'{loader_name.title()} Loader: {num_to_plot} Random Charge Stability Diagrams', 
+                    fontsize=14)
+        plt.tight_layout()
+        
+        # Save to file
+        output_path = f'{loader_name}_random_images.png'
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        print(f"Saved {num_to_plot} random {loader_name} images to: {output_path}")
+        plt.close()
+    
+    # Save random images from both loaders
+    print("\nSaving random images from dataloaders...")
+    save_random_images(train_loader, "train")
+    save_random_images(val_loader, "validation") 

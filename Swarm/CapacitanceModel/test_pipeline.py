@@ -232,7 +232,7 @@ if __name__ == '__main__':
     np.set_printoptions(precision=10, suppress=True)
     os.environ["CUDA_VISIBLE_DEVICES"] = "7" # change as needed
     
-    weights_path = os.path.join(os.path.dirname(__file__), 'test_outputs', 'best_model.pth')
+    weights_path = os.path.join(os.path.dirname(__file__), 'outputs', 'best_model.pth')
 
     test = TestCapacitancePredictionModel(n_dots=4, weights_path=weights_path, reverse=True)
     test.run_test(type="noise")

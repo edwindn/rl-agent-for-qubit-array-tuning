@@ -1,9 +1,14 @@
 """
 Policy mapping utilities for multi-agent quantum device environment.
 Maps agent IDs to appropriate policies based on agent type (plunger vs barrier).
+
+NOTE: check policy handling, we are training two policies only (plunger and barrier)
+ even though the agent instances require multiple policies
 """
 
 from typing import Dict, Any, Optional
+from ray.rllib.core.rl_module.rl_module import RLModuleSpec as SingleAgentRLModuleSpec
+from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec as MultiAgentRLModuleSpec
 
 
 def get_policy_mapping_fn(num_quantum_dots: int = 8):
@@ -28,23 +33,19 @@ def get_policy_mapping_fn(num_quantum_dots: int = 8):
             
         Returns:
             Policy ID string
+            
+        Raises:
+            ValueError: If agent_id doesn't contain 'plunger' or 'barrier'
         """
         if agent_id.startswith("plunger") or "plunger" in agent_id.lower():
             return "plunger_policy"
         elif agent_id.startswith("barrier") or "barrier" in agent_id.lower():
             return "barrier_policy"
         else:
-            # Fallback: try to infer from numeric ID if using numeric agent IDs
-            # Assuming agents 0 to N-1 are plungers, N to 2N-2 are barriers
-            try:
-                agent_num = int(agent_id.split("_")[-1]) if "_" in agent_id else int(agent_id)
-                if agent_num < num_quantum_dots:
-                    return "plunger_policy"
-                else:
-                    return "barrier_policy"
-            except (ValueError, IndexError):
-                # Default to plunger if we can't determine type
-                return "plunger_policy"
+            raise ValueError(
+                f"Agent ID '{agent_id}' must contain 'plunger' or 'barrier' to determine policy type. "
+                f"Expected format: 'plunger_X' or 'barrier_X' where X is the agent number."
+            )
     
     return policy_mapping_fn
 
@@ -59,19 +60,16 @@ def get_policies_to_train():
     return ["plunger_policy", "barrier_policy"]
 
 
-def create_policy_specs(env_instance) -> Dict[str, Any]:
+def create_rl_module_spec(env_instance) -> MultiAgentRLModuleSpec:
     """
-    Create policy specifications for RLlib with individual agent observation/action spaces.
-    
-    Each agent gets:
-    - Gate agents: single image channel + all voltage states -> single gate voltage output
-    - Barrier agents: single image channel + all voltage states -> single barrier voltage output
+    Create policy specifications for RLlib with the plunger and barrier policies
+    (note there are only TWO policies although each has multiple agent instances)
     
     Args:
         env_instance: Instance of the quantum device environment
         
     Returns:
-        Dictionary mapping policy IDs to policy specifications
+        MultiAgentRLModuleSpec object
     """
     from gymnasium import spaces
     import numpy as np
@@ -82,9 +80,7 @@ def create_policy_specs(env_instance) -> Dict[str, Any]:
         full_obs_space = env_instance.base_observation_space
         full_action_space = env_instance.base_action_space
     else:
-        # Fallback for non-wrapped environments
-        full_obs_space = env_instance.observation_space
-        full_action_space = env_instance.action_space
+        raise ValueError("Training attempted on a non-wrapped environment")
     
     # Extract dimensions from environment
     image_shape = full_obs_space['image'].shape  # (H, W, channels)
@@ -143,22 +139,33 @@ def create_policy_specs(env_instance) -> Dict[str, Any]:
             dtype=np.float32
         )
     
-    policies = {
-        "plunger_policy": (
-            None,  # Use default policy class
-            gate_obs_space,
-            gate_action_space,
-            {}  # Empty config - will be populated by trainer
-        ),
-        "barrier_policy": (
-            None,  # Use default policy class
-            barrier_obs_space,
-            barrier_action_space,
-            {}  # Empty config - will be populated by trainer
-        )
-    }
+    # Create single agent RLModule specs
+    plunger_spec = SingleAgentRLModuleSpec(
+        module_class=None,  # Use default RLModule class
+        observation_space=gate_obs_space,
+        action_space=gate_action_space,
+        model_config={},  # Empty config - will be populated by trainer
+        learner_only=True  # Required for multi-agent RLModule configurations
+    )
+    
+    barrier_spec = SingleAgentRLModuleSpec(
+        module_class=None,  # Use default RLModule class
+        observation_space=barrier_obs_space,
+        action_space=barrier_action_space,
+        model_config={},  # Empty config - will be populated by trainer
+        learner_only=True  # Required for multi-agent RLModule configurations
+    )
 
-    return policies
+    # Create multi-agent RLModule spec
+    rl_module_spec = MultiAgentRLModuleSpec(
+        rl_module_specs={
+            "plunger_policy": plunger_spec,
+            "barrier_policy": barrier_spec,
+        }
+    )
+
+    return rl_module_spec
+
 
 
 def get_agent_ids(num_quantum_dots: int = 8):
@@ -210,8 +217,8 @@ def validate_agent_assignment(agent_ids, num_quantum_dots: int = 8):
     return True, "Agent assignment is valid"
 
 
+
 if __name__ == "__main__":
-    """Test the single agent class with the policy specifications."""
     import sys
     import os
     import torch
@@ -246,38 +253,44 @@ if __name__ == "__main__":
                 'action_gate_voltages': spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32),
                 'action_barrier_voltages': spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32)
             })
+
+            self.base_observation_space = self.observation_space
+            self.base_action_space = self.action_space
     
     print("\n=== Testing Policy Specifications ===")
     
     # Create mock environment
     mock_env = MockEnv()
     
-    # Create policy specs
+    # Create RLModule specs
     try:
-        policy_specs = create_policy_specs(mock_env)
-        print("✓ Successfully created policy specifications")
+        rl_module_spec = create_rl_module_spec(mock_env)
+        print("✓ Successfully created RLModule specifications")
         
-        # Print policy info
-        for policy_id, (cls, obs_space, action_space, config) in policy_specs.items():
-            print(f"\nPolicy: {policy_id}")
-            print(f"  Observation space: {obs_space}")
-            print(f"  Action space: {action_space}")
+        # Print RLModule info
+        for policy_id, single_spec in rl_module_spec.rl_module_specs.items():
+            print(f"\nRLModule: {policy_id}")
+            print(f"  Module class: {single_spec.module_class}")
+            print(f"  Observation space: {single_spec.observation_space}")
+            print(f"  Action space: {single_spec.action_space}")
+            print(f"  Model config: {single_spec.model_config}")
             
     except Exception as e:
-        print(f"✗ Failed to create policy specs: {e}")
+        print(f"✗ Failed to create RLModule specs: {e}")
         sys.exit(1)
     
     print("\n=== Testing Gate Agent ===")
     
     # Test gate agent
-    gate_obs_space, gate_action_space = policy_specs["plunger_policy"][1], policy_specs["plunger_policy"][2]
+    plunger_spec = rl_module_spec.rl_module_specs["plunger_policy"]
+    gate_obs_space, gate_action_space = plunger_spec.observation_space, plunger_spec.action_space
     
     try:
         # Create agent config
         gate_config = {
             "observation_space": gate_obs_space,
             "action_space": gate_action_space,
-            "model_config": {
+            "model_config_dict": {
                 "lstm_cell_size": 64,
                 "lstm_use_prev_action": True,
                 "lstm_use_prev_reward": True,
@@ -286,7 +299,11 @@ if __name__ == "__main__":
         }
         
         # Create gate agent
-        gate_agent = SingleAgentRecurrentPPOModel(gate_config)
+        gate_agent = SingleAgentRecurrentPPOModel(
+            observation_space=gate_obs_space,
+            action_space=gate_action_space,
+            model_config=gate_config["model_config_dict"]
+        )
         print("✓ Successfully created gate agent")
         print(f"  Image channels: {gate_agent.image_channels}")
         print(f"  Action size: {gate_agent.action_size}")
@@ -315,14 +332,15 @@ if __name__ == "__main__":
     print("\n=== Testing Barrier Agent ===")
     
     # Test barrier agent
-    barrier_obs_space, barrier_action_space = policy_specs["barrier_policy"][1], policy_specs["barrier_policy"][2]
+    barrier_spec = rl_module_spec.rl_module_specs["barrier_policy"]
+    barrier_obs_space, barrier_action_space = barrier_spec.observation_space, barrier_spec.action_space
     
     try:
         # Create agent config
         barrier_config = {
             "observation_space": barrier_obs_space,
             "action_space": barrier_action_space,
-            "model_config": {
+            "model_config_dict": {
                 "lstm_cell_size": 64,
                 "lstm_use_prev_action": True,
                 "lstm_use_prev_reward": True,
@@ -331,7 +349,11 @@ if __name__ == "__main__":
         }
         
         # Create barrier agent
-        barrier_agent = SingleAgentRecurrentPPOModel(barrier_config)
+        barrier_agent = SingleAgentRecurrentPPOModel(
+            observation_space=barrier_obs_space,
+            action_space=barrier_action_space,
+            model_config=barrier_config["model_config_dict"]
+        )
         print("✓ Successfully created barrier agent")
         print(f"  Image channels: {barrier_agent.image_channels}")
         print(f"  Action size: {barrier_agent.action_size}")
@@ -375,7 +397,12 @@ if __name__ == "__main__":
         
         output_with_state = gate_agent._forward_train(test_batch_with_state)
         print("✓ Successfully handled LSTM state and previous action/reward")
-        print(f"  New state shapes: {[s.shape for s in output_with_state['state_out']]}")
+        # Handle both dict and list format for state_out
+        if isinstance(output_with_state['state_out'], dict):
+            state_shapes = [v.shape for v in output_with_state['state_out'].values()]
+        else:
+            state_shapes = [s.shape for s in output_with_state['state_out']]
+        print(f"  New state shapes: {state_shapes}")
         
     except Exception as e:
         print(f"✗ LSTM state test failed: {e}")

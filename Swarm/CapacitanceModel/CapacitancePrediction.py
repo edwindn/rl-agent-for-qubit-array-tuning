@@ -53,8 +53,8 @@ class CapacitancePredictionModel(nn.Module):
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(128, 3),
-            #nn.Sigmoid()  # 3 continuous values
+            nn.Linear(128, 3), # 3 continuous values
+            #nn.Sigmoid()
         )
         
         # Confidence head (outputs log variance for uncertainty estimation)
@@ -124,15 +124,20 @@ class CapacitanceLoss(nn.Module):
         variances = torch.exp(log_vars)
         squared_errors = (targets - values) ** 2
         
+        # nll_loss = 0.5 * (
+        #     torch.log(2 * torch.pi * variances) + 
+        #     squared_errors / variances
+        # ).mean()
+
         nll_loss = 0.5 * (
-            torch.log(2 * torch.pi * variances) + 
+            log_vars + 
             squared_errors / variances
         ).mean()
-        
+
         # Combined loss
         total_loss = self.mse_weight * mse_loss + self.nll_weight * nll_loss
         
-        return total_loss, mse_loss, nll_loss
+        return total_loss, mse_loss, nll_loss, log_vars, squared_errors
 
 
 def create_model():

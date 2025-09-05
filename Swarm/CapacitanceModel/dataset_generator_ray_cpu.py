@@ -16,20 +16,26 @@ import argparse
 import time
 from pathlib import Path
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any
 import logging
 from dataclasses import dataclass
 import matplotlib.pyplot as plt
+import ray
+from tqdm import tqdm
 
-# Add parent directory to path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Environment'))
+# Add parent directory to path for imports (works for both main process and Ray workers)
+current_file_dir = os.path.dirname(os.path.abspath(__file__))
+environment_dir = os.path.abspath(os.path.join(current_file_dir, '..', 'Environment'))
+swarm_dir = os.path.abspath(os.path.join(current_file_dir, '..'))
+project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
 
-try:
-    from qarray_base_class import QarrayBaseClass
-except Exception as e:
-    print(f"Error: Could not import QarrayBaseClass. {e}")
-    sys.exit(1)
+# Add all necessary paths
+for path in [environment_dir, swarm_dir, project_root]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+# Don't import QarrayBaseClass at module level - let Ray workers import it locally
+# This prevents Ray serialization issues with the module-level import
 
 
 @dataclass
@@ -56,6 +62,16 @@ def generate_sample(sample_id: int, config: GenerationConfig) -> Dict[str, Any]:
     Returns:
         Dictionary containing image, Cgd matrix, and ground truth data
     """
+    # Import QarrayBaseClass locally to avoid Ray serialization issues
+    try:
+        from qarray_base_class import QarrayBaseClass
+    except ImportError as e:
+        return {
+            'sample_id': sample_id,
+            'success': False,
+            'error': f'Failed to import QarrayBaseClass: {e}'
+        }
+    
     try:
         # Create QarrayBaseClass instance with unique seed per sample
         np.random.seed(config.seed_base + sample_id)
@@ -105,6 +121,49 @@ def generate_sample(sample_id: int, config: GenerationConfig) -> Dict[str, Any]:
             'success': False,
             'error': str(e)
         }
+
+
+@ray.remote(num_cpus=1, memory=2*1024*1024*1024)  # 2GB per worker
+def generate_sample_ray(sample_id: int, config_dict: dict) -> Dict[str, Any]:
+    """
+    Ray remote function for generating samples with resource limits.
+    
+    Args:
+        sample_id: Unique identifier for this sample
+        config_dict: Generation configuration as dictionary (for Ray serialization)
+        
+    Returns:
+        Dictionary containing image, Cgd matrix, and ground truth data
+    """
+    import os
+    import sys
+    
+    # Force CPU-only mode to prevent CUDA/JAX conflicts in parallel workers
+    os.environ['CUDA_VISIBLE_DEVICES'] = ''
+    os.environ['OMP_NUM_THREADS'] = '1'
+    # Force JAX to use CPU only
+    os.environ['JAX_PLATFORM_NAME'] = 'cpu'
+    os.environ['JAX_PLATFORMS'] = 'cpu'
+    
+    # Set up import paths in Ray worker (must be done in each worker)
+    current_file_dir = os.path.dirname(os.path.abspath(__file__))
+    environment_dir = os.path.abspath(os.path.join(current_file_dir, '..', 'Environment'))
+    if environment_dir not in sys.path:
+        sys.path.insert(0, environment_dir)
+    
+    # Import in worker process
+    try:
+        from qarray_base_class import QarrayBaseClass
+    except ImportError as e:
+        return {
+            'sample_id': sample_id,
+            'success': False,
+            'error': f'Ray worker import failed: {e}'
+        }
+    
+    # Reconstruct config from dict (Ray requires serializable args)
+    config = GenerationConfig(**config_dict)
+    return generate_sample(sample_id, config)
 
 
 def save_batch(batch_id: int, batch_samples: list, output_dir: Path) -> bool:
@@ -168,89 +227,7 @@ def create_output_directories(output_dir: Path) -> None:
         (output_dir / dir_name).mkdir(parents=True, exist_ok=True)
 
 
-def run_test_mode(config: GenerationConfig) -> None:
-    """
-    Run test mode: generate 20 random samples with visualization but no file saving.
-    
-    Args:
-        config: Generation configuration (most parameters ignored in test mode)
-    """
-    print("Running test mode: generating 16 random samples with visualization...")
-    
-    # Set matplotlib backend for file output
-    import matplotlib
-    matplotlib.use('Agg')  # Use non-interactive backend for file output
-    
-    test_samples = []
-    
-    for i in range(16):    
-        try:
-            # Use completely random seeds for each sample
-            sample = generate_sample(np.random.randint(0, 1000000), config)
-            
-            if sample.get('success', False):
-                test_samples.append(sample)
-            else:
-                print(f"✗ (Error: {sample.get('error', 'Unknown')})")
-                
-        except Exception as e:
-            print(f"✗ (Exception: {e})")
-    
-    if not test_samples:
-        print("No successful samples generated. Cannot create visualization.")
-        return
-    
-    print(f"\nSuccessfully generated {len(test_samples)} samples")
-
-    def plot_images(channel):
-        # Create visualization grid
-        n_samples_to_plot = min(16, len(test_samples))  # Plot up to 16 samples in 4x4 grid
-        fig, axes = plt.subplots(4, 4, figsize=(12, 12))
-        axes = axes.flatten()
-        
-        for idx in range(n_samples_to_plot):
-            sample = test_samples[idx]
-            
-            # Get the middle channel for visualization (assuming multi-channel images)
-            image = sample['image']
-            plot_image = image[:, :, channel]
-            
-            # Plot the charge stability diagram
-            im = axes[idx].imshow(plot_image, cmap='viridis', aspect='equal')
-            axes[idx].set_title(f'Sample {idx+1}', fontsize=10)
-            axes[idx].set_xlabel('Gate Voltage 1')
-            axes[idx].set_ylabel('Gate Voltage 2')
-            
-            # Add colorbar
-            plt.colorbar(im, ax=axes[idx], shrink=0.8)
-        
-        # Hide unused subplots
-        for idx in range(n_samples_to_plot, len(axes)):
-            axes[idx].axis('off')
-        
-        plt.suptitle(f'Test Mode: {n_samples_to_plot} Random Charge Stability Diagrams\n'
-                    f'({config.num_dots} dots each)\n'
-                    f'Dots swept: {channel+1} and {channel+2}', fontsize=14)
-        plt.tight_layout()
-        
-        # Always save to file
-        output_path = f'test_mode_samples_{channel+1}.png'
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"Saved visualization to: {output_path}")
-        plt.close()
-
-    for channel in range(3):
-        plot_images(channel)
-    
-    # Print some statistics
-    print("\nSample Statistics:")
-    cgd_matrices = [s['cgd_matrix'] for s in test_samples]
-    mean_cgd = np.mean([np.mean(cgd) for cgd in cgd_matrices])
-    std_cgd = np.std([np.mean(cgd) for cgd in cgd_matrices])
-    print(f"Average CGD matrix values: {mean_cgd:.4f} ± {std_cgd:.4f}")
-    
-    voltage_ranges = [np.ptp(s['gate_voltages']) for s in test_samples]
-    print(f"Gate voltage ranges: {np.mean(voltage_ranges):.4f} ± {np.std(voltage_ranges):.4f}")
+# Test mode functionality removed - use small sample size instead
 
 
 def save_metadata(config: GenerationConfig, output_dir: Path, 
@@ -289,7 +266,7 @@ def save_metadata(config: GenerationConfig, output_dir: Path,
 
 
 def generate_dataset(config: GenerationConfig) -> None:
-    """Generate the complete dataset using multiprocessing."""
+    """Generate the complete dataset using Ray for safer multiprocessing."""
     output_dir = Path(config.output_dir)
     
     # Setup logging
@@ -321,28 +298,77 @@ def generate_dataset(config: GenerationConfig) -> None:
     num_batches = (config.total_samples + config.batch_size - 1) // config.batch_size
     logger.info(f"Generating {num_batches} batches of up to {config.batch_size} samples each")
     
-    with ThreadPoolExecutor(max_workers=config.workers) as executor:
-        # Submit all jobs
-        future_to_id = {
-            executor.submit(generate_sample, i, config): i 
-            for i in range(config.total_samples)
+    # Initialize Ray with resource limits
+    try:
+        # Force CPU-only mode to prevent GPU resource conflicts
+        os.environ['CUDA_VISIBLE_DEVICES'] = ''
+        os.environ['JAX_PLATFORM_NAME'] = 'cpu'
+        os.environ['JAX_PLATFORMS'] = 'cpu'
+        
+        ray.init(
+            num_cpus=config.workers,
+            num_gpus=0,  # Explicitly disable GPU usage
+            object_store_memory=4*1024*1024*1024,  # 4GB object store
+            include_dashboard=False,  # Disable dashboard for safety
+            ignore_reinit_error=True  # Allow reinit if Ray already running
+        )
+        logger.info(f"Ray initialized with {config.workers} CPUs and 4GB object store")
+        
+        # Convert config to dict for Ray serialization
+        config_dict = {
+            'total_samples': config.total_samples,
+            'workers': config.workers,
+            'num_dots': config.num_dots,
+            'output_dir': config.output_dir,
+            'config_path': config.config_path,
+            'batch_size': config.batch_size,
+            'voltage_offset_range': config.voltage_offset_range,
+            'seed_base': config.seed_base
         }
         
-        # Collect samples in batches
+        # Process samples in smaller Ray batches to prevent memory issues
+        ray_batch_size = min(config.batch_size, 500)  # Smaller Ray batches
         batch_samples = []
         current_batch_id = 0
         
-        # Process completed jobs
-        for future in as_completed(future_to_id):
-            sample_id = future_to_id[future]
-            try:
-                sample = future.result()
-                batch_samples.append(sample)
-                
-                if sample.get('success', False):
-                    successful_samples += 1
-                else:
+        # Initialize progress bar
+        pbar = tqdm(
+            total=config.total_samples,
+            desc="Generating samples",
+            unit="samples"
+        )
+        
+        for batch_start in range(0, config.total_samples, ray_batch_size):
+            batch_end = min(batch_start + ray_batch_size, config.total_samples)
+            logger.info(f"Submitting Ray batch: samples {batch_start} to {batch_end-1}")
+            
+            # Submit Ray tasks for this batch
+            futures = [
+                generate_sample_ray.remote(i, config_dict)
+                for i in range(batch_start, batch_end)
+            ]
+            
+            # Process results as they complete with timeout protection
+            for future in futures:
+                try:
+                    sample = ray.get(future, timeout=60)  # 60 second timeout per sample
+                    batch_samples.append(sample)
+                    
+                    if sample.get('success', False):
+                        successful_samples += 1
+                    else:
+                        failed_samples += 1
+                        
+                except ray.exceptions.GetTimeoutError:
+                    logger.warning(f"Sample generation timed out after 60 seconds")
                     failed_samples += 1
+                except Exception as e:
+                    logger.error(f"Error processing Ray task: {e}")
+                    failed_samples += 1
+                
+                # Update progress bar
+                pbar.update(1)
+                pbar.set_postfix_str(f"Success: {successful_samples}, Failed: {failed_samples}, Batches: {saved_batches}/{num_batches}")
                 
                 # Save batch when full or at end
                 if (len(batch_samples) >= config.batch_size or 
@@ -350,29 +376,30 @@ def generate_dataset(config: GenerationConfig) -> None:
                     
                     if save_batch(current_batch_id, batch_samples, output_dir):
                         saved_batches += 1
-                        logger.info(f"Saved batch {current_batch_id} ({len(batch_samples)} samples)")
+                        pbar.set_description(f"Generating samples (Saved batch {current_batch_id})")
                     
                     # Reset for next batch
                     batch_samples = []
                     current_batch_id += 1
-                
-                # Progress reporting
-                total_processed = successful_samples + failed_samples
-                if total_processed % max(1, config.total_samples // 10) == 0:
-                    elapsed = time.time() - start_time
-                    rate = total_processed / elapsed if elapsed > 0 else 0
-                    eta = (config.total_samples - total_processed) / rate if rate > 0 else 0
-                    logger.info(
-                        f"Progress: {total_processed}/{config.total_samples} "
-                        f"({total_processed/config.total_samples*100:.1f}%) | "
-                        f"Rate: {rate:.1f} samples/sec | "
-                        f"Batches saved: {saved_batches}/{num_batches} | "
-                        f"ETA: {eta/60:.1f} min"
-                    )
-                    
-            except Exception as e:
-                logger.error(f"Error processing sample {sample_id}: {e}")
-                failed_samples += 1
+            
+            # Cleanup Ray objects for this batch
+            del futures
+            
+        # Close progress bar
+        pbar.close()
+            
+    except Exception as e:
+        logger.error(f"Ray processing failed: {e}")
+        if 'pbar' in locals():
+            pbar.close()
+        raise
+    finally:
+        # Always cleanup Ray resources
+        try:
+            ray.shutdown()
+            logger.info("Ray shutdown completed")
+        except Exception as e:
+            logger.warning(f"Ray shutdown had issues: {e}")
     
     # Final statistics
     total_time = time.time() - start_time
@@ -399,7 +426,7 @@ def generate_dataset(config: GenerationConfig) -> None:
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description='Generate quantum device dataset')
-    parser.add_argument('--total_samples', type=int, default=20000,
+    parser.add_argument('--total_samples', type=int, default=10000,
                        help='Total number of samples to generate')
     parser.add_argument('--workers', type=int, default=8,
                        help='Number of worker processes')
@@ -415,14 +442,8 @@ def main():
                        help='Range for random voltage offset from ground truth')
     parser.add_argument('--seed', type=int, default=42,
                        help='Base random seed for reproducibility')
-    parser.add_argument('--test', action='store_true',
-                        help='Whether to run a sample run with visualisation')
     
     args = parser.parse_args()
-
-    if args.test and args.num_dots != 4:
-        args.num_dots = 4
-        print("Warning: test mode should run with 4 dots, setting num_dots to 4")
     
     # Create configuration
     config = GenerationConfig(
@@ -436,12 +457,9 @@ def main():
         seed_base=args.seed
     )
     
-    # Run in test mode or normal generation mode
+    # Run dataset generation
     try:
-        if args.test:
-            run_test_mode(config)
-        else:
-            generate_dataset(config)
+        generate_dataset(config)
     except KeyboardInterrupt:
         print("\nGeneration interrupted by user")
     except Exception as e:

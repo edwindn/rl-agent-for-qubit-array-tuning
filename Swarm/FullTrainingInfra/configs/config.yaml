@@ -39,6 +39,10 @@ ppo_overrides:
   # model:
   #   fcnet_hiddens: [512, 512]
 
+agent_models:
+  use_lstm: true
+  lstm_cell_size: 512
+
 # Ray Configuration
 ray:
   # Resource allocation

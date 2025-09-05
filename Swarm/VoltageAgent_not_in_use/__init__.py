@@ -6,16 +6,16 @@ voltage control of quantum devices. Different trainer implementations can
 be easily switched based on configuration.
 """
 
-from .ppo_trainer import PPOTrainer, MultiModalPPOModel, create_ppo_config
-from .ppo_trainer_recurrent import RecurrentPPOTrainer, MultiModalRecurrentPPOModel, create_recurrent_ppo_config
+# from .ppo_trainer import PPOTrainer, MultiModalPPOModel, create_ppo_config  # Missing file
+from .ppo_trainer_recurrent import RecurrentPPOTrainer, SingleAgentRecurrentPPOModel, create_recurrent_ppo_config
 from .ppo_config import get_default_ppo_config, get_ppo_config
 
 __all__ = [
-    'PPOTrainer',
-    'MultiModalPPOModel', 
-    'create_ppo_config',
+    # 'PPOTrainer',  # Missing file
+    # 'MultiModalPPOModel',  # Missing file
+    # 'create_ppo_config',  # Missing file
     'RecurrentPPOTrainer',
-    'MultiModalRecurrentPPOModel',
+    'SingleAgentRecurrentPPOModel',
     'create_recurrent_ppo_config',
     'get_default_ppo_config',
     'get_ppo_config',
@@ -40,7 +40,7 @@ def get_trainer_class(trainer_type: str = 'ppo'):
         ValueError: If trainer_type is not supported
     """
     trainer_map = {
-        'ppo': PPOTrainer,
+        # 'ppo': PPOTrainer,  # Missing file
         'recurrent_ppo': RecurrentPPOTrainer,
         # Future implementations:
         # 'ppo_v2': PPOTrainerV2,

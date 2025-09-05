@@ -22,12 +22,6 @@ import wandb
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
-import ray
-from ray import train
-from ray.train import Checkpoint
-from ray.train.torch import TorchTrainer
-from ray.train.torch import prepare_model, prepare_data_loader
-from ray.air import ScalingConfig
 
 # Local imports
 from CapacitancePrediction import create_model, create_loss_function
@@ -320,33 +314,13 @@ def calculate_metrics(predictions: Tuple[torch.Tensor, torch.Tensor],
     return metrics
 
 
-def compute_pcc(logvars: torch.Tensor, errors: torch.Tensor) -> float:
-    vars_ = torch.exp(logvars)
-    vars_flat = vars_.flatten().detach().cpu().numpy()
-    errors_flat = errors.flatten().detach().cpu().numpy()
-
-    if len(vars_flat) > 1 and np.std(vars_flat) > 1e-8 and np.std(errors_flat) > 1e-8:
-        try:
-            pcc = np.corrcoef(vars_flat, errors_flat)[0, 1]
-            if np.isnan(pcc):
-                pcc = 0.0
-        except Exception as e:
-            print(f"Warning: could not compute Pearson coefficient, {e}")
-            pcc = 0.0
-    else:
-        pcc = 0.0
-
-    return pcc
-
-
 def train_epoch(model: nn.Module, 
                 train_loader: DataLoader, 
                 optimizer: optim.Optimizer, 
                 loss_fn: nn.Module,
                 device: torch.device,
                 epoch: int,
-                log_wandb: bool = True,
-                global_train_step: int = 0) -> Tuple[Dict[str, float], int]:
+                log_wandb: bool = True) -> Dict[str, float]:
     """Train for one epoch"""
     model.train()
     
@@ -366,7 +340,7 @@ def train_epoch(model: nn.Module,
         predictions = model(images)
         
         # Compute loss
-        total_loss_batch, mse_loss, nll_loss, log_vars, errors = loss_fn(predictions, targets)
+        total_loss_batch, mse_loss, nll_loss = loss_fn(predictions, targets)
         
         # Backward pass
         total_loss_batch.backward()
@@ -376,26 +350,17 @@ def train_epoch(model: nn.Module,
         total_loss += total_loss_batch.item()
         total_mse += mse_loss.item()
         total_nll += nll_loss.item()
-
-        # Calculate correlation between prediction errors and uncertainties across the batch
-        pcc = compute_pcc(log_vars, errors)
-            
-        mae = torch.sqrt(errors).mean().item()
-
+        
         # Log batch metrics to wandb
         if log_wandb and wandb.run is not None:
+            global_step = (epoch - 1) * num_batches + batch_idx
             wandb.log({
-                'train/step': global_train_step,
-                'train/loss': total_loss_batch.item(),
-                'train/mse': mse_loss.item(),
-                'train/mae': mae,
-                'train/nll': nll_loss.item(),
-                'train/var': np.exp(log_vars.mean().item()),
-                'train/pcc': pcc,
-                'train/epoch': epoch
-            })
-        
-        global_train_step += 1
+                'batch/train_loss': total_loss_batch.item(),
+                'batch/train_mse': mse_loss.item(),
+                'batch/train_nll': nll_loss.item(),
+                'batch/step': global_step,
+                'batch/epoch': epoch
+            }, step=global_step)
         
         # Update progress bar
         pbar.set_postfix({
@@ -408,7 +373,7 @@ def train_epoch(model: nn.Module,
         'train_loss': total_loss / num_batches,
         'train_mse': total_mse / num_batches,
         'train_nll': total_nll / num_batches
-    }, global_train_step
+    }
 
 
 def validate_epoch(model: nn.Module, 
@@ -416,17 +381,18 @@ def validate_epoch(model: nn.Module,
                    loss_fn: nn.Module,
                    device: torch.device,
                    epoch: int,
-                   log_wandb: bool = True,
-                   global_val_step: int = 0) -> Tuple[Dict[str, float], int]:
+                   log_wandb: bool = True) -> Dict[str, float]:
     """Validate for one epoch"""
     model.eval()
     
     total_loss = 0.0
     total_mse = 0.0
     total_nll = 0.0
-
+    all_predictions = []
+    all_targets = []
+    
     with torch.no_grad():
-        for batch_idx, (images, targets) in enumerate(val_loader):
+        for images, targets in tqdm(val_loader, desc="Validation"):
             images = images.to(device)
             targets = targets.to(device)
             
@@ -434,31 +400,25 @@ def validate_epoch(model: nn.Module,
             predictions = model(images)
             
             # Compute loss
-            total_loss_batch, mse_loss, nll_loss, log_vars, errors = loss_fn(predictions, targets)
-
+            total_loss_batch, mse_loss, nll_loss = loss_fn(predictions, targets)
+            
             # Accumulate losses
             total_loss += total_loss_batch.item()
             total_mse += mse_loss.item()
             total_nll += nll_loss.item()
-
-            pcc = compute_pcc(log_vars, errors)
-
-            # Log batch metrics to wandb
-            if log_wandb and wandb.run is not None:
-                wandb.log({
-                    'eval/step': global_val_step,
-                    'eval/loss': total_loss_batch.item(),
-                    'eval/mse': mse_loss.item(),
-                    'eval/mae': torch.sqrt(mse_loss).item(),
-                    'eval/nll': nll_loss.item(),
-                    'eval/var': np.exp(log_vars.mean().item()),
-                    'eval/pcc': pcc,
-                    'eval/epoch': epoch,
-                })
             
-            global_val_step += 1
+            # Store for detailed metrics
+            all_predictions.append(predictions)
+            all_targets.append(targets)
     
     num_batches = len(val_loader)
+    
+    # Calculate detailed metrics on all validation data
+    all_pred_values = torch.cat([pred[0] for pred in all_predictions])
+    all_pred_logvars = torch.cat([pred[1] for pred in all_predictions])
+    all_targ = torch.cat(all_targets)
+    
+    detailed_metrics = calculate_metrics((all_pred_values, all_pred_logvars), all_targ)
     
     # Base validation metrics
     val_metrics = {
@@ -467,7 +427,23 @@ def validate_epoch(model: nn.Module,
         'val_nll': total_nll / num_batches
     }
     
-    return val_metrics, global_val_step
+    # Add detailed metrics
+    val_metrics.update(detailed_metrics)
+    
+    # Create and log scatter plots to wandb
+    if log_wandb and wandb.run is not None:
+        try:
+            scatter_figures = create_scatter_plots((all_pred_values, all_pred_logvars), all_targ, epoch)
+            
+            # Log plots to wandb with proper step parameter
+            for plot_name, fig in scatter_figures.items():
+                wandb.log({f"plots/{plot_name}": wandb.Image(fig)}, step=epoch)
+                plt.close(fig)  # Free memory
+                
+        except Exception as e:
+            print(f"Warning: Could not create scatter plots: {e}")
+    
+    return val_metrics
 
 
 def save_checkpoint(model: nn.Module, 
@@ -495,41 +471,69 @@ def save_checkpoint(model: nn.Module,
         print(f"Saved best model to {best_path}")
 
 
-def train_func(config: dict):
-    """
-    Core training function that can be used for both single-GPU and distributed training.
+def main():
+    parser = argparse.ArgumentParser(description='Train Capacitance Prediction Model')
+    parser.add_argument('--root_data_dir', type=str, 
+                       default='/home/edn/rl-agent-for-qubit-array-tuning/Swarm/CapacitanceModel/',
+                       help='Path to dataset directory')
+    parser.add_argument('--data_dirs', type=str, nargs='+', default=['dataset'],
+                       help='List of data directories')
+    parser.add_argument('--output_dir', type=str, default='./outputs',
+                       help='Directory to save outputs')
+    parser.add_argument('--batch_size', type=int, default=64,
+                       help='Batch size for training')
+    parser.add_argument('--epochs', type=int, default=20,
+                       help='Number of training epochs')
+    parser.add_argument('--lr', type=float, default=1e-3,
+                       help='Learning rate')
+    parser.add_argument('--val_split', type=float, default=0.2,
+                       help='Validation split fraction')
+    parser.add_argument('--num_workers', type=int, default=4,
+                       help='Number of data loading workers')
+    parser.add_argument('--load_to_memory', action='store_true',
+                       help='Load all data to memory (requires ~11GB RAM)')
+    parser.add_argument('--mse_weight', type=float, default=1.0,
+                       help='Weight for MSE loss component')
+    parser.add_argument('--nll_weight', type=float, default=0.1,
+                       help='Weight for NLL loss component (default 0.1 to balance scales)')
+    parser.add_argument('--save_freq', type=int, default=10,
+                       help='Save checkpoint every N epochs')
+    parser.add_argument('--gpu', type=str, default="0",
+                        help='GPU index to use for training')
+    parser.add_argument('--wandb_project', type=str, default='capacitance-prediction',
+                       help='Wandb project name')
+    parser.add_argument('--wandb_run_name', type=str, default=None,
+                       help='Wandb run name')
+    parser.add_argument('--no_wandb', action='store_true',
+                       help='Disable wandb logging')
+    parser.add_argument('--num_gpus', type=int, default=1,
+                       help='Number of GPUs to use for distributed training')
+    parser.add_argument('--use_distributed', action='store_true',
+                       help='Enable distributed training with Ray Train')
     
-    Args:
-        config: Dictionary containing all training parameters
-    """
-    # Setup device - Ray Train will handle GPU assignment
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    output_dir = Path(config['output_dir'])
+    args = parser.parse_args()
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+
+    # Setup
+    device = setup_device()
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Initialize Wandb - only on rank 0 for distributed training
-    if not config['no_wandb'] and train.get_context().get_world_rank() == 0:
+    # Initialize Wandb
+    if not args.no_wandb:
         wandb.init(
-            project=config['wandb_project'],
-            name=config['wandb_run_name'],
-            config=config
+            project=args.wandb_project,
+            name=args.wandb_run_name,
+            config=args
         )
         
-        # Define custom metrics with separate step counters for train and validation
-        wandb.define_metric("train/step")
-        wandb.define_metric("eval/step")
+        # Define custom metrics to handle different step scales
+        wandb.define_metric("batch/step")
+        wandb.define_metric("batch/*", step_metric="batch/step")
         wandb.define_metric("epoch")
-        
-        # Training metrics use train step counter
-        wandb.define_metric("train/*", step_metric="train/step")
-        
-        # Validation metrics use eval step counter  
-        wandb.define_metric("eval/*", step_metric="eval/step")
-        
-        # Epoch-level metrics use epoch counter
-        wandb.define_metric("val_*", step_metric="epoch")
-        wandb.define_metric("train_*", step_metric="epoch") 
+        wandb.define_metric("train_*", step_metric="epoch")
+        wandb.define_metric("val_*", step_metric="epoch") 
         wandb.define_metric("Cgd_*", step_metric="epoch")
         wandb.define_metric("uncertainty_*", step_metric="epoch")
         wandb.define_metric("mean_*", step_metric="epoch")
@@ -541,317 +545,99 @@ def train_func(config: dict):
         wandb.define_metric("lr", step_metric="epoch")
         wandb.define_metric("epoch_time", step_metric="epoch")
 
-    data_dirs = [os.path.join(config['root_data_dir'], dir_) for dir_ in config['data_dirs']]
+    data_dirs = [os.path.join(args.root_data_dir, dir_) for dir_ in args.data_dirs]
     
     # Create data loaders
     print("Creating data loaders...")
     transform = get_transforms(normalize=True)
     train_loader, val_loader = create_data_loaders(
         data_dirs=data_dirs,
-        batch_size=config['batch_size'],
-        val_split=config['val_split'],
-        num_workers=config['num_workers'],
-        load_to_memory=config['load_to_memory'],
+        batch_size=args.batch_size,
+        val_split=args.val_split,
+        num_workers=args.num_workers,
+        load_to_memory=args.load_to_memory,
         transform=transform
     )
-    
-    # Prepare data loaders for distributed training
-    train_loader = prepare_data_loader(train_loader)
-    val_loader = prepare_data_loader(val_loader)
     
     # Create model and loss function
     print("Creating model...")
     model = create_model()
-    model = prepare_model(model)  # Ray Train preparation
+    model = model.to(device)
     
     loss_fn = create_loss_function(
-        mse_weight=config['mse_weight'],
-        nll_weight=config['nll_weight']
+        mse_weight=args.mse_weight,
+        nll_weight=args.nll_weight
     )
     
     # Create optimizer
-    optimizer = optim.Adam(model.parameters(), lr=config['lr'])
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=5
     )
     
-    # Print model info (only on rank 0)
-    if train.get_context().get_world_rank() == 0:
-        total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"Total parameters: {total_params:,}")
-        print(f"Trainable parameters: {trainable_params:,}")
-        
-        if not config['no_wandb']:
-            wandb.watch(model, log_freq=100)
+    # Print model info
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    
+    if not args.no_wandb:
+        wandb.watch(model, log_freq=100)
     
     # Training loop
     print("Starting training...")
     best_val_loss = float('inf')
-    global_train_step = 0
-    global_val_step = 0
     
-    for epoch in range(1, config['epochs'] + 1):
+    for epoch in range(1, args.epochs + 1):
         start_time = time.time()
         
         # Train
-        train_metrics, global_train_step = train_epoch(model, train_loader, optimizer, loss_fn, device, epoch, log_wandb=(not config['no_wandb'] and train.get_context().get_world_rank() == 0), global_train_step=global_train_step)
+        train_metrics = train_epoch(model, train_loader, optimizer, loss_fn, device, epoch, log_wandb=not args.no_wandb)
         
         # Validate
-        val_metrics, global_val_step = validate_epoch(model, val_loader, loss_fn, device, epoch, log_wandb=(not config['no_wandb'] and train.get_context().get_world_rank() == 0), global_val_step=global_val_step)
+        val_metrics = validate_epoch(model, val_loader, loss_fn, device, epoch, log_wandb=not args.no_wandb)
         
         # Learning rate scheduling
         scheduler.step(val_metrics['val_loss'])
         
         epoch_time = time.time() - start_time
         
+        # Print epoch summary
+        print(f"\nEpoch {epoch}/{args.epochs} ({epoch_time:.1f}s)")
+        print(f"Train - Loss: {train_metrics['train_loss']:.4f}, "
+              f"MSE: {train_metrics['train_mse']:.4f}, "
+              f"NLL: {train_metrics['train_nll']:.4f}")
+        print(f"Val   - Loss: {val_metrics['val_loss']:.4f}, "
+              f"MSE: {val_metrics['val_mse']:.4f}, "
+              f"MAE: {val_metrics['mae']:.4f}")
+        print(f"Val Targets - Cgd_1_2: {val_metrics['Cgd_1_2_mae']:.4f}, "
+              f"Cgd_1_3: {val_metrics['Cgd_1_3_mae']:.4f}, "
+              f"Cgd_0_2: {val_metrics['Cgd_0_2_mae']:.4f}")
         
-        # Log to wandb (only on rank 0)
-        if not config['no_wandb'] and train.get_context().get_world_rank() == 0:
+        # Log to wandb
+        if not args.no_wandb:
             log_dict = {**train_metrics, **val_metrics}
             log_dict['epoch'] = epoch
             log_dict['lr'] = optimizer.param_groups[0]['lr']
             log_dict['epoch_time'] = epoch_time
-            wandb.log(log_dict)
+            wandb.log(log_dict, step=epoch)
         
-        # Report metrics to Ray Train
-        metrics_to_report = {**train_metrics, **val_metrics}
-        metrics_to_report['epoch_time'] = epoch_time
-        train.report(metrics_to_report)
-        
-        # Save checkpoints (only on rank 0)
+        # Save checkpoints
         is_best = val_metrics['val_loss'] < best_val_loss
         if is_best:
             best_val_loss = val_metrics['val_loss']
         
-        if train.get_context().get_world_rank() == 0 and (epoch % config['save_freq'] == 0 or is_best):
+        if epoch % args.save_freq == 0 or is_best:
             save_checkpoint(
                 model, optimizer, epoch, best_val_loss, 
                 output_dir, is_best
             )
     
-    if train.get_context().get_world_rank() == 0:
-        if not config['no_wandb']:
-            wandb.finish()
-
-
-def main():
-    parser = argparse.ArgumentParser(description='Train Capacitance Prediction Model')
-    parser.add_argument('--root_data_dir', type=str, 
-                       default='/home/edn/rl-agent-for-qubit-array-tuning/Swarm/CapacitanceModel/',
-                       help='Path to dataset directory')
-    parser.add_argument('--data_dirs', type=str, nargs='+', default=['dataset', '4dot_dataset'],
-                       help='List of data directories')
-    parser.add_argument('--output_dir', type=str, default='./outputs',
-                       help='Directory to save outputs')
-    parser.add_argument('--batch_size', type=int, default=64,
-                       help='Batch size for training')
-    parser.add_argument('--epochs', type=int, default=5,
-                       help='Number of training epochs')
-    parser.add_argument('--lr', type=float, default=1e-3,
-                       help='Learning rate')
-    parser.add_argument('--val_split', type=float, default=0.2,
-                       help='Validation split fraction')
-    parser.add_argument('--num_workers', type=int, default=4,
-                       help='Number of data loading workers')
-    parser.add_argument('--load_to_memory', action='store_true',
-                       help='Load all data to memory (requires ~11GB RAM)')
-    parser.add_argument('--mse_weight', type=float, default=100.0,
-                       help='Weight for MSE loss component')
-    parser.add_argument('--nll_weight', type=float, default=0.1,
-                       help='Weight for NLL loss component (default 0.1 to balance scales)')
-    parser.add_argument('--save_freq', type=int, default=10,
-                       help='Save checkpoint every N epochs')
-    parser.add_argument('--gpus', type=str, nargs='+', default=["0"],
-                       help='GPU indices to use for training (will automatically use DDP if more than one given)')
-    parser.add_argument('--wandb_project', type=str, default='capacitance-prediction',
-                       help='Wandb project name')
-    parser.add_argument('--wandb_run_name', type=str, default=None,
-                       help='Wandb run name')
-    parser.add_argument('--no_wandb', action='store_true',
-                       help='Disable wandb logging')
+    print("Training completed!")
+    print(f"Best validation loss: {best_val_loss:.4f}")
     
-    args = parser.parse_args()
-    
-    gpu_list = []
-    for gpu_arg in args.gpus:
-        if ',' in gpu_arg:
-            # Handle comma-separated: "0,1,2" -> ["0", "1", "2"]
-            gpu_list.extend(gpu_arg.split(','))
-        else:
-            # Handle space-separated: already split by argparse
-            gpu_list.append(gpu_arg)
-    
-    # Clean up any empty strings and strip whitespace
-    gpu_list = [gpu.strip() for gpu in gpu_list if gpu.strip()]
-    args.gpus = gpu_list
-    
-    # Convert args to config dict for Ray Train compatibility
-    config = vars(args)
-
-    num_gpus = len(gpu_list)
-    use_distributed = num_gpus > 1
-
-    if use_distributed:
-        print(f"Starting distributed training on GPUs {gpu_list}...")
-        
-        # Set CUDA_VISIBLE_DEVICES to only the specified GPUs
-        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(gpu_list)
-        print(f"Set CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']}")
-
-        # Initialize Ray for distributed training
-        if not ray.is_initialized():
-            ray.init(
-                ignore_reinit_error=True,
-                include_dashboard=False,  # Consistent with existing codebase
-            )
-        
-        # Create scaling configuration
-        scaling_config = ScalingConfig(
-            num_workers=num_gpus,
-            use_gpu=True,
-            resources_per_worker={"GPU": 1}
-        )
-        
-        # Create and configure TorchTrainer
-        trainer = TorchTrainer(
-            train_loop_per_worker=train_func,
-            train_loop_config=config,
-            scaling_config=scaling_config,
-        )
-        
-        # Run distributed training
-        result = trainer.fit()
-        
-        print("Distributed training completed!")
-        print(f"Best validation loss: {result.metrics.get('val_loss', 'N/A')}")
-        
-    else:
-        # Single-GPU training (original behavior) 
-        gpu = args.gpus[0]
-        os.environ['CUDA_VISIBLE_DEVICES'] = gpu
-
-        print(f"Training on single gpu {gpu} ...")
-        
-        # Setup device
-        device = setup_device()
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Initialize Wandb
-        if not args.no_wandb:
-            wandb.init(
-                project=args.wandb_project,
-                name=args.wandb_run_name,
-                config=args
-            )
-            
-            # Define custom metrics with separate step counters for train and validation
-            wandb.define_metric("train/step")
-            wandb.define_metric("eval/step")
-            wandb.define_metric("epoch")
-            
-            # Training metrics use train step counter
-            wandb.define_metric("train/*", step_metric="train/step")
-            
-            # Validation metrics use eval step counter  
-            wandb.define_metric("eval/*", step_metric="eval/step")
-            
-            # Epoch-level metrics use epoch counter
-            wandb.define_metric("val_*", step_metric="epoch")
-            wandb.define_metric("train_*", step_metric="epoch") 
-            wandb.define_metric("Cgd_*", step_metric="epoch")
-            wandb.define_metric("uncertainty_*", step_metric="epoch")
-            wandb.define_metric("mean_*", step_metric="epoch")
-            wandb.define_metric("median_*", step_metric="epoch")
-            wandb.define_metric("std_*", step_metric="epoch")
-            wandb.define_metric("plots/*", step_metric="epoch")
-            wandb.define_metric("mae", step_metric="epoch")
-            wandb.define_metric("mse", step_metric="epoch")
-            wandb.define_metric("lr", step_metric="epoch")
-            wandb.define_metric("epoch_time", step_metric="epoch")
-
-        data_dirs = [os.path.join(args.root_data_dir, dir_) for dir_ in args.data_dirs]
-        
-        # Create data loaders
-        print("Creating data loaders...")
-        transform = get_transforms(normalize=True)
-        train_loader, val_loader = create_data_loaders(
-            data_dirs=data_dirs,
-            batch_size=args.batch_size,
-            val_split=args.val_split,
-            num_workers=args.num_workers,
-            load_to_memory=args.load_to_memory,
-            transform=transform
-        )
-        
-        # Create model and loss function
-        print("Creating model...")
-        model = create_model()
-        model = model.to(device)
-        
-        loss_fn = create_loss_function(
-            mse_weight=args.mse_weight,
-            nll_weight=args.nll_weight
-        )
-        
-        # Create optimizer
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=5
-        )
-        
-        # Print model info
-        total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"Total parameters: {total_params:,}")
-        print(f"Trainable parameters: {trainable_params:,}")
-        
-        if not args.no_wandb:
-            wandb.watch(model, log_freq=100)
-        
-        # Training loop
-        print("Starting training...")
-        best_val_loss = float('inf')
-        global_train_step = 0
-        global_val_step = 0
-        
-        for epoch in range(1, args.epochs + 1):
-            start_time = time.time()
-            
-            # Train
-            train_metrics, global_train_step = train_epoch(model, train_loader, optimizer, loss_fn, device, epoch, log_wandb=not args.no_wandb, global_train_step=global_train_step)
-            
-            # Validate
-            val_metrics, global_val_step = validate_epoch(model, val_loader, loss_fn, device, epoch, log_wandb=not args.no_wandb, global_val_step=global_val_step)
-            
-            # Learning rate scheduling
-            scheduler.step(val_metrics['val_loss'])
-            
-            epoch_time = time.time() - start_time
-            
-            
-            # Log to wandb
-            if not args.no_wandb:
-                log_dict = {**train_metrics, **val_metrics}
-                log_dict['epoch'] = epoch
-                log_dict['lr'] = optimizer.param_groups[0]['lr']
-                log_dict['epoch_time'] = epoch_time
-                wandb.log(log_dict)
-            
-            # Save checkpoints
-            is_best = val_metrics['val_loss'] < best_val_loss
-            if is_best:
-                best_val_loss = val_metrics['val_loss']
-            
-            if epoch % args.save_freq == 0 or is_best:
-                save_checkpoint(
-                    model, optimizer, epoch, best_val_loss, 
-                    output_dir, is_best
-                )
-        
-        if not args.no_wandb:
-            wandb.finish()
+    if not args.no_wandb:
+        wandb.finish()
 
 
 if __name__ == "__main__":
