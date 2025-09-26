@@ -7,6 +7,8 @@ GIF format for qualitative assessment of agent performance.
 
 import numpy as np
 import wandb
+from pathlib import Path
+import shutil
 
 
 def process_episode_gif(result, iteration):
@@ -60,6 +62,72 @@ def process_episode_gif(result, iteration):
                       f"{frames_uint8.shape}, iteration {iteration+1}")
             else:
                 print(f"[GIF Processing] Unexpected frame data shape: {frames_data.shape}")
+
+    except Exception as e:
+        print(f"[GIF Processing] Error processing episode GIF: {e}")
+        # Don't raise to avoid disrupting training
+
+
+def cleanup_gif_lock_file(gif_save_dir=None):
+    """Remove gif capture lock file and images from previous training runs."""
+    import os
+
+    # Clean up lock file
+    lock_file = "/tmp/gif_capture_worker.lock"
+    try:
+        os.remove(lock_file)
+        print("Cleaned up previous GIF capture lock file")
+    except FileNotFoundError:
+        pass  # Already gone, that's fine
+    except Exception as e:
+        print(f"Warning: Could not remove GIF lock file: {e}")
+
+    # Clean up previous GIF images if directory is specified
+    if gif_save_dir is not None:
+        try:
+            gif_dir = Path(gif_save_dir)
+            if gif_dir.exists():
+                shutil.rmtree(gif_dir, ignore_errors=True)
+                print(f"Cleaned up previous GIF images from {gif_dir}")
+        except Exception as e:
+            print(f"Warning: Could not remove previous GIF images: {e}")
+
+
+def process_and_log_gifs(iteration_num, config, use_wandb=True):
+    """Process saved images into GIFs and log to Wandb."""
+    gif_save_dir = Path(config['gif_capture']['save_dir'])
+
+    if not gif_save_dir.exists() or not any(gif_save_dir.glob("step_*.png")):
+        return
+
+    try:
+        print(f"Processing GIFs for iteration {iteration_num}...")
+
+        # Get all saved images
+        image_files = sorted(gif_save_dir.glob("step_*.png"))
+
+        if not image_files:
+            print("No images found for GIF creation")
+            return
+
+        # Group images by channel
+        channel_files = {}
+        for img_file in image_files:
+            # Parse filename: step_XXXXXX_channel_Y.png
+            parts = img_file.stem.split('_')
+            if len(parts) >= 4:
+                channel = int(parts[3])  # channel number
+                if channel not in channel_files:
+                    channel_files[channel] = []
+                channel_files[channel].append(img_file)
+
+        # Create numpy arrays and log to Wandb
+        if use_wandb and channel_files:
+            _log_images_as_video_to_wandb(channel_files, iteration_num, config)
+
+        # Clean up temporary files
+        shutil.rmtree(gif_save_dir, ignore_errors=True)
+        print(f"Processed {len(channel_files)} channels and cleaned up images")
 
     except Exception as e:
         print(f"[GIF Processing] Error processing episode GIF: {e}")
