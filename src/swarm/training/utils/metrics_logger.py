@@ -326,20 +326,6 @@ def log_to_wandb(result: Dict[str, Any], iteration: int):
             "barrier_policy_variance_mean": float(np.exp(barrier_policy["barrier_log_std_mean"] * 2))  # Convert log_std to variance
         })
 
-    # Check for scan images in custom metrics
-    env_runners = result.get("env_runners", {})
-    custom_metrics = env_runners.get("custom_metrics", {})
-    
-    if "scan_images" in custom_metrics and "scan_episode_count" in custom_metrics:
-        scan_images = custom_metrics["scan_images"]
-        episode_count = custom_metrics["scan_episode_count"]
-        
-        # Log scan images to wandb
-        try:
-            log_scans_to_wandb(scan_images, episode_count)
-        except Exception as e:
-            print(f"Error logging scans to wandb: {e}")
-
     # Log to wandb (don't specify step since we're logging iteration explicitly)
     wandb.log(log_dict)
 
@@ -402,43 +388,3 @@ def setup_wandb_metrics(ema_period: int = 20):
     wandb.define_metric("barrier_return_avg", step_metric="iteration", summary="max")
     wandb.define_metric("plunger_policy_loss", step_metric="iteration", summary="min")
     wandb.define_metric("barrier_policy_loss", step_metric="iteration", summary="min")
-
-
-def log_scans_to_wandb(scan_images, iteration: int):
-    """
-    Log scan images directly to wandb.
-    
-    Args:
-        scan_images: numpy array of shape (H, W, N-1) containing scan images
-        iteration: Current training iteration
-    """
-    if not wandb.run:
-        return
-        
-    try:
-        num_channels = scan_images.shape[2]
-        fig, axes = plt.subplots(1, num_channels, figsize=(4*num_channels, 4))
-        if num_channels == 1:
-            axes = [axes]
-        
-        scan_artifacts = {}
-        for ch in range(num_channels):
-            axes[ch].imshow(scan_images[:, :, ch], cmap='viridis')
-            axes[ch].set_title(f'Scan Channel {ch}')
-            axes[ch].axis('off')
-            
-            scan_artifacts[f'scan_channel_{ch}'] = wandb.Image(scan_images[:, :, ch])
-        
-        plt.tight_layout()
-        
-        wandb.log({
-            'scans/combined_view': wandb.Image(fig),
-            **{f'scans/{k}': v for k, v in scan_artifacts.items()},
-            'iteration': iteration
-        })
-        
-        plt.close(fig)
-        print(f"Logged {num_channels} scan images to wandb at iteration {iteration}")
-        
-    except Exception as e:
-        print(f"Error logging scans to wandb: {e}")

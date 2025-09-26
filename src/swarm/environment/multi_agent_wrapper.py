@@ -496,7 +496,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
 
         try:
             # Atomic file creation - only succeeds for first worker
-            lock_fd = os.open(lock_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            lock_fd = os.open(lock_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
 
             # Write our PID to the lock file
             with os.fdopen(lock_fd, 'w') as f:

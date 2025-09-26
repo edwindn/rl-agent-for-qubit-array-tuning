@@ -15,8 +15,8 @@ wandb:
 # Ray cluster configuration
 ray:
   include_dashboard: false   # Disable Ray dashboard for cleaner output
-  log_to_driver: true      # Reduce driver logs
-  logging_level: 10         # WARNING level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR)
+  log_to_driver: false      # Reduce driver logs
+  logging_level: 30         # WARNING level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR)
   
   # Runtime environment settings
   runtime_env:

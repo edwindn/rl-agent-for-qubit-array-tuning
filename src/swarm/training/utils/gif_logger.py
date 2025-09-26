@@ -24,9 +24,6 @@ def process_episode_gif(result, iteration):
         env_runner_results = result.get("env_runners", {})
         custom_metrics = env_runner_results.get("custom_metrics", {})
 
-        print(f"[GIF Debug] Iteration {iteration+1}")
-        print(f"[GIF Debug] env_runners keys: {list(env_runner_results.keys())}")
-        print(f"[GIF Debug] custom_metrics keys: {list(custom_metrics.keys())}")
 
         # Look for gif_frames in the custom metrics
         if "gif_frames" in custom_metrics:
@@ -58,13 +55,11 @@ def process_episode_gif(result, iteration):
                     "gif_channel": channel,
                 }, step=iteration+1)
 
-                print(f"[GIF Processing] Successfully logged GIF to wandb: "
-                      f"{frames_uint8.shape}, iteration {iteration+1}")
             else:
-                print(f"[GIF Processing] Unexpected frame data shape: {frames_data.shape}")
+                print(f"Unexpected frame data shape: {frames_data.shape}")
 
     except Exception as e:
-        print(f"[GIF Processing] Error processing episode GIF: {e}")
+        print(f"Error processing episode GIF: {e}")
         # Don't raise to avoid disrupting training
 
 
@@ -130,5 +125,70 @@ def process_and_log_gifs(iteration_num, config, use_wandb=True):
         print(f"Processed {len(channel_files)} channels and cleaned up images")
 
     except Exception as e:
-        print(f"[GIF Processing] Error processing episode GIF: {e}")
+        print(f"Error processing GIFs: {e}")
         # Don't raise to avoid disrupting training
+
+
+def _log_images_as_video_to_wandb(channel_files, iteration_num, config):
+    """Convert images to numpy arrays and log as videos to Wandb."""
+    try:
+        import numpy as np
+        from PIL import Image
+
+        log_dict = {}
+        fps = config['gif_capture'].get('fps', 0.5)  # Default to 0.5 if not specified
+
+        for channel, files in channel_files.items():
+            if not files:
+                continue
+
+            # Sort files by step number
+            sorted_files = sorted(files, key=lambda x: int(x.stem.split('_')[1]))
+
+            if len(sorted_files) < 2:
+                print(f"Not enough images for channel {channel} video (need at least 2)")
+                continue
+
+            # Load images into numpy array
+            images = []
+            for img_file in sorted_files:
+                img = Image.open(img_file)
+                img_array = np.array(img)
+
+                # Convert grayscale to RGB if needed (wandb.Video expects 3 channels)
+                if len(img_array.shape) == 2:
+                    img_array = np.stack([img_array] * 3, axis=-1)
+
+                images.append(img_array)
+
+            # Add black frames at start for easy loop detection
+            if images:
+                # Create black frames with same shape as first image
+                black_frame = np.zeros_like(images[0])
+
+                # Add 3 black frames at start and 2 at end
+                images = [black_frame] * 3 + images + [black_frame] * 2
+
+            # Convert to numpy array with shape (frames, height, width, channels)
+            video_array = np.stack(images, axis=0)
+
+            # Reorder to (frames, channels, height, width) as expected by wandb.Video
+            video_array = np.transpose(video_array, (0, 3, 1, 2))
+
+            # Create wandb.Video with configurable framerate
+            log_key = f"agent_vision_channel_{channel}"
+            log_dict[log_key] = wandb.Video(
+                video_array,
+                fps=fps,
+                format="gif",
+                caption=f"Agent vision channel {channel}, iteration {iteration_num}"
+            )
+
+        # Add iteration info
+        if log_dict:
+            log_dict["gif_iteration"] = iteration_num
+            wandb.log(log_dict)
+            print(f"Logged {len(log_dict)-1} video channels to Wandb for iteration {iteration_num}")
+
+    except Exception as e:
+        print(f"Error logging videos to Wandb: {e}")
