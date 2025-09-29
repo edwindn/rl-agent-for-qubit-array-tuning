@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=arc_qarray_rl_training
+#SBATCH --job-name=arc_install_conda_packages
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --time=100:00:00
@@ -86,10 +86,15 @@ conda activate "$ENV_NAME"
 # -----------------------------
 
 # torch, ray[rllib], qarray, wandb, torchvision[models]
-# scikit-learn, qarray-latched, ray[tune]
+# scikit-learn, qarray-latched
 PACKAGES=(
-    "ray[tune]"
-
+    "torch"
+    "torchvision[models]"
+    "ray[rllib]"
+    "qarray"
+    "wandb"
+    "scikit-learn"
+    "git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@c076d4cef57a071dd6e52458ad5937589747c18f"
 )
 
 pip install --upgrade pip
