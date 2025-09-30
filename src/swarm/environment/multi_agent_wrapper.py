@@ -48,8 +48,8 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
 
         Args:
             training: Whether in training mode
-            return_voltage: If True, returns dict observation with image, voltage, and is_plunger.
-                          If False, returns only the image array.
+            return_voltage: If True, returns dict observation with image and voltage.
+                            If False, returns only the image array.
         """
         super().__init__()
 
