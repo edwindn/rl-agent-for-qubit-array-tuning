@@ -157,7 +157,7 @@ neural_networks:
       hidden_layers: [32]
       activation: "relu"
       use_attention: true
-      use_tanh: false
+      use_tanh: true
     value_head:
       hidden_layers: [32]
       activation: "relu"
@@ -175,7 +175,7 @@ neural_networks:
       hidden_layers: [32]
       activation: "relu"
       use_attention: false
-      use_tanh: false
+      use_tanh: true
     value_head:
       hidden_layers: [32]
       activation: "relu"
