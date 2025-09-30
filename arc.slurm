@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:8
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=48
+#SBATCH --mem=180G
 #SBATCH --clusters=htc
 #SBATCH --partition=long
 #SBATCH --mail-user=edn.work@proton.me
@@ -84,4 +84,6 @@ echo "============================="
 # Run Training Script
 # -----------------------------
 echo "🚀 Launching training..."
-srun python src/swarm/training/train.py
+# srun python src/swarm/training/train.py
+# srun may interfere with Ray's DDP, trying without
+python src/swarm/training/train.py
