@@ -147,7 +147,7 @@ neural_networks:
 #       feature_size: 256
 #       adaptive_pooling: true
       lstm:
-        enabled: true
+        enabled: false
         cell_size: 256
         num_layers: 1
         max_seq_len: 50
@@ -157,6 +157,7 @@ neural_networks:
       hidden_layers: [32]
       activation: "relu"
       use_attention: true
+      use_tanh: false
     value_head:
       hidden_layers: [32]
       activation: "relu"
@@ -171,9 +172,10 @@ neural_networks:
       adaptive_pooling: true
       # No lstm section = no LSTM for barriers
     policy_head:
-      hidden_layers: [32]  
+      hidden_layers: [32]
       activation: "relu"
       use_attention: false
+      use_tanh: false
     value_head:
       hidden_layers: [32]
       activation: "relu"
