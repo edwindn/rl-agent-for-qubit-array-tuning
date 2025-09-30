@@ -58,25 +58,15 @@ python -c "
 import os
 from dotenv import load_dotenv
 
-print('Current working directory:', os.getcwd())
-print()
+print('Working directory:', os.getcwd())
 
-print('Before load_dotenv():')
-print(f'WANDB_API_KEY: {os.getenv(\"WANDB_API_KEY\", \"<not set>\")}')
-print()
+load_dotenv()
 
-print('Calling load_dotenv()...')
-result = load_dotenv(dotenv_path='.env', verbose=True)
-print(f'load_dotenv() returned: {result}')
-print()
-
-print('After load_dotenv():')
 api_key = os.getenv('WANDB_API_KEY')
 if api_key:
-    print(f'✅ WANDB_API_KEY is set (length: {len(api_key)} chars)')
-    print(f'   First 4 chars: {api_key[:4]}...')
+    print(f'✅ WANDB_API_KEY found ({len(api_key)} chars)')
 else:
-    print('❌ WANDB_API_KEY is NOT set')
+    print('❌ WANDB_API_KEY not found')
 "
 
 echo "============================="
