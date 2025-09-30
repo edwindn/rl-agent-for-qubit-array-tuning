@@ -6,3 +6,8 @@ To check queued jobs (on htc):
 
 To kill a job:
     scancel -M htc <job_id>
+
+Running order:
+    create .env file with WANDB_API_KEY=key
+    run env_arc.slurm
+    run arc.slurm
