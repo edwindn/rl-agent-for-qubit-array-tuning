@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:8
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=48
-#SBATCH --mem=180G
+#SBATCH --cpus-per-task=24
+#SBATCH --mem=120G
 #SBATCH --clusters=htc
 #SBATCH --partition=long
 #SBATCH --mail-user=edn.work@proton.me
