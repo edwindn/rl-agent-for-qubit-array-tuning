@@ -9,5 +9,6 @@ To kill a job:
 
 Running order:
     create .env file with WANDB_API_KEY=key
+    authenticate git ssh
     run env_arc.slurm
     run arc.slurm
