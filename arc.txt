@@ -1,0 +1,8 @@
+To submit a job:
+    sbatch scriptname.slurm
+
+To check queued jobs (on htc):
+    squeue -M htc -u $USER
+
+To kill a job:
+    scancel -M htc <job_id>
