@@ -54,29 +54,29 @@ echo "Python version: $(python --version)"
 # -----------------------------
 echo "========= DOTENV LOADING TEST ========="
 
-python - << 'EOF'
+python -c "
 import os
 from dotenv import load_dotenv
 
-print("Current working directory:", os.getcwd())
+print('Current working directory:', os.getcwd())
 print()
 
-print("Before load_dotenv():")
-print(f"WANDB_API_KEY: {os.getenv('WANDB_API_KEY', '<not set>')}")
+print('Before load_dotenv():')
+print(f'WANDB_API_KEY: {os.getenv(\"WANDB_API_KEY\", \"<not set>\")}')
 print()
 
-print("Calling load_dotenv()...")
-result = load_dotenv(verbose=True)
-print(f"load_dotenv() returned: {result}")
+print('Calling load_dotenv()...')
+result = load_dotenv(dotenv_path='.env', verbose=True)
+print(f'load_dotenv() returned: {result}')
 print()
 
-print("After load_dotenv():")
+print('After load_dotenv():')
 api_key = os.getenv('WANDB_API_KEY')
 if api_key:
-    print(f"✅ WANDB_API_KEY is set (length: {len(api_key)} chars)")
-    print(f"   First 4 chars: {api_key[:4]}...")
+    print(f'✅ WANDB_API_KEY is set (length: {len(api_key)} chars)')
+    print(f'   First 4 chars: {api_key[:4]}...')
 else:
-    print("❌ WANDB_API_KEY is NOT set")
-EOF
+    print('❌ WANDB_API_KEY is NOT set')
+"
 
 echo "============================="
