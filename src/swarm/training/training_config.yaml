@@ -147,7 +147,7 @@ neural_networks:
 #       feature_size: 256
 #       adaptive_pooling: true
       lstm:
-        enabled: false
+        enabled: true
         cell_size: 256
         num_layers: 1
         max_seq_len: 50
