@@ -7,7 +7,7 @@ torch
 torchvision[models]
 ray[rllib]
 # ray[tune]
-wandb
+wandb[media]
 gymnasium
 
 # Development tools
