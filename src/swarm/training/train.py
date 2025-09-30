@@ -5,6 +5,7 @@ Enhanced with comprehensive memory usage logging.
 """
 import os
 import sys
+from dotenv import load_dotenv
 
 # Suppress Ray warnings and verbose output
 os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
@@ -350,6 +351,7 @@ def load_config():
 
 def main():
     """Main training function using Ray RLlib 2.49.0 API with wandb logging."""
+    load_dotenv()
 
     # Parse command line arguments
     args = parse_arguments()
