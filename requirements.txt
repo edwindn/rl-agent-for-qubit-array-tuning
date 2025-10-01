@@ -24,3 +24,4 @@ pyyaml
 # Additional dependencies for quantum device simulation
 scipy
 scikit-learn
+scienceplots
