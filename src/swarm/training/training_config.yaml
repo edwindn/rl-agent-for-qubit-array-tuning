@@ -41,7 +41,7 @@ ray:
 
       # Memory contention
       XLA_PYTHON_CLIENT_PREALLOCATE: "false"
-      XLA_PYTHON_CLIENT_MEM_FRACTION: "0.1"
+      XLA_PYTHON_CLIENT_MEM_FRACTION: "0.25"
       JAX_ENABLE_X64: "true"
 
 # Algorithm Configuration
@@ -50,11 +50,11 @@ rl_config:
 
   # Environment runners configuration
   env_runners:
-    num_env_runners: 21              # Number of parallel environment runners
+    num_env_runners: 18              # Number of parallel environment runners
 
     rollout_fragment_length: 50     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
-    num_gpus_per_env_runner: 0.3     # GPU allocation per runner
+    num_gpus_per_env_runner: 0.38     # GPU allocation per runner
 
   # Learner configuration  
   learners:
@@ -164,11 +164,12 @@ neural_networks:
 
   barrier_policy:
     backbone:
-      type: "SimpleCNN"
-      conv_layers:
-        - {channels: 8, kernel: 3, stride: 1}
-      feature_size: 128
-      adaptive_pooling: true
+      type: "MobileNet"
+      mobilenet_version: "small"
+      feature_size: 256
+      freeze_backbone: false
+      lstm:
+        enabled: false
       # No lstm section = no LSTM for barriers
     policy_head:
       hidden_layers: [32]  
