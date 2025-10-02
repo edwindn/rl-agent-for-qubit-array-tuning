@@ -113,7 +113,7 @@ rl_config:
 
 # Resource allocation
 resources:
-  num_gpus: 16                       # Total GPUs for the algorithm
+  num_gpus: 8                       # Total GPUs for the algorithm
 
 # Checkpoint configuration
 checkpoints:
