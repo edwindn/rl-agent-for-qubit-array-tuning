@@ -84,35 +84,48 @@ def process_and_log_gifs(iteration_num, config, use_wandb=True):
     """Process saved images into GIFs and log to Wandb."""
     gif_save_dir = Path(config['gif_config']['save_dir'])
 
-    if not gif_save_dir.exists() or not any(gif_save_dir.glob("step_*.png")):
+    if not gif_save_dir.exists():
         print("No image dir found for gif creation")
         return
 
     try:
         print(f"Processing GIFs for iteration {iteration_num}...")
 
-        # Get all saved images (now single files per step)
-        image_files = sorted(gif_save_dir.glob("step_*.png"))
+        # Find all agent subdirectories
+        agent_dirs = [d for d in gif_save_dir.iterdir() if d.is_dir()]
 
-        if not image_files:
-            print("No images found for GIF creation")
+        if not agent_dirs:
+            print("No agent directories found for GIF creation")
             return
 
-        # Log to Wandb
-        if use_wandb:
-            _log_images_as_video_to_wandb(image_files, iteration_num, config)
+        videos_logged = 0
+        # Process each agent's images separately
+        for agent_dir in agent_dirs:
+            agent_id = agent_dir.name
+            image_files = sorted(agent_dir.glob("step_*.png"))
+
+            if len(image_files) < 2:
+                print(f"Not enough images for {agent_id} (need at least 2)")
+                continue
+
+            # Log to Wandb
+            if use_wandb:
+                _log_images_as_video_to_wandb(image_files, agent_id, iteration_num, config)
+                videos_logged += 1
 
         # Clean up temporary files
         shutil.rmtree(gif_save_dir, ignore_errors=True)
-        print(f"Processed {len(image_files)} frames and cleaned up images")
+        print(f"Processed and logged {videos_logged} agent videos for iteration {iteration_num}")
 
     except Exception as e:
         print(f"Error processing GIFs: {e}")
+        import traceback
+        traceback.print_exc()
         # Clean up on error
         shutil.rmtree(gif_save_dir, ignore_errors=True)
 
 
-def _log_images_as_video_to_wandb(image_files, iteration_num, config):
+def _log_images_as_video_to_wandb(image_files, agent_id, iteration_num, config):
     """Convert images to numpy arrays and log as videos to Wandb."""
     try:
         from PIL import Image
@@ -149,19 +162,23 @@ def _log_images_as_video_to_wandb(image_files, iteration_num, config):
         # Reorder to (frames, channels, height, width) as expected by wandb.Video
         video_array = np.transpose(video_array, (0, 3, 1, 2))
 
-        # Create wandb.Video with configurable framerate
-        agent_type = config['gif_config']['target_agent_type']
-        agent_index = config['gif_config']['target_agent_index']
+        # Parse agent type and index from agent_id (e.g., "plunger_1" -> "plunger", "1")
+        agent_parts = agent_id.split("_")
+        agent_type = agent_parts[0]
+        agent_index = agent_parts[1]
 
+        # Use agent_id as the wandb key for unique logging
         wandb.log({
-            "agent_vision": wandb.Video(
+            f"agent_vision/{agent_id}": wandb.Video(
                 video_array,
                 fps=fps,
                 format="gif",
                 caption=f"{agent_type} {agent_index}, iteration {iteration_num}"
             )
         })
-        print(f"Logged agent vision video to Wandb for iteration {iteration_num}")
+        print(f"Logged {agent_id} vision video to Wandb for iteration {iteration_num}")
 
     except Exception as e:
         print(f"Error logging videos to Wandb: {e}")
+        import traceback
+        traceback.print_exc()

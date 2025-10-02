@@ -263,7 +263,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             agent_image = global_image[:, :, channels[0] : channels[0] + 1]
 
 
-        if (self.gif_config is not None and hasattr(self, 'should_capture_gifs') and self.should_capture_gifs and agent_id == self._get_target_agent_id()):
+        if (self.gif_config is not None and hasattr(self, 'should_capture_gifs') and self.should_capture_gifs and self._is_target_agent(agent_id)):
             self._save_agent_image(agent_image, agent_id, device_state_info)
             
         if self.return_voltage:
@@ -489,7 +489,8 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             if self.gif_config["enabled"]:
                 self.should_capture_gifs = True
                 self._setup_gif_directories()
-                print(f"[PID {os.getpid()}] Selected as GIF capture worker - targeting {self.gif_config['target_agent_type']}_{self.gif_config['target_agent_index']}")
+                target_agents = ", ".join(self._get_target_agent_ids())
+                print(f"[PID {os.getpid()}] Selected as GIF capture worker - targeting: {target_agents}")
                 print(f"[PID {os.getpid()}] Will save images to: {os.path.abspath(self.gif_config['save_dir'])}")
                 print(f"[PID {os.getpid()}] Current working directory: {os.getcwd()}")
             else:
@@ -541,11 +542,23 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         base_dir.mkdir(parents=True, exist_ok=True)
         print(f"GIF capture directory ready: {base_dir}")
 
-    def _get_target_agent_id(self):
-        """Get the agent ID we're targeting for GIF capture."""
+    def _get_target_agent_ids(self):
+        """Get the agent IDs we're targeting for GIF capture."""
         agent_type = self.gif_config["target_agent_type"]
-        agent_index = self.gif_config["target_agent_index"]
-        return f"{agent_type}_{agent_index}"
+        # Handle both old (single index) and new (list of indices) config formats
+        if "target_agent_indices" in self.gif_config:
+            agent_indices = self.gif_config["target_agent_indices"]
+            if not isinstance(agent_indices, list):
+                agent_indices = [agent_indices]
+        else:
+            # Fallback for old config format
+            agent_indices = [self.gif_config.get("target_agent_index", 0)]
+
+        return [f"{agent_type}_{idx}" for idx in agent_indices]
+
+    def _is_target_agent(self, agent_id):
+        """Check if this agent is one of the targets for GIF capture."""
+        return agent_id in self._get_target_agent_ids()
 
     def _save_agent_image(self, agent_image, agent_id, device_state_info=None):
         """Save agent image(s) to disk for GIF creation with text overlay."""
@@ -554,8 +567,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         from PIL import Image, ImageDraw, ImageFont
         import matplotlib as mpl
 
-        # Create step directory
-        save_dir = Path(self.gif_config["save_dir"])
+        # Create agent-specific subdirectory
+        base_save_dir = Path(self.gif_config["save_dir"])
+        save_dir = base_save_dir / agent_id
         save_dir.mkdir(parents=True, exist_ok=True)
 
         # Extract agent info if available
