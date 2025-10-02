@@ -23,15 +23,14 @@ simulator:
 
 
 reward:
-  plunger_reward_window_size: 10 # window size normalisation for plunger reward calculation
+  # Gate/Plunger reward configuration
+  gate_ramp_start: 10.0 # Distance from ground truth where reward = 0
+  gate_quadratic_start: 5.0 # Distance where curved region begins (reward = 0.5)
+  gate_curve_type: "polynomial" # Type of curve for final approach: "polynomial", "exponential", "linear"
+  gate_curve_exponent: 2.0 # Exponent for polynomial/exponential curves
 
-  barrier_reward_window_size: 6 #same for barrier
-  
-  gate_reward_exp: 2.0 # exponent for plunger reward
-  
-  breadcrumb_reward_factor: 1. # Factor between 'terminal' and 'approach' rewards
-
-  tolerance: 0.1 #distance from ground truth to cap at max reward
+  # Barrier reward configuration (simple linear)
+  barrier_ramp_start: 6.0 # Distance from ground truth where reward = 0 (linear to 1.0 at ground truth)
 
 
 capacitance_model:

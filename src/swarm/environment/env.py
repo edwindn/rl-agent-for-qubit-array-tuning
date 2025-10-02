@@ -65,11 +65,11 @@ class QuantumDeviceEnv(gym.Env):
         self.plunger_delta_min = -delta_max
 
         #reward parameters
-        self.plunger_reward_window_size = self.config["reward"]["plunger_reward_window_size"]
-        self.barrier_reward_window_size = self.config["reward"]["barrier_reward_window_size"]
-        self.gate_reward_exp = self.config["reward"]["gate_reward_exp"]
-        self.tolerance = self.config["reward"]["tolerance"]
-        self.reward_factor = self.config['reward']['breadcrumb_reward_factor']
+        self.gate_ramp_start = self.config["reward"]["gate_ramp_start"]
+        self.gate_quadratic_start = self.config["reward"]["gate_quadratic_start"]
+        self.gate_curve_type = self.config["reward"]["gate_curve_type"]
+        self.gate_curve_exponent = self.config["reward"]["gate_curve_exponent"]
+        self.barrier_ramp_start = self.config["reward"]["barrier_ramp_start"]
 
         self.action_space = spaces.Dict(
             {
@@ -256,43 +256,64 @@ class QuantumDeviceEnv(gym.Env):
 
     def _get_reward(self):
         """
-        Get the reward for the current state.
+        Get the reward for the current state using a piecewise reward function.
 
-        Reward is based on the distance from the target voltage sweep center, with maximum reward
-        when the agent aligns the centers of the voltage sweeps. The reward is calculated
-        as: max_possible_distance - current_distance, where max_possible_distance is the maximum
-        possible distance in the along the 1D voltage axis.
+        Gate rewards use a configurable piecewise function:
+        - Region 1 (distance > ramp_start): reward = 0
+        - Region 2 (quadratic_start < distance <= ramp_start): linear from 0 to 0.5
+        - Region 3 (0 < distance <= quadratic_start): configurable curve (polynomial/exponential/linear) from 0.5 to 1.0
+        - Region 4 (distance = 0): reward = 1.0
 
-        A separate reward is given to each gate and barrier agent.
-
-        The reward is also penalized by the number of steps taken to encourage efficiency.
+        Barrier rewards use a simple linear function from 0 (at barrier_ramp_start) to 1.0 (at ground truth).
         """
 
         gate_ground_truth = self.device_state["gate_ground_truth"]
         current_gate_voltages = self.device_state["current_gate_voltages"]
-        gate_distances = np.abs(gate_ground_truth - current_gate_voltages)  # Element-wise distances
+        gate_distances = np.abs(gate_ground_truth - current_gate_voltages)
 
         barrier_ground_truth = self.device_state["barrier_ground_truth"]
         current_barrier_voltages = self.device_state["current_barrier_voltages"]
-        barrier_distances = np.abs(
-            barrier_ground_truth - current_barrier_voltages
-        )  # Element-wise distances
+        barrier_distances = np.abs(barrier_ground_truth - current_barrier_voltages)
 
-        gate_rewards = (1 - gate_distances / self.plunger_reward_window_size) * self.reward_factor
-        gate_rewards **= self.gate_reward_exp
+        # Calculate gate rewards using piecewise function
+        gate_rewards = np.zeros_like(gate_distances)
 
-        barrier_rewards = 1 - barrier_distances / self.barrier_reward_window_size
+        for i, dist in enumerate(gate_distances):
+            if dist >= self.gate_ramp_start:
+                # Region 1: Beyond ramp start
+                gate_rewards[i] = 0.0
+            elif dist > self.gate_quadratic_start:
+                # Region 2: Linear from 0 to 0.5
+                normalized = (self.gate_ramp_start - dist) / (self.gate_ramp_start - self.gate_quadratic_start)
+                gate_rewards[i] = 0.5 * normalized
+            else:
+                # Region 3: Curved approach from 0.5 to 1.0
+                normalized = (self.gate_quadratic_start - dist) / self.gate_quadratic_start
 
-        at_target = gate_distances <= self.tolerance
+                if self.gate_curve_type == "polynomial":
+                    curve_value = normalized ** self.gate_curve_exponent
+                elif self.gate_curve_type == "exponential":
+                    curve_value = (np.exp(self.gate_curve_exponent * normalized) - 1) / (np.exp(self.gate_curve_exponent) - 1)
+                elif self.gate_curve_type == "linear":
+                    curve_value = normalized
+                else:
+                    raise ValueError(f"Unknown curve type: {self.gate_curve_type}")
 
-        gate_rewards[at_target] = 1.0
+                gate_rewards[i] = 0.5 + 0.5 * curve_value
 
+        # Calculate barrier rewards using simple linear function
+        barrier_rewards = np.zeros_like(barrier_distances)
+        for i, dist in enumerate(barrier_distances):
+            if dist >= self.barrier_ramp_start:
+                barrier_rewards[i] = 0.0
+            else:
+                barrier_rewards[i] = (self.barrier_ramp_start - dist) / self.barrier_ramp_start
+
+        # Ensure rewards are in [0, 1]
         gate_rewards = np.clip(gate_rewards, 0, 1)
         barrier_rewards = np.clip(barrier_rewards, 0, 1)
 
         rewards = {"gates": gate_rewards, "barriers": barrier_rewards}
-
-        
 
         return rewards
 
