@@ -11,7 +11,7 @@ simulator:
 
   use_deltas: true # Whether the plunger agents' output is a ΔV or V
   
-  delta_max: 2.0 #only used if use_deltas is true
+  delta_max: 10.0 #only used if use_deltas is true
   
   full_plunger_range_width: {"min": 50, "max": 100} #range in V of plungers
 
