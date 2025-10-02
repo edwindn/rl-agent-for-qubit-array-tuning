@@ -91,31 +91,20 @@ def process_and_log_gifs(iteration_num, config, use_wandb=True):
     try:
         print(f"Processing GIFs for iteration {iteration_num}...")
 
-        # Get all saved images
+        # Get all saved images (now single files per step)
         image_files = sorted(gif_save_dir.glob("step_*.png"))
 
         if not image_files:
             print("No images found for GIF creation")
             return
 
-        # Group images by channel
-        channel_files = {}
-        for img_file in image_files:
-            # Parse filename: step_XXXXXX_channel_Y.png
-            parts = img_file.stem.split('_')
-            if len(parts) >= 4:
-                channel = int(parts[3])  # channel number
-                if channel not in channel_files:
-                    channel_files[channel] = []
-                channel_files[channel].append(img_file)
-
-        # Create numpy arrays and log to Wandb
-        if use_wandb and channel_files:
-            _log_images_as_video_to_wandb(channel_files, iteration_num, config)
+        # Log to Wandb
+        if use_wandb:
+            _log_images_as_video_to_wandb(image_files, iteration_num, config)
 
         # Clean up temporary files
         shutil.rmtree(gif_save_dir, ignore_errors=True)
-        print(f"Processed {len(channel_files)} channels and cleaned up images")
+        print(f"Processed {len(image_files)} frames and cleaned up images")
 
     except Exception as e:
         print(f"Error processing GIFs: {e}")
@@ -123,64 +112,56 @@ def process_and_log_gifs(iteration_num, config, use_wandb=True):
         shutil.rmtree(gif_save_dir, ignore_errors=True)
 
 
-def _log_images_as_video_to_wandb(channel_files, iteration_num, config):
+def _log_images_as_video_to_wandb(image_files, iteration_num, config):
     """Convert images to numpy arrays and log as videos to Wandb."""
     try:
         from PIL import Image
 
-        log_dict = {}
         fps = config['gif_config'].get('fps', 0.5)  # Default to 0.5 if not specified
 
-        for channel, files in channel_files.items():
-            if not files:
-                continue
+        if len(image_files) < 2:
+            print(f"Not enough images for video (need at least 2)")
+            return
 
-            # Sort files by step number
-            sorted_files = sorted(files, key=lambda x: int(x.stem.split('_')[1]))
+        # Load images into numpy array
+        images = []
+        for img_file in image_files:
+            img = Image.open(img_file)
+            img_array = np.array(img)
 
-            if len(sorted_files) < 2:
-                print(f"Not enough images for channel {channel} video (need at least 2)")
-                continue
+            # Convert grayscale to RGB if needed (wandb.Video expects 3 channels)
+            if len(img_array.shape) == 2:
+                img_array = np.stack([img_array] * 3, axis=-1)
 
-            # Load images into numpy array
-            images = []
-            for img_file in sorted_files:
-                img = Image.open(img_file)
-                img_array = np.array(img)
+            images.append(img_array)
 
-                # Convert grayscale to RGB if needed (wandb.Video expects 3 channels)
-                if len(img_array.shape) == 2:
-                    img_array = np.stack([img_array] * 3, axis=-1)
+        # Add white frames at start for easy loop detection
+        if images:
+            # Create white frames with same shape as first image
+            white_frame = np.ones_like(images[0]) * 255
 
-                images.append(img_array)
+            # Add 3 white frames at start and 2 at end
+            images = [white_frame] * 3 + images + [white_frame] * 2
 
-            # Add black frames at start for easy loop detection
-            if images:
-                # Create black frames with same shape as first image
-                white_frame = np.ones_like(images[0])*255
+        # Convert to numpy array with shape (frames, height, width, channels)
+        video_array = np.stack(images, axis=0)
 
-                # Add 3 black frames at start and 2 at end
-                images = [white_frame] * 3 + images + [white_frame] * 2
+        # Reorder to (frames, channels, height, width) as expected by wandb.Video
+        video_array = np.transpose(video_array, (0, 3, 1, 2))
 
-            # Convert to numpy array with shape (frames, height, width, channels)
-            video_array = np.stack(images, axis=0)
+        # Create wandb.Video with configurable framerate
+        agent_type = config['gif_config']['target_agent_type']
+        agent_index = config['gif_config']['target_agent_index']
 
-            # Reorder to (frames, channels, height, width) as expected by wandb.Video
-            video_array = np.transpose(video_array, (0, 3, 1, 2))
-
-            # Create wandb.Video with configurable framerate
-            log_key = f"agent_vision_channel_{channel}"
-            log_dict[log_key] = wandb.Video(
+        wandb.log({
+            "agent_vision": wandb.Video(
                 video_array,
                 fps=fps,
                 format="gif",
-                caption=f"Agent vision channel {channel}, iteration {iteration_num}"
+                caption=f"{agent_type} {agent_index}, iteration {iteration_num}"
             )
-
-        # Add iteration info
-        if log_dict:
-            wandb.log(log_dict)
-            print(f"Logged {len(log_dict)-1} video channels to Wandb for iteration {iteration_num}")
+        })
+        print(f"Logged agent vision video to Wandb for iteration {iteration_num}")
 
     except Exception as e:
         print(f"Error logging videos to Wandb: {e}")

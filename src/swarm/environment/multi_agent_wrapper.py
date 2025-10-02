@@ -222,7 +222,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         self.possible_agents = self._agent_ids.copy()
 
     def _extract_agent_observation(
-        self, global_obs: Dict[str, np.ndarray], agent_id: str
+        self, global_obs: Dict[str, np.ndarray], agent_id: str, device_state_info: dict = None
     ) -> Dict[str, np.ndarray]:
         """
         Extract individual agent observation from global observation.
@@ -230,6 +230,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         Args:
             global_obs: Global environment observation
             agent_id: ID of the agent
+            device_state_info: Device state info containing voltage and ground truth values
 
         Returns:
             Individual agent observation
@@ -244,7 +245,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             agent_idx = int(agent_id.split("_")[1])
             img1 = global_image[:, :, channels[0]]
             img2 = global_image[:, :, channels[1]]
-            
+
             if agent_idx == 0:
                 # First agent: no flipping
                 agent_image = np.stack([img1, img2], axis=2)
@@ -261,9 +262,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             # Barrier agent: 1 channel
             agent_image = global_image[:, :, channels[0] : channels[0] + 1]
 
-            
+
         if (self.gif_config is not None and hasattr(self, 'should_capture_gifs') and self.should_capture_gifs and agent_id == self._get_target_agent_id()):
-            self._save_agent_image(agent_image, agent_id)
+            self._save_agent_image(agent_image, agent_id, device_state_info)
             
         if self.return_voltage:
             # Get agent's current voltage value
@@ -370,7 +371,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         # Convert to multi-agent observations
         agent_observations = {}
         for agent_id in self.all_agent_ids:
-            agent_observations[agent_id] = self._extract_agent_observation(global_obs, agent_id)
+            agent_observations[agent_id] = self._extract_agent_observation(global_obs, agent_id, device_state_info=None)
 
         # Create per-agent info dict (MultiAgentEnv requirement)
         agent_infos = dict.fromkeys(self.all_agent_ids, global_info)
@@ -401,10 +402,13 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         # Step the base environment
         global_obs, global_rewards, terminated, truncated, info = self.base_env.step(global_action)
 
+        # Get device state info first (needed for image capture)
+        device_state_info = info.get("current_device_state", None)
+
         # Convert to multi-agent format
         agent_observations = {}
         for agent_id in self.all_agent_ids:
-            agent_observations[agent_id] = self._extract_agent_observation(global_obs, agent_id)
+            agent_observations[agent_id] = self._extract_agent_observation(global_obs, agent_id, device_state_info)
 
         agent_rewards = self._distribute_rewards(global_rewards)
 
@@ -416,7 +420,6 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         agent_truncated["__all__"] = truncated  # Required by MultiAgentEnv
 
         # Create per-agent info dict (MultiAgentEnv requirement)
-        device_state_info = info.get("current_device_state", None)
 
         if not device_state_info:
             agent_infos = dict.fromkeys(self.all_agent_ids, {})
@@ -544,20 +547,36 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         agent_index = self.gif_config["target_agent_index"]
         return f"{agent_type}_{agent_index}"
 
-    def _save_agent_image(self, agent_image, agent_id):
-        """Save agent image(s) to disk for GIF creation."""
+    def _save_agent_image(self, agent_image, agent_id, device_state_info=None):
+        """Save agent image(s) to disk for GIF creation with text overlay."""
         from pathlib import Path
         import numpy as np
-        from PIL import Image
+        from PIL import Image, ImageDraw, ImageFont
         import matplotlib as mpl
 
         # Create step directory
         save_dir = Path(self.gif_config["save_dir"])
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save each channel as a separate image
+        # Extract agent info if available
+        voltage_text = ""
+        ground_truth_text = ""
+        if device_state_info is not None:
+            agent_idx = int(agent_id.split("_")[1])
+            if "plunger" in agent_id:
+                voltage = device_state_info["current_gate_voltages"][agent_idx]
+                ground_truth = device_state_info["gate_ground_truth"][agent_idx]
+            else:  # barrier
+                voltage = device_state_info["current_barrier_voltages"][agent_idx]
+                ground_truth = device_state_info["barrier_ground_truth"][agent_idx]
+
+            voltage_text = f"V: {voltage:.3f}"
+            ground_truth_text = f"GT: {ground_truth:.3f}"
+
+        # Save channels - merge side-by-side for plunger agents
         if agent_image.shape[2] == 2:
-            # Plunger agent: 2 channels
+            # Plunger agent: 2 channels - merge side-by-side with spacing
+            channel_images = []
             for channel in range(2):
                 channel_data = agent_image[:, :, channel]
                 # Normalize to 0-1 for colormap
@@ -568,10 +587,14 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                 plasma_cmap = mpl.colormaps['plasma']
                 plasma_cm = plasma_cmap(channel_data_norm)
                 plasma_rgb = (plasma_cm[:, :, :3] * 255).astype(np.uint8)
+                channel_images.append(plasma_rgb)
 
-                img = Image.fromarray(plasma_rgb, mode='RGB')
-                filename = save_dir / f"step_{self.gif_step_count:06d}_channel_{channel}.png"
-                img.save(filename)
+            # Create white spacer between images (10 pixels wide)
+            spacer = np.ones((channel_images[0].shape[0], 10, 3), dtype=np.uint8) * 255
+
+            # Concatenate horizontally: channel_0 + spacer + channel_1
+            merged_image = np.concatenate([channel_images[0], spacer, channel_images[1]], axis=1)
+            img = Image.fromarray(merged_image, mode='RGB')
 
         else:
             # Barrier agent: 1 channel
@@ -586,8 +609,34 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             plasma_rgb = (plasma_cm[:, :, :3] * 255).astype(np.uint8)
 
             img = Image.fromarray(plasma_rgb, mode='RGB')
-            filename = save_dir / f"step_{self.gif_step_count:06d}_channel_0.png"
-            img.save(filename)
+
+        # Add text overlay if info is available
+        if voltage_text and ground_truth_text:
+            draw = ImageDraw.Draw(img)
+            try:
+                # Try to use a larger font
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
+            except:
+                # Fallback to default font
+                font = ImageFont.load_default()
+
+            # Draw text with black background for readability
+            text = f"{voltage_text}  {ground_truth_text}"
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+
+            # Position at top-left corner
+            text_x = 5
+            text_y = 5
+
+            # Draw black background rectangle
+            draw.rectangle([text_x - 2, text_y - 2, text_x + text_width + 2, text_y + text_height + 2], fill='black')
+            # Draw white text
+            draw.text((text_x, text_y), text, fill='white', font=font)
+
+        filename = save_dir / f"step_{self.gif_step_count:06d}.png"
+        img.save(filename)
 
         self.gif_step_count += 1
 
