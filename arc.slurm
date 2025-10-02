@@ -3,11 +3,11 @@
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --time=100:00:00
-#SBATCH --gres=gpu:16
+#SBATCH --gres=gpu:8
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
-#SBATCH --mem=120G
+#SBATCH --mem=160G
 #SBATCH --clusters=htc
 #SBATCH --partition=long
 #SBATCH --mail-user=edn.work@proton.me
