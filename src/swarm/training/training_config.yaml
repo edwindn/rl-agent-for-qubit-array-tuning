@@ -4,7 +4,6 @@
 # Default training parameters
 defaults:
   num_iterations: 1000        # Total training iterations
-  num_gpus: 8                # Default number of GPUs to use
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
 
 # Weights & Biases configuration
@@ -50,11 +49,11 @@ rl_config:
 
   # Environment runners configuration
   env_runners:
-    num_env_runners: 16              # Number of parallel environment runners
+    num_env_runners: 30              # Number of parallel environment runners
 
     rollout_fragment_length: 50     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
-    num_gpus_per_env_runner: 0.35     # GPU allocation per runner
+    num_gpus_per_env_runner: 0.45     # GPU allocation per runner
 
   # Learner configuration  
   learners:
@@ -114,7 +113,7 @@ rl_config:
 
 # Resource allocation
 resources:
-  num_gpus: 8                       # Total GPUs for the algorithm
+  num_gpus: 16                       # Total GPUs for the algorithm
 
 # Checkpoint configuration
 checkpoints:
