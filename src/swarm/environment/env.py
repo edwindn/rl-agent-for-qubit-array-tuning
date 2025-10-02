@@ -15,7 +15,7 @@ src_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(src_dir))
 
 from swarm.environment.qarray_base_class import QarrayBaseClass
-from swarm.environment.utils.fake_capacitance import fake_capacitance_model
+from swarm.environment.fake_capacitance_model import fake_capacitance_model
 
 
 # Set matplotlib backend before importing pyplot to avoid GUI issues
@@ -119,7 +119,6 @@ class QuantumDeviceEnv(gym.Env):
         self.reset()
 
 
-
     def reset(self, seed=None, options=None):
         """
         Resets the environment to an initial state and returns the initial observation.
@@ -164,8 +163,18 @@ class QuantumDeviceEnv(gym.Env):
         if barrier_ground_truth is None:
             assert not self.use_barriers, "Expected array for barrier_ground_truth, got None"
             barrier_ground_truth = np.zeros(self.num_barrier_voltages, dtype=np.float32)
+        else:
+            barrer_ground_truth = np.array(barrier_ground_truth).flatten().astype(np.float32)
 
-        self._init_voltage_ranges(barrier_ground_truth)
+        plunger_ground_truth = np.array(plunger_ground_truth).flatten().astype(np.float32)
+
+        assert len(plunger_ground_truth) == self.num_plunger_voltages, f"Expected plunger ground truth to be of length {self.num_plunger_voltages}, got {len(plunger_ground_truth)}"
+        assert len(barrier_ground_truth) == self.num_barrier_voltages, f"Expected plunger ground truth to be of length {self.num_barrier_voltages}, got {len(barrier_ground_truth)}"
+
+        self._init_voltage_ranges(
+            plunger_ground_truth,
+            barrier_ground_truth
+        )
 
         plungers, barriers = self._starting_voltages()
 
@@ -193,8 +202,7 @@ class QuantumDeviceEnv(gym.Env):
         return observation, info
 
 
-
-    def step(self, action):
+    def step(self, action: dict):
         """
         Updates the environment state based on the agent's action.
 
@@ -207,7 +215,7 @@ class QuantumDeviceEnv(gym.Env):
 
         Returns:
             observation (np.ndarray): The observation of the environment's state.
-            reward (float): The amount of reward returned after previous action.
+            reward (dict): The amount of reward returned after previous action.
             terminated (bool): Whether the episode has ended (e.g., reached a goal).
             truncated (bool): Whether the episode was cut short (e.g., time limit).
             info (dict): A dictionary with auxiliary diagnostic information.
@@ -220,6 +228,7 @@ class QuantumDeviceEnv(gym.Env):
         gate_voltages = np.array(gate_voltages).flatten().astype(np.float32)
         barrier_voltages = np.array(barrier_voltages).flatten().astype(np.float32)
 
+        # Random actions for debugging
         #gate_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_plunger_voltages).astype(np.float32)
         #barrier_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_barrier_voltages).astype(np.float32)
         
@@ -231,7 +240,9 @@ class QuantumDeviceEnv(gym.Env):
         self.device_state["current_barrier_voltages"] = barrier_voltages
 
         reward = self._get_reward()
-        terminated = truncated = False
+
+        terminated = False
+        truncated = False
 
         if self.current_step >= self.max_steps:
             truncated = True
@@ -253,6 +264,7 @@ class QuantumDeviceEnv(gym.Env):
             truncated,
             info,
         )
+
 
     def _get_reward(self):
         """
@@ -279,7 +291,6 @@ class QuantumDeviceEnv(gym.Env):
         )  # Element-wise distances
 
         gate_rewards = (1 - gate_distances / self.plunger_reward_window_size) * self.reward_factor
-        gate_rewards **= self.gate_reward_exp
 
         barrier_rewards = 1 - barrier_distances / self.barrier_reward_window_size
 
@@ -288,18 +299,21 @@ class QuantumDeviceEnv(gym.Env):
         gate_rewards[at_target] = 1.0
 
         gate_rewards = np.clip(gate_rewards, 0, 1)
+
+        gate_rewards **= self.gate_reward_exp
+
         barrier_rewards = np.clip(barrier_rewards, 0, 1)
 
         rewards = {"gates": gate_rewards, "barriers": barrier_rewards}
 
-        
-
         return rewards
+
 
     def _get_info(self):
         return {
             "current_device_state": self.device_state
         }
+
 
     def _normalise_obs(self, obs):
         """
@@ -361,6 +375,7 @@ class QuantumDeviceEnv(gym.Env):
             normalized_obs["obs_barrier_voltages"] = b.astype(np.float32)
 
         return normalized_obs
+
 
     def _update_virtual_gate_matrix(self, obs):
         """
@@ -435,7 +450,6 @@ class QuantumDeviceEnv(gym.Env):
         cgd_estimate = self.capacitance_model["bayesian_predictor"].get_full_matrix()
 
         self.array._update_virtual_gate_matrix(cgd_estimate)
-
 
 
     def _init_capacitance_model(self):
@@ -544,23 +558,21 @@ class QuantumDeviceEnv(gym.Env):
             print("The environment will continue without capacitance prediction capabilities.")
             self.capacitance_model = None
 
-    def _init_voltage_ranges(self, barrier_ground_truths):
 
-        #NOTE: This assumes plunger ground truths are close to -1V
+    def _init_voltage_ranges(self, plunger_ground_truths, barrier_ground_truths):
 
         full_plunger_range_width = self.config['simulator']['full_plunger_range_width']
         full_barrier_range_width = self.config['simulator']['full_barrier_range_width']
+
 
         plunger_range = np.random.uniform(
             low=full_plunger_range_width['min'],
             high=full_plunger_range_width['max']
         )
 
-
-        #ground truth always falls no closer than 1V from edge of window
         plunger_center = np.random.uniform(
-            low=-1.0 - 0.5 * (plunger_range-2),
-            high=-1.0 + 0.5 * (plunger_range-2), 
+            low=plunger_ground_truths - 0.5 * (plunger_range-2),
+            high=plunger_ground_truths + 0.5 * (plunger_range-2), 
         )
 
         self.plunger_max = plunger_center + 0.5 * plunger_range
@@ -597,7 +609,8 @@ class QuantumDeviceEnv(gym.Env):
         else:
             barrier_centers = np.zeros(self.num_barrier_voltages)
 
-        return plunger_centers, barrier_centers  
+        return plunger_centers, barrier_centers
+
 
     def _rescale_gate_voltages(self, obs):
         obs = (obs + 1) / 2 # [0, 1]
