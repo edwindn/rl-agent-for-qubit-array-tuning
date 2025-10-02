@@ -7,7 +7,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
-#SBATCH --mem=120G
+#SBATCH --mem=160G
 #SBATCH --clusters=htc
 #SBATCH --partition=long
 #SBATCH --mail-user=edn.work@proton.me
