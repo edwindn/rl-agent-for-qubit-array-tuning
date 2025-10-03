@@ -21,7 +21,7 @@ project_root = script_dir.parent
 # Modal automatically caches this based on requirements.txt hash
 # Only rebuilds if requirements.txt changes
 image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image.debian_slim(python_version="3.11")
     .apt_install("git")  # Required for pip_install_private_repos
     .pip_install_private_repos(
         # Install qarray-latched from private repo at specific commit
