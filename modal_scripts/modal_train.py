@@ -11,6 +11,11 @@ Or to customize GPU type:
     # Edit the gpu parameter in the @app.function decorator below
 """
 import modal
+from pathlib import Path
+
+# Get absolute path to project root
+script_dir = Path(__file__).parent
+project_root = script_dir.parent
 
 # Create image with project dependencies
 # Modal automatically caches this based on requirements.txt hash
@@ -22,17 +27,20 @@ image = (
         # Install qarray-latched from private repo at specific commit
         "github.com/b-vanstraaten/qarray-latched@c076d4cef57a071dd6e52458ad5937589747c18f",
         git_user="rahul-marchand",  # Your GitHub username
-        secrets=[modal.Secret.from_name("github-read-private")],
+        secrets=[modal.Secret.from_name("github-private")],
     )
-    .pip_install_from_requirements("../requirements.txt")
-    .add_local_dir("..", remote_path="/root/quantum-rl-project")
+    .pip_install_from_requirements(str(project_root / "requirements.txt"))
+    .add_local_dir(str(project_root), remote_path="/root/quantum-rl-project")
 )
 
 app = modal.App("quantum-rl-training")
 
 
 @app.function(
-    gpu="A100",  # Options: "A100", "H100", "L40S", "L4", "T4", etc.
+    gpu="A100",  # Single GPU - Change to "A100:2", "A100:4", or "A100:8" for multiple GPUs
+    # Options: "A100", "H100", "L40S", "L4", "T4", etc.
+    # Multi-GPU: "A100:2" (2 GPUs), "H100:8" (8 GPUs), etc.
+    # Note: H100, A100, L40S, L4, T4 support up to 8 GPUs; A10 supports up to 4
     image=image,
     timeout=86400,  # 24 hour timeout
     secrets=[
