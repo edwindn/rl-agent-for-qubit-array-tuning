@@ -4,7 +4,6 @@
 # Default training parameters
 defaults:
   num_iterations: 1000        # Total training iterations
-  num_gpus: 8                # Default number of GPUs to use
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
 
 # Weights & Biases configuration
@@ -125,7 +124,7 @@ checkpoints:
 gif_config:
   enabled: true                     # Enable/disable GIF capture
   target_agent_type: "plunger"     # Agent type to capture: "plunger" or "barrier"
-  target_agent_index: 1            # Which agent of that type (0-indexed)
+  target_agent_indices: [1]        # Which agents of that type (0-indexed list, e.g., [0, 1, 2])
   save_dir: "/tmp/shared_gif_captures"  # Absolute path accessible to both main process and workers
   fps: 0.5                          # Frame rate for GIFs (slower = easier to see)
 

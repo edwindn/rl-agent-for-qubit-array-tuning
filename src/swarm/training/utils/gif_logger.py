@@ -107,103 +107,101 @@ def process_and_log_gifs(iteration_num, config, use_wandb=True):
     """Process saved images into GIFs and log to Wandb."""
     gif_save_dir = Path(config['gif_config']['save_dir'])
 
-    if not gif_save_dir.exists() or not any(gif_save_dir.glob("step_*.png")):
+    if not gif_save_dir.exists():
         print("No image dir found for gif creation")
         return
 
     try:
         print(f"Processing GIFs for iteration {iteration_num}...")
 
-        # Get all saved images
-        image_files = sorted(gif_save_dir.glob("step_*.png"))
+        # Find all agent subdirectories
+        agent_dirs = [d for d in gif_save_dir.iterdir() if d.is_dir()]
 
-        if not image_files:
-            print("No images found for GIF creation")
+        if not agent_dirs:
+            print("No agent directories found for GIF creation")
             return
 
-        # Group images by channel
-        channel_files = {}
-        for img_file in image_files:
-            # Parse filename: step_XXXXXX_channel_Y.png
-            parts = img_file.stem.split('_')
-            if len(parts) >= 4:
-                channel = int(parts[3])  # channel number
-                if channel not in channel_files:
-                    channel_files[channel] = []
-                channel_files[channel].append(img_file)
+        videos_logged = 0
+        # Process each agent's images separately
+        for agent_dir in agent_dirs:
+            agent_id = agent_dir.name
+            image_files = sorted(agent_dir.glob("step_*.png"))
 
-        # Create numpy arrays and log to Wandb
-        if use_wandb and channel_files:
-            _log_images_as_video_to_wandb(channel_files, iteration_num, config)
+            if len(image_files) < 2:
+                print(f"Not enough images for {agent_id} (need at least 2)")
+                continue
+
+            # Log to Wandb
+            if use_wandb:
+                _log_images_as_video_to_wandb(image_files, agent_id, iteration_num, config)
+                videos_logged += 1
 
         # Clean up temporary files
         shutil.rmtree(gif_save_dir, ignore_errors=True)
-        print(f"Processed {len(channel_files)} channels and cleaned up images")
+        print(f"Processed and logged {videos_logged} agent videos for iteration {iteration_num}")
 
     except Exception as e:
         print(f"Error processing GIFs: {e}")
+        import traceback
+        traceback.print_exc()
         # Clean up on error
         shutil.rmtree(gif_save_dir, ignore_errors=True)
 
 
-def _log_images_as_video_to_wandb(channel_files, iteration_num, config):
+def _log_images_as_video_to_wandb(image_files, agent_id, iteration_num, config):
     """Convert images to numpy arrays and log as videos to Wandb."""
     try:
         from PIL import Image
 
-        log_dict = {}
         fps = config['gif_config'].get('fps', 0.5)  # Default to 0.5 if not specified
 
-        for channel, files in channel_files.items():
-            if not files:
-                continue
+        if len(image_files) < 2:
+            print(f"Not enough images for video (need at least 2)")
+            return
 
-            # Sort files by step number
-            sorted_files = sorted(files, key=lambda x: int(x.stem.split('_')[1]))
+        # Load images into numpy array
+        images = []
+        for img_file in image_files:
+            img = Image.open(img_file)
+            img_array = np.array(img)
 
-            if len(sorted_files) < 2:
-                print(f"Not enough images for channel {channel} video (need at least 2)")
-                continue
+            # Convert grayscale to RGB if needed (wandb.Video expects 3 channels)
+            if len(img_array.shape) == 2:
+                img_array = np.stack([img_array] * 3, axis=-1)
 
-            # Load images into numpy array
-            images = []
-            for img_file in sorted_files:
-                img = Image.open(img_file)
-                img_array = np.array(img)
+            images.append(img_array)
 
-                # Convert grayscale to RGB if needed (wandb.Video expects 3 channels)
-                if len(img_array.shape) == 2:
-                    img_array = np.stack([img_array] * 3, axis=-1)
+        # Add white frames at start for easy loop detection
+        if images:
+            # Create white frames with same shape as first image
+            white_frame = np.ones_like(images[0]) * 255
 
-                images.append(img_array)
+            # Add 3 white frames at start and 2 at end
+            images = [white_frame] * 3 + images + [white_frame] * 2
 
-            # Add black frames at start for easy loop detection
-            if images:
-                # Create black frames with same shape as first image
-                white_frame = np.ones_like(images[0])*255
+        # Convert to numpy array with shape (frames, height, width, channels)
+        video_array = np.stack(images, axis=0)
 
-                # Add 3 black frames at start and 2 at end
-                images = [white_frame] * 3 + images + [white_frame] * 2
+        # Reorder to (frames, channels, height, width) as expected by wandb.Video
+        video_array = np.transpose(video_array, (0, 3, 1, 2))
 
-            # Convert to numpy array with shape (frames, height, width, channels)
-            video_array = np.stack(images, axis=0)
+        # Parse agent type and index from agent_id (e.g., "plunger_1" -> "plunger", "1")
+        agent_parts = agent_id.split("_")
+        agent_type = agent_parts[0]
+        agent_index = agent_parts[1]
 
-            # Reorder to (frames, channels, height, width) as expected by wandb.Video
-            video_array = np.transpose(video_array, (0, 3, 1, 2))
-
-            # Create wandb.Video with configurable framerate
-            log_key = f"agent_vision_channel_{channel}"
-            log_dict[log_key] = wandb.Video(
+        # Use agent_id as the wandb key for unique logging
+        wandb.log({
+            f"agent_vision/{agent_id}": wandb.Video(
                 video_array,
                 fps=fps,
                 format="gif",
-                caption=f"Agent vision channel {channel}, iteration {iteration_num}"
+                caption=f"{agent_type} {agent_index}, iteration {iteration_num}"
             )
-
-        # Add iteration info
-        if log_dict:
-            wandb.log(log_dict)
-            print(f"Logged {len(log_dict)-1} video channels to Wandb for iteration {iteration_num}")
+        })
+        print(f"Logged {agent_id} vision video to Wandb for iteration {iteration_num}")
 
     except Exception as e:
         print(f"Error logging videos to Wandb: {e}")
+        import traceback
+        traceback.print_exc()
