@@ -17,6 +17,13 @@ import modal
 # Only rebuilds if requirements.txt changes
 image = (
     modal.Image.debian_slim(python_version="3.12")
+    .apt_install("git")  # Required for pip_install_private_repos
+    .pip_install_private_repos(
+        # Install qarray-latched from private repo at specific commit
+        "github.com/b-vanstraaten/qarray-latched@c076d4cef57a071dd6e52458ad5937589747c18f",
+        git_user="rahul-marchand",  # Your GitHub username
+        secrets=[modal.Secret.from_name("github-read-private")],
+    )
     .pip_install_from_requirements("../requirements.txt")
     .add_local_dir("..", remote_path="/root/quantum-rl-project")
 )
@@ -28,7 +35,9 @@ app = modal.App("quantum-rl-training")
     gpu="A100",  # Options: "A100", "H100", "L40S", "L4", "T4", etc.
     image=image,
     timeout=86400,  # 24 hour timeout
-    secrets=[modal.Secret.from_name("wandb-secret")],  # Optional: for W&B logging
+    secrets=[
+        modal.Secret.from_name("wandb-secret"),  # W&B logging
+    ],
 )
 def train():
     """Run the training script inside Modal container."""

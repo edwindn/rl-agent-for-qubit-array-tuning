@@ -1,6 +1,5 @@
 # QArray
-# git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@c076d4cef57a071dd6e52458ad5937589747c18f
-qarray
+git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@c076d4cef57a071dd6e52458ad5937589747c18f
 
 # Core ML/RL dependencies
 torch
