@@ -15,7 +15,7 @@ src_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(src_dir))
 
 from swarm.environment.qarray_base_class import QarrayBaseClass
-from swarm.environment.fake_capacitance_model import fake_capacitance_model
+from swarm.environment.utils.fake_capacitance import fake_capacitance_model
 
 
 # Set matplotlib backend before importing pyplot to avoid GUI issues
