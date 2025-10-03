@@ -7,13 +7,13 @@ simulator:
 
   num_dots: 4
 
-  use_barriers: true
+  use_barriers: false
 
   use_deltas: true # Whether the plunger agents' output is a ΔV or V
   
-  delta_max: 2.0 #only used if use_deltas is true
+  delta_max: 5.0 #only used if use_deltas is true
   
-  full_plunger_range_width: {"min": 15, "max": 20} #range in V of plungers
+  full_plunger_range_width: {"min": 50, "max": 100} #range in V of plungers
 
   window_delta_range: {"min": 1.0, "max": 2.0} #range in V for a single scan/sweep
 
@@ -24,8 +24,8 @@ simulator:
 
 reward:
   # Gate/Plunger reward configuration
-  gate_ramp_start: 10.0 # Distance from ground truth where reward = 0
-  gate_quadratic_start: 5.0 # Distance where curved region begins (reward = 0.5)
+  gate_ramp_start: 75.0 # Distance from ground truth where reward = 0
+  gate_quadratic_start: 10.0 # Distance where curved region begins (reward = 0.5)
   gate_curve_type: "polynomial" # Type of curve for final approach: "polynomial", "exponential", "linear"
   gate_curve_exponent: 2.0 # Exponent for polynomial/exponential curves
 
