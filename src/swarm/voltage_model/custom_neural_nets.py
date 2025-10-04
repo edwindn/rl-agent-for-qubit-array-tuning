@@ -674,8 +674,9 @@ class Transformer(TorchModel, Encoder):
                 if "image" in state:
                     x = state["image"]
                     v = state["voltage"]
-                    x = torch.from_numpy(x)
-                    v = torch.from_numpy(v)
+                    if isinstance(x, np.ndarray):
+                        x = torch.from_numpy(x)
+                        v = torch.from_numpy(v)
                     images.append(x)
                     voltages.append(v)
                 else:
