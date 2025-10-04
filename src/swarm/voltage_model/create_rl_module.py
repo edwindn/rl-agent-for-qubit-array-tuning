@@ -3,7 +3,7 @@ from swarm.voltage_model.custom_sac_rl_module import CustomSACTorchRLModule
 
 from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec, RLModuleSpec
 
-from swarm.voltage_model.custom_catalog import CustomPPOCatalog, CustomSACCatalog
+from swarm.voltage_model.custom_catalog import CustomPPOCatalog
 
 
 def create_rl_module_spec(env_instance, algo: str="ppo", config: dict=None) -> MultiRLModuleSpec:

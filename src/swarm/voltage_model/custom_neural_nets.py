@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 import sys
 from pathlib import Path
+import numpy as np
 
 from ray.rllib.core.models.base import ENCODER_OUT, Encoder
 from ray.rllib.core.models.configs import CNNEncoderConfig, MLPHeadConfig, ModelConfig
@@ -532,6 +533,7 @@ class TransformerConfig(CNNEncoderConfig):
     latent_size: int = 256
     num_attention_heads: int = 4
     num_layers: int = 2
+    max_seq_len: int = 20
     feedforward_dim: Optional[int] = None
     dropout: float = 0.1
     pooling_mode: str = "mean"
@@ -659,44 +661,75 @@ class Transformer(TorchModel, Encoder):
     def output_dims(self) -> Tuple[int, ...]:
         return self._output_dims
 
+    def _pad_or_truncate(self, inputs):
+        num_frames = self.config.max_seq_len
+        if len(inputs) >= num_frames:
+            # False = don't ignore, True = padding
+            attn_mask = torch.zeros(num_frames, dtype=torch.bool)
+            return attn_mask, inputs[-num_frames:]
+        else:
+            needed = num_frames - len(inputs)
+            attn_mask = torch.tensor([False]*len(inputs) + [True]*needed, dtype=torch.bool)
+            padding = [None] * needed
+            return attn_mask, inputs + padding
+
     def _forward(self, inputs, **kwargs):
         if not isinstance(inputs, list):
             raise ValueError(f"Transformer inputs should be a list of states, got {type(inputs)}")
 
+        attention_mask, inputs = self._pad_or_truncate(inputs)
+
         images = []
         voltages = []
-        
+
+        image_shape = None
+        device = None
+
         for state in inputs:
+            if state is None:
+                # padding case
+                # image_shape will be defined since at least one (the first) input will be non-padding
+                x = torch.zeros(image_shape, device=device)
+                v = torch.zeros(1, device=device)
+                images.append(x)
+                voltages.append(v)
+                continue
+
             if isinstance(state, dict) and "obs" in state:
                 state = state["obs"]
-            
+
             if isinstance(state, dict):
                 if "image" in state:
                     x = state["image"]
                     v = state["voltage"]
                     if isinstance(x, np.ndarray):
                         x = torch.from_numpy(x)
+                    if isinstance(v, np.ndarray):
                         v = torch.from_numpy(v)
+                    if image_shape is None or device is None:
+                        image_shape = x.shape
+                        device = x.device
                     images.append(x)
                     voltages.append(v)
                 else:
-                    raise ValueError(f"Unexpected input dict structure: {list(inputs.keys())}")
+                    raise ValueError(f"Unexpected input dict structure: {list(state.keys())}")
             else:
                 raise ValueError(f"Unexpected input type: {type(state)}")
 
+        # Padding will be the trailing end of the tensors
         images = torch.stack(images)
         voltages = torch.stack(voltages)
 
         # Get tokenizer features
         tokenizer_out = self.tokenizer._forward(images)
-        tokens = tokenizer_out[ENCODER_OUT]  # (batch, feature_dim)
+        tokens = tokenizer_out[ENCODER_OUT]  # (seq_len, feature_dim)
 
         # For spatial attention, we need to create a sequence of tokens
         # If the tokenizer outputs a single vector, we'll treat it as a single token
         # In a more sophisticated setup, you'd extract spatial features from intermediate CNN layers
         if tokens.dim() == 2:
-            # (batch, feature_dim) -> (batch, 1, feature_dim)
-            tokens = tokens.unsqueeze(1)
+            # (seq_len, feature_dim) -> (1, seq_len, feature_dim)
+            tokens = tokens.unsqueeze(0)
 
         # Project tokens to transformer dimension
         tokens = self.token_projection(tokens)  # (batch, seq_len, latent_size)
@@ -704,13 +737,18 @@ class Transformer(TorchModel, Encoder):
         # Add positional encoding
         if self.config.use_ctlpe:
             # CTLPE requires voltage values for positional encoding
+            if voltages.dim() == 1:
+                voltages = voltages.unsqueeze(0)
             tokens = self.pos_encoder(tokens, voltages)
         else:
             # Learned or sinusoidal positional encoding
             tokens = self.pos_encoder(tokens)
 
         # Apply transformer encoder
-        transformed = self.transformer(tokens)  # (batch, seq_len, latent_size)
+        attention_mask = attention_mask.to(device)
+        if attention_mask.dim() == 1:
+            attention_mask = attention_mask.unsqueeze(0)
+        transformed = self.transformer(tokens, src_key_padding_mask=attention_mask)  # (batch, seq_len, latent_size)
 
         # Pool across sequence dimension
         if self.config.pooling_mode == "mean":
