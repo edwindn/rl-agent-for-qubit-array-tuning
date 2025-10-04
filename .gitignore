@@ -1,7 +1,7 @@
 #Stock gitignore
 
 # Specific yaml setup files
-src/swarm/**/*.yaml
+# src/swarm/**/*.yaml
 
 # Python
 __pycache__/
