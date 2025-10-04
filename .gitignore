@@ -1,7 +1,7 @@
 #Stock gitignore
 
-# Dreamer config
-DreamerV3/dreamerv3/configs.yaml
+# Specific yaml setup files
+# src/swarm/**/*.yaml
 
 # Python
 __pycache__/
