@@ -502,6 +502,67 @@ class MobileNet(TorchModel, Encoder):
         return {ENCODER_OUT: output_features}
 
 
+@dataclass
+class TransformerEncoderConfig(CNNEncoderConfig):
+    """Transformer encoder configuration for quantum charge stability diagrams.
+
+    This is a placeholder for future transformer-based memory implementation.
+    The transformer will wrap a CNN tokenizer (SimpleCNN, IMPALA, or MobileNet)
+    and add temporal modeling through self-attention mechanisms.
+    """
+
+    latent_size: int = 256
+    num_attention_heads: int = 4
+    num_layers: int = 1
+    max_seq_len: int = 50
+    dropout: float = 0.1
+
+    @property
+    def output_dims(self):
+        return (self.latent_size,)
+
+    def build(self, framework: str = "torch") -> "TransformerEncoder":
+        if framework != "torch":
+            raise ValueError(f"Only torch framework supported, got {framework}")
+        return TransformerEncoder(self)
+
+
+class TransformerEncoder(TorchModel, Encoder):
+    """Transformer encoder for temporal modeling in quantum device control.
+
+    - Accept tokenized CNN features as input
+    - Apply multi-head self-attention across temporal sequence
+    - Optionally incorporate previous actions and rewards
+    - Output contextualized features for policy/value heads
+    """
+
+    def __init__(self, config: TransformerEncoderConfig):
+        TorchModel.__init__(self, config)
+        Encoder.__init__(self, config)
+
+        self.config = config
+
+        # TODO: Implement transformer architecture
+        # - Positional encoding
+        # - Multi-head self-attention layers
+        # - Feed-forward networks
+        # - Layer normalization
+        # - Residual connections
+
+        raise NotImplementedError(
+            "TransformerEncoder is not yet implemented. "
+            "Use memory_layer='lstm' or memory_layer=null in config."
+        )
+
+    @property
+    def output_dims(self) -> Tuple[int, ...]:
+        return (self.config.latent_size,)
+
+    def _forward(self, inputs, **kwargs):
+        # TODO: Implement forward pass
+        raise NotImplementedError("TransformerEncoder forward pass not implemented")
+
+
 if __name__ == "__main__":
     """Print parameter counts for all network configurations."""
     import yaml

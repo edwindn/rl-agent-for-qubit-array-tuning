@@ -482,7 +482,8 @@ def main():
 
         # Handle voltage parsing to memory manually
         use_deltas = env_instance.base_env.use_deltas
-        has_lstm = config['neural_networks']['plunger_policy']['backbone']['lstm']['enabled']
+        memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
+        has_lstm = memory_layer == 'lstm'
         env_to_module_connector = partial(create_env_to_module_connector, use=use_deltas and has_lstm)
 
         algo_config = (

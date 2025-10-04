@@ -3,7 +3,7 @@
 
 # Default training parameters
 defaults:
-  num_iterations: 1000        # Total training iterations
+  num_iterations: 200        # Total training iterations
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
 
 # Weights & Biases configuration
@@ -145,19 +145,25 @@ neural_networks:
 #         - {channels: 32, kernel: 3, stride: 1}
 #       feature_size: 256
 #       adaptive_pooling: true
+      memory_layer: null # null, 'lstm', 'transformer'
       lstm:
-        enabled: false
         cell_size: 256
         num_layers: 1
         max_seq_len: 50
         use_prev_action: true
         use_prev_reward: false
+      transformer:
+        latent_size: 256
+        num_attention_heads: 4
+        num_layers: 1
+        max_seq_len: 20
+        dropout: 0.0
     policy_head:
-      hidden_layers: [32]
+      hidden_layers: [64, 64, 32]
       activation: "relu"
       use_attention: true
     value_head:
-      hidden_layers: [32]
+      hidden_layers: [64, 64, 32]
       activation: "relu"
       use_attention: true
 
@@ -167,9 +173,7 @@ neural_networks:
       mobilenet_version: "small"
       feature_size: 256
       freeze_backbone: false
-      lstm:
-        enabled: false
-      # No lstm section = no LSTM for barriers
+      memory_layer: null
     policy_head:
       hidden_layers: [32]  
       activation: "relu"

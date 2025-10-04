@@ -14,6 +14,7 @@ from .custom_neural_nets import (
     MobileNetConfig,
     PolicyHeadConfig,
     ValueHeadConfig,
+    TransformerEncoderConfig,
 )
 
 
@@ -40,14 +41,58 @@ class CustomPPOCatalog(PPOCatalog):
         action_space: gym.Space = None,
     ) -> ModelConfig:
         from gymnasium.spaces import Box
-        
+
         backbone_config = model_config_dict.get("backbone", {})
         lstm_config = backbone_config.get("lstm", {})
-        use_lstm = lstm_config.get("enabled", False)
-        
-        if use_lstm:
+        transformer_config = backbone_config.get("transformer", {})
+        memory_layer = backbone_config.get("memory_layer")
+        use_lstm = memory_layer == 'lstm'
+        use_transformer = memory_layer == 'transformer'
+
+        if use_transformer:
+            # Create CNN tokenizer config
+            backbone_type = backbone_config.get("type", "SimpleCNN")
+
+            if backbone_type == "IMPALA":
+                tokenizer_config = IMPALAConfig(
+                    input_dims=observation_space.shape,
+                    cnn_activation=model_config_dict.get("conv_activation", "relu"),
+                    conv_layers=backbone_config.get("conv_layers"),
+                    feature_size=backbone_config.get("feature_size", 256),
+                    adaptive_pooling=backbone_config.get("adaptive_pooling", True),
+                    num_res_blocks=backbone_config.get("num_res_blocks", 2),
+                )
+            elif backbone_type == "SimpleCNN":
+                tokenizer_config = SimpleCNNConfig(
+                    input_dims=observation_space.shape,
+                    cnn_activation=model_config_dict.get("conv_activation", "relu"),
+                    conv_layers=backbone_config.get("conv_layers"),
+                    feature_size=backbone_config.get("feature_size", 256),
+                    adaptive_pooling=backbone_config.get("adaptive_pooling", True),
+                )
+            elif backbone_type == "MobileNet":
+                tokenizer_config = MobileNetConfig(
+                    input_dims=observation_space.shape,
+                    mobilenet_version=backbone_config.get("mobilenet_version", "small"),
+                    feature_size=backbone_config.get("feature_size", 256),
+                    freeze_backbone=backbone_config.get("freeze_backbone", False),
+                )
+            else:
+                raise ValueError(f"Unsupported backbone type: {backbone_type}. Supported types: 'SimpleCNN', 'IMPALA', 'MobileNet'")
+
+            # Wrap CNN with Transformer
+            return TransformerEncoderConfig(
+                input_dims=tokenizer_config.output_dims,
+                latent_size=transformer_config.get("latent_size", 256),
+                num_attention_heads=transformer_config.get("num_attention_heads", 4),
+                num_layers=transformer_config.get("num_layers", 1),
+                max_seq_len=transformer_config.get("max_seq_len", 50),
+                dropout=transformer_config.get("dropout", 0.1),
+            )
+
+        elif use_lstm:
             from ray.rllib.core.models.configs import RecurrentEncoderConfig
-            
+
             # Create CNN tokenizer config (without LSTM)
             backbone_type = backbone_config.get("type", "SimpleCNN")
             
@@ -132,14 +177,18 @@ class CustomPPOCatalog(PPOCatalog):
     
     @override(PPOCatalog)
     def build_pi_head(self, framework: str = "torch"):
-        
+
         policy_config = self._model_config_dict.get("policy_head", {})
         backbone_config = self._model_config_dict.get("backbone", {})
         lstm_config = backbone_config.get("lstm", {})
-        
-        # Determine input dimensions based on whether LSTM is enabled
-        if lstm_config.get("enabled", False):
+        transformer_config = backbone_config.get("transformer", {})
+
+        # Determine input dimensions based on memory layer type
+        memory_layer = backbone_config.get("memory_layer")
+        if memory_layer == 'lstm':
             input_dim = lstm_config.get("cell_size", 128)
+        elif memory_layer == 'transformer':
+            input_dim = transformer_config.get("latent_size", 256)
         else:
             input_dim = backbone_config.get("feature_size", 256)
         
@@ -155,14 +204,18 @@ class CustomPPOCatalog(PPOCatalog):
     
     @override(PPOCatalog)
     def build_vf_head(self, framework: str = "torch"):
-        
+
         value_config = self._model_config_dict.get("value_head", {})
         backbone_config = self._model_config_dict.get("backbone", {})
         lstm_config = backbone_config.get("lstm", {})
-        
-        # Determine input dimensions based on whether LSTM is enabled
-        if lstm_config.get("enabled", False):
+        transformer_config = backbone_config.get("transformer", {})
+
+        # Determine input dimensions based on memory layer type
+        memory_layer = backbone_config.get("memory_layer")
+        if memory_layer == 'lstm':
             input_dim = lstm_config.get("cell_size", 128)
+        elif memory_layer == 'transformer':
+            input_dim = transformer_config.get("latent_size", 256)
         else:
             input_dim = backbone_config.get("feature_size", 256)
         
@@ -199,14 +252,60 @@ class CustomSACCatalog(SACCatalog):
         action_space: gym.Space = None,
     ) -> ModelConfig:
         from gymnasium.spaces import Box
-        
+
         backbone_config = model_config_dict.get("backbone", {})
         lstm_config = backbone_config.get("lstm", {})
-        use_lstm = lstm_config.get("enabled", False)
-        
+        transformer_config = backbone_config.get("transformer", {})
+        memory_layer = backbone_config.get("memory_layer")
+        use_lstm = memory_layer == 'lstm'
+        use_transformer = memory_layer == 'transformer'
+
+        if use_transformer:
+            # Create CNN tokenizer config
+            backbone_type = backbone_config.get("type", "SimpleCNN")
+
+            if backbone_type == "IMPALA":
+                tokenizer_config = IMPALAConfig(
+                    input_dims=observation_space.shape,
+                    cnn_activation=model_config_dict.get("conv_activation", "relu"),
+                    conv_layers=backbone_config.get("conv_layers"),
+                    feature_size=backbone_config.get("feature_size", 256),
+                    adaptive_pooling=backbone_config.get("adaptive_pooling", True),
+                    num_res_blocks=backbone_config.get("num_res_blocks", 2),
+                )
+            elif backbone_type == "SimpleCNN":
+                tokenizer_config = SimpleCNNConfig(
+                    input_dims=observation_space.shape,
+                    cnn_activation=model_config_dict.get("conv_activation", "relu"),
+                    conv_layers=backbone_config.get("conv_layers"),
+                    feature_size=backbone_config.get("feature_size", 256),
+                    adaptive_pooling=backbone_config.get("adaptive_pooling", True),
+                )
+            elif backbone_type == "MobileNet":
+                tokenizer_config = MobileNetConfig(
+                    input_dims=observation_space.shape,
+                    mobilenet_version=backbone_config.get("mobilenet_version", "small"),
+                    feature_size=backbone_config.get("feature_size", 256),
+                    freeze_backbone=backbone_config.get("freeze_backbone", False),
+                )
+            else:
+                raise ValueError(f"Unsupported backbone type: {backbone_type}. Supported types: 'SimpleCNN', 'IMPALA', 'MobileNet'")
+
+            # Wrap CNN with Transformer (placeholder - will raise NotImplementedError)
+            return TransformerEncoderConfig(
+                input_dims=tokenizer_config.output_dims,
+                latent_size=transformer_config.get("latent_size", 256),
+                num_attention_heads=transformer_config.get("num_attention_heads", 4),
+                num_layers=transformer_config.get("num_layers", 1),
+                max_seq_len=transformer_config.get("max_seq_len", 50),
+                dropout=transformer_config.get("dropout", 0.1),
+                use_prev_action=transformer_config.get("use_prev_action", False),
+                use_prev_reward=transformer_config.get("use_prev_reward", False),
+            )
+
         if use_lstm:
             from ray.rllib.core.models.configs import RecurrentEncoderConfig
-            
+
             # Create CNN tokenizer config (without LSTM)
             backbone_type = backbone_config.get("type", "SimpleCNN")
             
@@ -290,14 +389,18 @@ class CustomSACCatalog(SACCatalog):
     
     @override(SACCatalog)
     def build_pi_head(self, framework: str = "torch"):
-        
+
         policy_config = self._model_config_dict.get("policy_head", {})
         backbone_config = self._model_config_dict.get("backbone", {})
         lstm_config = backbone_config.get("lstm", {})
-        
-        # Determine input dimensions based on whether LSTM is enabled
-        if lstm_config.get("enabled", False):
+        transformer_config = backbone_config.get("transformer", {})
+
+        # Determine input dimensions based on memory layer type
+        memory_layer = backbone_config.get("memory_layer")
+        if memory_layer == 'lstm':
             input_dim = lstm_config.get("cell_size", 128)
+        elif memory_layer == 'transformer':
+            input_dim = transformer_config.get("latent_size", 256)
         else:
             input_dim = backbone_config.get("feature_size", 256)
         
@@ -313,14 +416,18 @@ class CustomSACCatalog(SACCatalog):
     
     @override(SACCatalog)
     def build_qf_head(self, framework: str = "torch"):
-        
+
         qf_config = self._model_config_dict.get("value_head", {})
         backbone_config = self._model_config_dict.get("backbone", {})
         lstm_config = backbone_config.get("lstm", {})
-        
-        # Determine input dimensions based on whether LSTM is enabled
-        if lstm_config.get("enabled", False):
+        transformer_config = backbone_config.get("transformer", {})
+
+        # Determine input dimensions based on memory layer type
+        memory_layer = backbone_config.get("memory_layer")
+        if memory_layer == 'lstm':
             input_dim = lstm_config.get("cell_size", 128)
+        elif memory_layer == 'transformer':
+            input_dim = transformer_config.get("latent_size", 256)
         else:
             input_dim = backbone_config.get("feature_size", 256)
         
