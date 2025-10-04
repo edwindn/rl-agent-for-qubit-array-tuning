@@ -511,11 +511,14 @@ class TransformerEncoderConfig(CNNEncoderConfig):
     and add temporal modeling through self-attention mechanisms.
     """
 
+    tokenizer_config: None
     latent_size: int = 256
     num_attention_heads: int = 4
     num_layers: int = 1
     max_seq_len: int = 50
     dropout: float = 0.1
+
+    assert tokenizer_config is not None
 
     @property
     def output_dims(self):
