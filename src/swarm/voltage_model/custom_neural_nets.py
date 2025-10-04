@@ -676,8 +676,8 @@ class Transformer(TorchModel, Encoder):
                     v = state["voltage"]
                     x = torch.from_numpy(x)
                     v = torch.from_numpy(v)
-                    all_images.append(x)
-                    all_voltages.append(v)
+                    images.append(x)
+                    voltages.append(v)
                 else:
                     raise ValueError(f"Unexpected input dict structure: {list(inputs.keys())}")
             else:
