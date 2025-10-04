@@ -660,21 +660,34 @@ class Transformer(TorchModel, Encoder):
         return self._output_dims
 
     def _forward(self, inputs, **kwargs):
-        # Handle input formats
-        if isinstance(inputs, dict) and "obs" in inputs:
-            inputs = inputs["obs"]
+        if not isinstance(inputs, list):
+            raise ValueError(f"Transformer inputs should be a list of states, got {type(inputs)}")
 
-        if isinstance(inputs, dict):
-            if "image" in inputs:
-                x = inputs["image"]
-                voltages = inputs["obs_gate_voltages"]
+        images = []
+        voltages = []
+        
+        for state in inputs:
+            if isinstance(state, dict) and "obs" in state:
+                state = state["obs"]
+            
+            if isinstance(state, dict):
+                if "image" in state:
+                    x = state["image"]
+                    v = state["voltage"]
+                    x = torch.from_numpy(x)
+                    v = torch.from_numpy(v)
+                    all_images.append(x)
+                    all_voltages.append(v)
+                else:
+                    raise ValueError(f"Unexpected input dict structure: {list(inputs.keys())}")
             else:
-                raise ValueError(f"Unexpected input dict structure: {list(inputs.keys())}")
-        else:
-            x = inputs
+                raise ValueError(f"Unexpected input type: {type(state)}")
+
+        images = torch.stack(images)
+        voltages = torch.stack(voltages)
 
         # Get tokenizer features
-        tokenizer_out = self.tokenizer._forward(x)
+        tokenizer_out = self.tokenizer._forward(images)
         tokens = tokenizer_out[ENCODER_OUT]  # (batch, feature_dim)
 
         # For spatial attention, we need to create a sequence of tokens
