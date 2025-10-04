@@ -38,7 +38,11 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
     """
 
     def __init__(
-        self, training: bool = True, return_voltage: bool = False, gif_config: dict = None,
+        self,
+        training: bool = True,
+        return_voltage: bool = False,
+        store_history: bool = False,
+        gif_config: dict = None,
     ):
         """
         Initialize multi-agent wrapper.
@@ -52,8 +56,13 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         """
         super().__init__()
 
+        if store_history and not return_voltage:
+            print("WARNING: 'store_history' in MultiAgentEnvWrapper is intended to work with 'return_voltage' only. Setting return_voltage=True.")
+            return_voltage = True
 
         self.return_voltage = return_voltage
+
+        self.store_history = store_history
 
         self.gif_config = gif_config
         if self.gif_config is not None:
@@ -70,6 +79,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         self.gate_agent_ids = [f"plunger_{i}" for i in range(self.num_gates)]
         self.barrier_agent_ids = [f"barrier_{i}" for i in range(self.num_barriers)]
         self.all_agent_ids = self.gate_agent_ids + self.barrier_agent_ids
+
+        if self.store_history:
+            self.per_agent_history = {agent_id: [] for agent_id in self.all_agent_ids}
 
         # Setup channel assignments for agents
         self._setup_channel_assignments()
@@ -365,15 +377,26 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         Returns:
             Tuple of (observations, infos) where infos is a per-agent dict
         """
+        # Reset observation history
+        if self.store_history:
+            self.per_agent_history = {agent_id: [] for agent_id in self.all_agent_ids}
+
         global_obs, global_info = self.base_env.reset(seed=seed, options=options)
 
         # Convert to multi-agent observations
         agent_observations = {}
         for agent_id in self.all_agent_ids:
-            agent_observations[agent_id] = self._extract_agent_observation(global_obs, agent_id, device_state_info=None)
+            agent_obs = self._extract_agent_observation(global_obs, agent_id, device_state_info=None)
+
+            if self.store_history:
+                self.per_agent_history[agent_id].append(agent_obs)
+                agent_observations[agent_id] = [agent_obs]
+
+            else:
+                agent_observations[agent_id] = agent_obs
 
         # Create per-agent info dict (MultiAgentEnv requirement)
-        agent_infos = dict.fromkeys(self.all_agent_ids, global_info)
+        agent_infos = {agent_id: global_info for agent_id in self.all_agent_ids}
 
         return agent_observations, agent_infos
 
@@ -407,7 +430,14 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         # Convert to multi-agent format
         agent_observations = {}
         for agent_id in self.all_agent_ids:
-            agent_observations[agent_id] = self._extract_agent_observation(global_obs, agent_id, device_state_info)
+            agent_obs = self._extract_agent_observation(global_obs, agent_id, device_state_info)
+
+            if self.store_history:
+                self.per_agent_history[agent_id].append(agent_obs)
+                agent_observations[agent_id] = self.per_agent_history[agent_id]
+
+            else:
+                agent_observations[agent_id] = agent_obs
 
         agent_rewards = self._distribute_rewards(global_rewards)
 
@@ -421,7 +451,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         # Create per-agent info dict (MultiAgentEnv requirement)
 
         if not device_state_info:
-            agent_infos = dict.fromkeys(self.all_agent_ids, {})
+            agent_infos = {agent_id: {} for agent_id in self.all_agent_ids}
         else:
             try:
                 agent_infos = {}
