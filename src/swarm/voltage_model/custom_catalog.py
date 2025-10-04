@@ -14,7 +14,7 @@ from .custom_neural_nets import (
     MobileNetConfig,
     PolicyHeadConfig,
     ValueHeadConfig,
-    TransformerEncoderConfig,
+    TransformerConfig,
 )
 
 
@@ -81,14 +81,16 @@ class CustomPPOCatalog(PPOCatalog):
                 raise ValueError(f"Unsupported backbone type: {backbone_type}. Supported types: 'SimpleCNN', 'IMPALA', 'MobileNet'")
 
             # Wrap CNN with Transformer
-            return TransformerEncoderConfig(
+            return TransformerConfig(
                 input_dims=tokenizer_config.output_dims,
                 tokenizer_config=tokenizer_config,
                 latent_size=transformer_config.get("latent_size", 256),
                 num_attention_heads=transformer_config.get("num_attention_heads", 4),
-                num_layers=transformer_config.get("num_layers", 1),
-                max_seq_len=transformer_config.get("max_seq_len", 50),
+                num_layers=transformer_config.get("num_layers", 2),
+                feedforward_dim=transformer_config.get("feedforward_dim"),
                 dropout=transformer_config.get("dropout", 0.1),
+                pooling_mode=transformer_config.get("pooling_mode", "mean"),
+                use_ctlpe=transformer_config.get("use_ctlpe", False),
             )
 
         elif use_lstm:
@@ -295,7 +297,7 @@ class CustomPPOCatalog(PPOCatalog):
 #                 raise ValueError(f"Unsupported backbone type: {backbone_type}. Supported types: 'SimpleCNN', 'IMPALA', 'MobileNet'")
 
 #             # Wrap CNN with Transformer (placeholder - will raise NotImplementedError)
-#             return TransformerEncoderConfig(
+#             return TransformerConfig(
 #                 input_dims=tokenizer_config.output_dims,
 #                 latent_size=transformer_config.get("latent_size", 256),
 #                 num_attention_heads=transformer_config.get("num_attention_heads", 4),

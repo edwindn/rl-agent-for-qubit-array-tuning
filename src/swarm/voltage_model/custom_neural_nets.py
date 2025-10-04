@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+import sys
+from pathlib import Path
 
 from ray.rllib.core.models.base import ENCODER_OUT, Encoder
 from ray.rllib.core.models.configs import CNNEncoderConfig, MLPHeadConfig, ModelConfig
@@ -10,12 +12,18 @@ from ray.rllib.utils.framework import try_import_torch
 
 torch, nn = try_import_torch()
 import torch.nn.functional as F
+import torchvision.models as models #for MobileNet
 
-# Import torchvision models for MobileNet
-try:
-    import torchvision.models as models
-except ImportError:
-    models = None
+
+# Import custom transformer (non-causal, encoder-only)
+# Add src directory to path for clean imports
+current_dir = Path(__file__).parent
+swarm_package_dir = current_dir.parent  # swarm package directory
+src_dir = swarm_package_dir.parent  # src directory
+project_root = src_dir.parent  # project root directory
+sys.path.insert(0, str(src_dir))
+from swarm.voltage_model.transformer import TransformerEncoder, TransformerEncoderLayer
+
 
 
 @dataclass
@@ -503,67 +511,202 @@ class MobileNet(TorchModel, Encoder):
 
 
 @dataclass
-class TransformerEncoderConfig(CNNEncoderConfig):
+class TransformerConfig(CNNEncoderConfig):
     """Transformer encoder configuration for quantum charge stability diagrams.
 
-    This is a placeholder for future transformer-based memory implementation.
-    The transformer will wrap a CNN tokenizer (SimpleCNN, IMPALA, or MobileNet)
-    and add temporal modeling through self-attention mechanisms.
+    Wraps a CNN tokenizer (SimpleCNN, IMPALA, or MobileNet) and adds
+    spatial attention through self-attention mechanisms.
+
+    Args:
+        tokenizer_config: Configuration object for the CNN backbone
+        latent_size: Output feature dimension
+        num_attention_heads: Number of attention heads for multi-head attention
+        num_layers: Number of transformer encoder layers
+        feedforward_dim: Hidden dimension of feedforward network (default: 4 * latent_size)
+        dropout: Dropout probability
+        pooling_mode: How to pool transformer outputs ("mean" or "max")
+        use_ctlpe: Whether to use CTLPE (Continuous Time Linear Positional Embedding) vs learned positional encodings
     """
 
-    tokenizer_config: None
+    tokenizer_config: Optional[CNNEncoderConfig] = None
     latent_size: int = 256
     num_attention_heads: int = 4
-    num_layers: int = 1
-    max_seq_len: int = 50
+    num_layers: int = 2
+    feedforward_dim: Optional[int] = None
     dropout: float = 0.1
+    pooling_mode: str = "mean"
+    use_ctlpe: bool = False
 
-    assert tokenizer_config is not None
+    def __post_init__(self):
+        if self.tokenizer_config is None:
+            raise ValueError("tokenizer_config must be provided")
+
+        if self.feedforward_dim is None:
+            self.feedforward_dim = 4 * self.latent_size
+
+        if self.pooling_mode not in ["mean", "max"]:
+            raise ValueError(f"pooling_mode must be 'mean' or 'max', got {self.pooling_mode}")
 
     @property
     def output_dims(self):
         return (self.latent_size,)
 
-    def build(self, framework: str = "torch") -> "TransformerEncoder":
+    def build(self, framework: str = "torch") -> "Transformer":
         if framework != "torch":
             raise ValueError(f"Only torch framework supported, got {framework}")
-        return TransformerEncoder(self)
+        return Transformer(self)
 
 
-class TransformerEncoder(TorchModel, Encoder):
-    """Transformer encoder for temporal modeling in quantum device control.
+class LearnedPositionalEncoding(nn.Module):
+    """Learnable positional encoding for transformer."""
 
-    - Accept tokenized CNN features as input
-    - Apply multi-head self-attention across temporal sequence
-    - Optionally incorporate previous actions and rewards
-    - Output contextualized features for policy/value heads
+    def __init__(self, max_seq_len: int, d_model: int):
+        super().__init__()
+        self.pos_embedding = nn.Parameter(torch.randn(1, max_seq_len, d_model))
+
+    def forward(self, x):
+        # x: (batch, seq_len, d_model)
+        return x + self.pos_embedding[:, :x.size(1), :]
+
+
+class CTLPEPositionalEncoding(nn.Module):
+    """Continuous Time Linear Positional Embedding.
+
+    From "CTLPE: Continuous Time Linear Positional Embedding for Irregular Time Series"
+    (https://arxiv.org/abs/2409.20092)
+
+    Uses voltage values as continuous "time" to create positional embeddings.
+    Formula: p(v) = slope * v + bias
+    where slope and bias are learnable per-dimension parameters.
     """
 
-    def __init__(self, config: TransformerEncoderConfig):
+    def __init__(self, d_model: int):
+        super().__init__()
+        # Learnable slope and bias for each embedding dimension
+        self.slope = nn.Parameter(torch.randn(d_model))
+        self.bias = nn.Parameter(torch.randn(d_model))
+
+    def forward(self, x, voltages):
+        """
+        Args:
+            x: Token embeddings (batch, seq_len, d_model)
+            voltages: Voltage values (batch, seq_len)
+
+        Returns:
+            Token embeddings with CTLPE positional encoding added
+        """
+        # Compute positional embedding: p(v) = slope * v + bias
+        # Broadcasting: (batch, seq_len, 1) * (d_model,) + (d_model,)
+        pos_emb = voltages.unsqueeze(-1) * self.slope + self.bias  # (batch, seq_len, d_model)
+        return x + pos_emb
+
+
+class Transformer(TorchModel, Encoder):
+    """Transformer encoder for spatial attention in quantum device control.
+
+    Architecture:
+    1. CNN Tokenizer converts images to spatial feature tokens
+    2. Linear projection to transformer dimension
+    3. Positional encoding added to tokens
+    4. Multi-layer transformer encoder (self-attention + FFN)
+    5. Pooling across spatial dimension
+    6. Output features for policy/value heads
+    """
+
+    def __init__(self, config: TransformerConfig):
         TorchModel.__init__(self, config)
         Encoder.__init__(self, config)
 
         self.config = config
 
-        # TODO: Implement transformer architecture
-        # - Positional encoding
-        # - Multi-head self-attention layers
-        # - Feed-forward networks
-        # - Layer normalization
-        # - Residual connections
+        # Build CNN tokenizer backbone
+        self.tokenizer = config.tokenizer_config.build()
+        tokenizer_output_dim = self.tokenizer.output_dims[0]
 
-        raise NotImplementedError(
-            "TransformerEncoder is not yet implemented. "
-            "Use memory_layer='lstm' or memory_layer=null in config."
+        # Linear projection from tokenizer features to transformer dimension
+        self.token_projection = nn.Linear(tokenizer_output_dim, config.latent_size)
+
+        # Positional encoding
+        if config.use_ctlpe:
+            # CTLPE uses voltage values directly, no need for max_seq_len
+            self.pos_encoder = CTLPEPositionalEncoding(config.latent_size)
+        else:
+            # Learned positional encoding
+            # For spatial tokens, max_seq_len should be large enough for flattened feature maps
+            max_positions = 256  # Reasonable upper bound for spatial positions
+            self.pos_encoder = LearnedPositionalEncoding(max_positions, config.latent_size)
+
+        # Transformer encoder layers (using custom non-causal implementation from transformer.py)
+        encoder_layer = TransformerEncoderLayer(
+            d_model=config.latent_size,
+            nhead=config.num_attention_heads,
+            dim_feedforward=config.feedforward_dim,
+            dropout=config.dropout,
+            activation="relu",
+            batch_first=True,
+            norm_first=True  # Pre-LayerNorm for better stability
         )
+
+        self.transformer = TransformerEncoder(
+            encoder_layer,
+            num_layers=config.num_layers,
+            norm=nn.LayerNorm(config.latent_size)
+        )
+
+        self._output_dims = (config.latent_size,)
 
     @property
     def output_dims(self) -> Tuple[int, ...]:
-        return (self.config.latent_size,)
+        return self._output_dims
 
     def _forward(self, inputs, **kwargs):
-        # TODO: Implement forward pass
-        raise NotImplementedError("TransformerEncoder forward pass not implemented")
+        # Handle input formats
+        if isinstance(inputs, dict) and "obs" in inputs:
+            inputs = inputs["obs"]
+
+        if isinstance(inputs, dict):
+            if "image" in inputs:
+                x = inputs["image"]
+                voltages = inputs["obs_gate_voltages"]
+            else:
+                raise ValueError(f"Unexpected input dict structure: {list(inputs.keys())}")
+        else:
+            x = inputs
+
+        # Get tokenizer features
+        tokenizer_out = self.tokenizer._forward(x)
+        tokens = tokenizer_out[ENCODER_OUT]  # (batch, feature_dim)
+
+        # For spatial attention, we need to create a sequence of tokens
+        # If the tokenizer outputs a single vector, we'll treat it as a single token
+        # In a more sophisticated setup, you'd extract spatial features from intermediate CNN layers
+        if tokens.dim() == 2:
+            # (batch, feature_dim) -> (batch, 1, feature_dim)
+            tokens = tokens.unsqueeze(1)
+
+        # Project tokens to transformer dimension
+        tokens = self.token_projection(tokens)  # (batch, seq_len, latent_size)
+
+        # Add positional encoding
+        if self.config.use_ctlpe:
+            # CTLPE requires voltage values for positional encoding
+            tokens = self.pos_encoder(tokens, voltages)
+        else:
+            # Learned or sinusoidal positional encoding
+            tokens = self.pos_encoder(tokens)
+
+        # Apply transformer encoder
+        transformed = self.transformer(tokens)  # (batch, seq_len, latent_size)
+
+        # Pool across sequence dimension
+        if self.config.pooling_mode == "mean":
+            output = transformed.mean(dim=1)
+        elif self.config.pooling_mode == "max":
+            output = transformed.max(dim=1)[0]
+        else:
+            raise ValueError(f"Invalid pooling_mode: {self.config.pooling_mode}")
+
+        return {ENCODER_OUT: output}
 
 
 if __name__ == "__main__":
