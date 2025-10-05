@@ -394,6 +394,7 @@ class MobileNetConfig(CNNEncoderConfig):
     mobilenet_version: str = "small"  # "small" or "large"
     feature_size: int = 256
     freeze_backbone: bool = False
+    load_pretrained: bool = True
 
     def __post_init__(self):
         # Set the feature dimensions based on MobileNet version
@@ -425,12 +426,14 @@ class MobileNet(TorchModel, Encoder):
 
         self.config = config
 
-        # Load pretrained MobileNet backbone
+        # Load MobileNet backbone (with or without pretrained weights)
         if config.mobilenet_version == "small":
-            self.backbone = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
+            weights = models.MobileNet_V3_Small_Weights.DEFAULT if config.load_pretrained else None
+            self.backbone = models.mobilenet_v3_small(weights=weights)
             feature_dim = 576
         elif config.mobilenet_version == "large":
-            self.backbone = models.mobilenet_v3_large(weights=models.MobileNet_V3_Large_Weights.DEFAULT)
+            weights = models.MobileNet_V3_Large_Weights.DEFAULT if config.load_pretrained else None
+            self.backbone = models.mobilenet_v3_large(weights=weights)
             feature_dim = 960
         else:
             raise ValueError(f"Unsupported MobileNet version: {config.mobilenet_version}")
@@ -448,20 +451,21 @@ class MobileNet(TorchModel, Encoder):
         )
 
         # Initialize new conv1 weights
-        with torch.no_grad():
-            if input_channels <= 3:
-                # Use subset of original weights if we have fewer channels
-                self.backbone.features[0][0].weight = nn.Parameter(
-                    original_conv1.weight[:, :input_channels, :, :].clone()
-                )
-            else:
-                # Repeat channels if we need more than 3
-                weight = original_conv1.weight
-                repeats = (input_channels + 2) // 3  # Ceiling division
-                repeated_weight = weight.repeat(1, repeats, 1, 1)
-                self.backbone.features[0][0].weight = nn.Parameter(
-                    repeated_weight[:, :input_channels, :, :].clone()
-                )
+        if config.load_pretrained:
+            with torch.no_grad():
+                if input_channels <= 3:
+                    # Use subset of original weights if we have fewer channels
+                    self.backbone.features[0][0].weight = nn.Parameter(
+                        original_conv1.weight[:, :input_channels, :, :].clone()
+                    )
+                else:
+                    # Repeat channels if we need more than 3
+                    weight = original_conv1.weight
+                    repeats = (input_channels + 2) // 3  # Ceiling division
+                    repeated_weight = weight.repeat(1, repeats, 1, 1)
+                    self.backbone.features[0][0].weight = nn.Parameter(
+                        repeated_weight[:, :input_channels, :, :].clone()
+                    )
 
         # Remove the final classification layer
         self.backbone.classifier = nn.Identity()
@@ -857,7 +861,8 @@ if __name__ == "__main__":
                     input_dims=input_dims,
                     mobilenet_version=backbone_config.get('mobilenet_version', 'small'),
                     feature_size=backbone_config.get('feature_size', 256),
-                    freeze_backbone=backbone_config.get('freeze_backbone', False)
+                    freeze_backbone=backbone_config.get('freeze_backbone', False),
+                    load_pretrained=backbone_config.get('load_pretrained', True)
                 )
                 backbone = config_obj.build()
             else:
@@ -942,7 +947,8 @@ if __name__ == "__main__":
                         input_dims=input_dims,
                         mobilenet_version=backbone_config.get('mobilenet_version', 'small'),
                         feature_size=backbone_config.get('feature_size', 256),
-                        freeze_backbone=backbone_config.get('freeze_backbone', False)
+                        freeze_backbone=backbone_config.get('freeze_backbone', False),
+                        load_pretrained=backbone_config.get('load_pretrained', True)
                     )
                 else:
                     print(f"Unknown backbone type for transformer tokenizer: {backbone_type}")

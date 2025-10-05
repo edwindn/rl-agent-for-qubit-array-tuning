@@ -589,9 +589,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         import os
 
         base_dir = Path(self.gif_config["save_dir"])
-        base_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
-        # Ensure permissions are set correctly even if directory already existed
-        os.chmod(base_dir, 0o777)
+        base_dir.mkdir(parents=True, exist_ok=True)
         print(f"GIF capture directory ready: {base_dir}")
 
     def _get_target_agent_ids(self):

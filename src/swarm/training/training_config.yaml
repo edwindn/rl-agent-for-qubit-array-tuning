@@ -136,6 +136,7 @@ neural_networks:
       type: "MobileNet"
       mobilenet_version: "small"
       feature_size: 256
+      load_pretrained: true
       freeze_backbone: false
 #       type: "IMPALA"
 #       # note custom backbone layers will only be applied for SimplCNN and IMPALA
@@ -145,7 +146,7 @@ neural_networks:
 #         - {channels: 32, kernel: 3, stride: 1}
 #       feature_size: 256
 #       adaptive_pooling: true
-      memory_layer: 'transformer' # null, 'lstm', 'transformer'
+      memory_layer: null # null, 'lstm', 'transformer'
       lstm:
         cell_size: 256
         num_layers: 1
