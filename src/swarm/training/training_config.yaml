@@ -49,11 +49,11 @@ rl_config:
 
   # Environment runners configuration
   env_runners:
-    num_env_runners: 28              # Number of parallel environment runners
+    num_env_runners: 21              # Number of parallel environment runners
 
     rollout_fragment_length: 50     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
-    num_gpus_per_env_runner: 0.25     # GPU allocation per runner
+    num_gpus_per_env_runner: 0.3     # GPU allocation per runner
 
   # Learner configuration  
   learners:
@@ -150,7 +150,7 @@ neural_networks:
         cell_size: 256
         num_layers: 1
         max_seq_len: 50
-        use_prev_action: true
+        use_prev_action: false
         use_prev_reward: false
       transformer:
         latent_size: 256
@@ -161,6 +161,7 @@ neural_networks:
         dropout: 0.1
         pooling_mode: "mean"  # "mean" or "max"
         use_ctlpe: true  # Use Continuous Time Linear Positional Embedding (voltage-based) vs learned positional encoding
+        add_pos_embeddings: false
     policy_head:
       hidden_layers: [64, 64, 32]
       activation: "relu"

@@ -526,7 +526,8 @@ class TransformerConfig(CNNEncoderConfig):
         feedforward_dim: Hidden dimension of feedforward network (default: 4 * latent_size)
         dropout: Dropout probability
         pooling_mode: How to pool transformer outputs ("mean" or "max")
-        use_ctlpe: Whether to use CTLPE (Continuous Time Linear Positional Embedding) vs learned positional encodings
+        use_ctlpe: Whether to use CTLPE (Continuous Time Linear Positional Embedding)
+        use_pos_embeddings: Whether to use sinusoidal positional embeddings
     """
 
     tokenizer_config: Optional[CNNEncoderConfig] = None
@@ -538,6 +539,7 @@ class TransformerConfig(CNNEncoderConfig):
     dropout: float = 0.1
     pooling_mode: str = "mean"
     use_ctlpe: bool = False
+    use_pos_embeddings: bool = False
 
     def __post_init__(self):
         if self.tokenizer_config is None:
@@ -628,15 +630,18 @@ class Transformer(TorchModel, Encoder):
         # Linear projection from tokenizer features to transformer dimension
         self.token_projection = nn.Linear(tokenizer_output_dim, config.latent_size)
 
-        # Positional encoding
+        # Positional encoding - CTLPE for voltage-based embeddings
         if config.use_ctlpe:
             # CTLPE uses voltage values directly, no need for max_seq_len
             self.pos_encoder = CTLPEPositionalEncoding(config.latent_size)
         else:
-            # Learned positional encoding
-            # For spatial tokens, max_seq_len should be large enough for flattened feature maps
-            max_positions = 256  # Reasonable upper bound for spatial positions
-            self.pos_encoder = LearnedPositionalEncoding(max_positions, config.latent_size)
+            self.pos_encoder = None
+
+        # Sinusoidal positional embeddings
+        if config.use_pos_embeddings:
+            # Generate sinusoidal embeddings and register as buffer (not trainable)
+            sinusoids = self._get_sinusoids(config.max_seq_len, config.latent_size)
+            self.register_buffer('sinusoidal_embeddings', sinusoids)
 
         # Transformer encoder layers (using custom non-causal implementation from transformer.py)
         encoder_layer = TransformerEncoderLayer(
@@ -660,6 +665,35 @@ class Transformer(TorchModel, Encoder):
     @property
     def output_dims(self) -> Tuple[int, ...]:
         return self._output_dims
+
+    def _get_sinusoids(self, seq_len: int, d_model: int) -> torch.Tensor:
+        """Generate sinusoidal positional embeddings.
+
+        Args:
+            seq_len: Maximum sequence length
+            d_model: Model dimension (embedding size)
+
+        Returns:
+            Tensor of shape (seq_len, d_model) with sinusoidal positional embeddings
+        """
+        position = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)  # (seq_len, 1)
+
+        # Compute the div_term: 1 / (10000^(2i/d_model)) for i in [0, d_model/2)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2, dtype=torch.float32) *
+            -(np.log(10000.0) / d_model)
+        )  # (d_model/2,)
+
+        # Initialize positional encoding tensor
+        pe = torch.zeros(seq_len, d_model)
+
+        # Apply sine to even indices
+        pe[:, 0::2] = torch.sin(position * div_term)
+
+        # Apply cosine to odd indices
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        return pe
 
     def _pad_or_truncate(self, inputs):
         num_frames = self.config.max_seq_len
@@ -734,15 +768,17 @@ class Transformer(TorchModel, Encoder):
         # Project tokens to transformer dimension
         tokens = self.token_projection(tokens)  # (batch, seq_len, latent_size)
 
-        # Add positional encoding
+        # Add positional encodings
         if self.config.use_ctlpe:
             # CTLPE requires voltage values for positional encoding
             if voltages.dim() == 1:
                 voltages = voltages.unsqueeze(0)
             tokens = self.pos_encoder(tokens, voltages)
-        else:
-            # Learned or sinusoidal positional encoding
-            tokens = self.pos_encoder(tokens)
+
+        if self.config.use_pos_embeddings:
+            # Add sinusoidal positional embeddings
+            seq_len = tokens.size(1)
+            tokens = tokens + self.sinusoidal_embeddings[:seq_len, :].unsqueeze(0)
 
         # Apply transformer encoder
         attention_mask = attention_mask.to(device)
@@ -863,6 +899,92 @@ if __name__ == "__main__":
             total_params += policy_total
         
         print(f"\nGRAND TOTAL: {total_params:,} parameters")
+        print("="*60)
+
+        # Always print transformer parameter count from config
+        print("\n" + "="*60)
+        print("TRANSFORMER PARAMETER COUNT")
+        print("="*60)
+
+        input_dims = (64, 64, 1)
+
+        # Look for transformer config in any policy
+        transformer_found = False
+        for policy_name, policy_config in neural_configs.items():
+            backbone_config = policy_config.get('backbone', {})
+            if backbone_config.get('memory_layer') == 'transformer':
+                transformer_found = True
+                transformer_dict = backbone_config.get('transformer', {})
+
+                # Get backbone config for tokenizer
+                backbone_type = backbone_config.get('type', 'SimpleCNN')
+
+                # Create tokenizer config based on backbone type
+                if backbone_type == 'SimpleCNN':
+                    tokenizer_cfg = SimpleCNNConfig(
+                        input_dims=input_dims,
+                        conv_layers=backbone_config.get('conv_layers'),
+                        feature_size=backbone_config.get('feature_size', 256),
+                        adaptive_pooling=backbone_config.get('adaptive_pooling', True),
+                        cnn_activation="relu"
+                    )
+                elif backbone_type == 'IMPALA':
+                    tokenizer_cfg = IMPALAConfig(
+                        input_dims=input_dims,
+                        conv_layers=backbone_config.get('conv_layers'),
+                        feature_size=backbone_config.get('feature_size', 256),
+                        adaptive_pooling=backbone_config.get('adaptive_pooling', True),
+                        num_res_blocks=backbone_config.get('num_res_blocks', 2),
+                        cnn_activation="relu"
+                    )
+                elif backbone_type == 'MobileNet':
+                    tokenizer_cfg = MobileNetConfig(
+                        input_dims=input_dims,
+                        mobilenet_version=backbone_config.get('mobilenet_version', 'small'),
+                        feature_size=backbone_config.get('feature_size', 256),
+                        freeze_backbone=backbone_config.get('freeze_backbone', False)
+                    )
+                else:
+                    print(f"Unknown backbone type for transformer tokenizer: {backbone_type}")
+                    continue
+
+                # Create transformer config from yaml
+                transformer_config = TransformerConfig(
+                    input_dims=input_dims,
+                    tokenizer_config=tokenizer_cfg,
+                    latent_size=transformer_dict.get('latent_size', 256),
+                    num_attention_heads=transformer_dict.get('num_attention_heads', 4),
+                    num_layers=transformer_dict.get('num_layers', 2),
+                    max_seq_len=transformer_dict.get('max_seq_len', 20),
+                    feedforward_dim=transformer_dict.get('feedforward_dim'),
+                    dropout=transformer_dict.get('dropout', 0.1),
+                    pooling_mode=transformer_dict.get('pooling_mode', 'mean'),
+                    use_ctlpe=transformer_dict.get('use_ctlpe', False),
+                    use_pos_embeddings=transformer_dict.get('add_pos_embeddings', False)
+                )
+
+                transformer = transformer_config.build()
+                transformer_params = count_parameters(transformer)
+
+                latent_size = transformer_dict.get('latent_size', 256)
+                ffn_dim = transformer_dict.get('feedforward_dim') or (4 * latent_size)
+
+                print(f"\nTransformer for {policy_name}:")
+                print(f"  Total parameters: {transformer_params:,}")
+                print(f"  Configuration:")
+                print(f"    - Tokenizer: {backbone_type} ({backbone_config.get('feature_size', 256)} features)")
+                print(f"    - Latent size: {latent_size}")
+                print(f"    - Attention heads: {transformer_dict.get('num_attention_heads', 4)}")
+                print(f"    - Layers: {transformer_dict.get('num_layers', 2)}")
+                print(f"    - Max sequence length: {transformer_dict.get('max_seq_len', 20)}")
+                print(f"    - Feedforward dim: {ffn_dim}")
+                print(f"    - Use CTLPE: {transformer_dict.get('use_ctlpe', False)}")
+                print(f"    - Use positional embeddings: {transformer_dict.get('add_pos_embeddings', False)}")
+                break
+
+        if not transformer_found:
+            print("\nNo transformer configuration found in training_config.yaml")
+
         print("="*60)
         
     except Exception as e:

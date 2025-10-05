@@ -28,8 +28,11 @@ from swarm.capacitance_model import CapacitancePredictionModel, CapacitancePredi
 
 class QuantumDeviceEnv(gym.Env):
     """
-    Simulator environment that handles all env related logic
-    loads in the qarray/ device model to extract observations
+    Simulator environment that handles all gym.env related logic
+        - loads in QarrayBaseClass to extract observations
+        - holds a device state consisting of plunger and barrier voltages and ground truths, and virtual gate matrix
+        - allows plotting of sample CSD scans
+        - allows Bayesian updates of the model's internal virtual gate matrix as we gather more information about the inter-dot capacitances
     """
 
     def __init__(
@@ -37,9 +40,7 @@ class QuantumDeviceEnv(gym.Env):
         training=True,
         config_path="env_config.yaml",
     ):
-        """
-        Setup for the base qarray environment class
-        """
+
         super().__init__()
 
         # environment parameters
@@ -133,7 +134,7 @@ class QuantumDeviceEnv(gym.Env):
 
         Returns:
             observation (np.ndarray): The initial observation of the space.
-            info (dict): A dictionary with auxiliary diagnostic information.
+            info (dict): A dictionary with the current device state.
         """
 
         if seed is not None:
@@ -229,8 +230,10 @@ class QuantumDeviceEnv(gym.Env):
         barrier_voltages = np.array(barrier_voltages).flatten().astype(np.float32)
 
         # Random actions for debugging
-        #gate_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_plunger_voltages).astype(np.float32)
-        #barrier_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_barrier_voltages).astype(np.float32)
+        # gate_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_plunger_voltages).astype(np.float32)
+        # barrier_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_barrier_voltages).astype(np.float32)
+        # gate_voltages = np.zeros(self.num_plunger_voltages).astype(np.float32)
+        # barrier_voltages = np.zeros(self.num_barrier_voltages).astype(np.float32)
         
         # Rescale voltages from [-1, 1] to actual ranges
         gate_voltages = self._rescale_gate_voltages(gate_voltages)
@@ -338,11 +341,15 @@ class QuantumDeviceEnv(gym.Env):
 
     def _normalise_obs(self, obs):
         """
-        Normalize observations from 0 to 1 based on the middle 99% of data.
-        Clips the outer 0.5% to 0 and 1 on either end.
+        Images:
+            normalize observations from 0 to 1 based on the middle 99% of data.
+            clips the outer 0.5% to 0 and 1 on either end.
+        
+        Voltages:
+            normalize observations to range [-1, 1].
 
         Args:
-            obs (dict): Observation dictionary containing 'image' and voltage data
+            obs (dict): Observation dictionary containing image and voltage data
 
         Returns:
             dict: Normalized observation dictionary
