@@ -26,7 +26,7 @@ reward:
   # Gate/Plunger reward configuration
   gate_ramp_start: 20.0 # Distance from ground truth where reward = 0
   gate_quadratic_start: 5.0 # Distance where curved region begins (reward = 0.5)
-  gate_curve_type: "exponential" # Type of curve for final approach: "polynomial", "exponential", "linear"
+  gate_curve_type: "exponential" # Type of curve for final approach: "polynomial", "exponential", "linear", "constant"
   gate_curve_exponent: 2.0 # Exponent for polynomial/exponential curves
 
   # Barrier reward configuration (simple linear)

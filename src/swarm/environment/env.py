@@ -307,6 +307,8 @@ class QuantumDeviceEnv(gym.Env):
 
                 if self.gate_curve_type == "polynomial":
                     curve_value = normalized ** self.gate_curve_exponent
+                elif self.gate_curve_type == "constant":
+                    curve_value = 1
                 elif self.gate_curve_type == "exponential":
                     curve_value = (np.exp(self.gate_curve_exponent * normalized) - 1) / (np.exp(self.gate_curve_exponent) - 1)
                 elif self.gate_curve_type == "linear":
