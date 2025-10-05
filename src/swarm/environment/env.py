@@ -159,6 +159,9 @@ class QuantumDeviceEnv(gym.Env):
             obs_image_size=self.resolution,
         )
 
+        if self.capacitance_model == "perfect":
+            self.array._apply_perfect_virtualisation()
+
         plunger_ground_truth, barrier_ground_truth, _ = self.array.calculate_ground_truth()
 
         if barrier_ground_truth is None:
@@ -422,6 +425,10 @@ class QuantumDeviceEnv(gym.Env):
         if self.capacitance_model is None:
             return  # Skip if capacitance model not available
 
+        if self.capacitance_model == "perfect":
+            # update handled in initialisation
+            return
+
         if self.capacitance_model == "fake":
             cgd_estimate = fake_capacitance_model(
                 self.current_step, self.max_steps, self.array.model.cgd
@@ -497,8 +504,8 @@ class QuantumDeviceEnv(gym.Env):
                 self.capacitance_model = None
                 return
 
-            elif update_method == "fake":
-                self.capacitance_model = "fake"
+            elif update_method in ["perfect", "fake"]:
+                self.capacitance_model = update_method
                 return
 
             # Determine device (GPU if available, otherwise CPU)

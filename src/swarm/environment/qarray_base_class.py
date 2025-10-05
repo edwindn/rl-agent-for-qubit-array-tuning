@@ -583,6 +583,25 @@ class QarrayBaseClass:
         return model_params
 
     
+    def _apply_perfect_virtualisation(self):
+        Cdd = np.zeros((self.num_dots, self.num_dots))
+        Cgd = np.eye(self.num_dots + 1)[:-1, :]
+        Cds = self.model.Cds.copy()
+        Cgs = self.model.Cgs.copy()
+
+        if self.use_barriers:
+            raise NotImplementedError("Updating matrices in qarray-latched not yet implemented.")
+            Cbd = np.zeros((self.num_dots, self.num_dots - 1))
+            Cbg = np.zeros((self.num_dots - 1, self.num_dots + 1))
+            Cbb = np.eye(self.num_dots - 1)
+            Cbs = self.model.Cbs
+
+            self.model.update_capacitance_matrices(Cdd, Cgd, Cds, Cgs, Cbd, Cbg, Cbs, Cbb)
+
+        else:
+            self.model.update_capacitance_matrices(Cdd, Cgd, Cds, Cgs)
+
+    
     def _load_model(self, param_overrides: dict = None):
 
         if param_overrides is None:
@@ -619,7 +638,7 @@ class QarrayBaseClass:
         Cdd = model_params["Cdd"]
         Cgd = model_params["Cgd"]
         Cds = model_params["Cds"]
-        Cgs = model_params["Cgs"]
+        Cgs = model_params["Cgs"]        
 
         model = ChargeSensedDotArray(
             Cdd=Cdd,
@@ -747,7 +766,7 @@ class QarrayBaseClass:
         self.model.gate_voltage_composer.virtual_gate_matrix = vgm
 
 
-    def _render_frame(self, image, path="quantum_dot_plot"):
+    def _render_frame(self, image, path="quantum_dot_plot_pv"):
         """
         Internal method to create the render image.
 
@@ -927,9 +946,9 @@ class QarrayBaseClass:
 
 
 if __name__ == "__main__":
-    num_dots = 2
+    num_dots = 4
 
-    use_barriers = True
+    use_barriers = False
 
     experiment = QarrayBaseClass(
         num_dots=num_dots,
@@ -940,17 +959,22 @@ if __name__ == "__main__":
     )
     import time
 
+    experiment._apply_perfect_virtualisation()
+
     start = time.time()
 
     # os.environ['JAX_PLATFORM_NAME'] = 'cpu'  # Force CPU-only execution
     # os.environ['JAX_PLATFORMS'] = 'cpu'  # Alternative JAX CPU-only setting
-    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
     target = [1] * num_dots + [0.5]
     if use_barriers:
         vg, vb, _ = experiment.calculate_ground_truth()
     else:
-        vg = experiment.calculate_ground_truth()
+        vg, vb, _ = experiment.calculate_ground_truth()
+    print("Ground truth:")
+    print(vg)
+    print(vb)
 
     if not use_barriers:
         image = experiment._get_obs([0] * num_dots)["image"][:, :, 0]
@@ -961,8 +985,6 @@ if __name__ == "__main__":
     start = time.time()
 
     voltage = - 2.0
-
-    print(experiment.model.Cbg)
 
     if not use_barriers:
         image = experiment._get_obs(vg)["image"][:, :, 0]
