@@ -69,7 +69,7 @@ rl_config:
     grad_clip_by: "norm"            # Gradient clipping method
 
     # PPO-specific config
-    lr: 0.0003                      # Learning rate
+    lr: [[0, 0.0003], [400000, 0.0001], [800000, 0.00005]]                      # Learning rate: constant (e.g., 0.0003) or schedule as list of [timestep, lr] pairs (e.g., [[0, 0.0003], [100000, 0.0001]])
     gamma: 0.0                      # Discount factor
     lambda_: 0.95                   # GAE lambda parameter
     clip_param: 0.2                 # PPO clipping parameter

@@ -105,7 +105,7 @@ def extract_training_metrics(result: Dict[str, Any]) -> Dict[str, Any]:
         "policy_loss": plunger_policy.get("policy_loss", None),
         "vf_loss": plunger_policy.get("vf_loss", None),
         "vf_loss_unclipped": plunger_policy.get("vf_loss_unclipped", None),
-        "vf_explained_var": plunger_policy.get("vf_explained_var", None), 
+        "vf_explained_var": plunger_policy.get("vf_explained_var", None),
         "entropy": plunger_policy.get("entropy", None),
         "mean_kl": plunger_policy.get("mean_kl_loss", None),
         "advantage_mean": plunger_policy.get("advantage_mean", None),
@@ -115,6 +115,8 @@ def extract_training_metrics(result: Dict[str, Any]) -> Dict[str, Any]:
         # Value function prediction statistics (from custom learner)
         "vf_predictions_mean": plunger_policy.get("vf_predictions_mean", None),
         "vf_predictions_variance": plunger_policy.get("vf_predictions_variance", None),
+        # Learning rate (from RLlib's optimizer tracking)
+        "lr": plunger_policy.get("default_optimizer_learning_rate", None),
     }
 
     metrics["barrier_metrics"] = {
@@ -128,6 +130,8 @@ def extract_training_metrics(result: Dict[str, Any]) -> Dict[str, Any]:
         "advantage_variance": barrier_policy.get("advantage_variance", None),
         # Gradient norms (from Ray's built-in gradient logging)
         "grad_norm": barrier_policy.get("gradients_default_optimizer_global_norm", None),
+        # Learning rate (from RLlib's optimizer tracking)
+        "lr": barrier_policy.get("default_optimizer_learning_rate", None),
     }
 
     # System metrics
@@ -277,6 +281,10 @@ def log_to_wandb(result: Dict[str, Any], iteration: int):
     if p_metrics["vf_predictions_variance"] is not None:
         log_dict["plunger_vf_predictions_variance"] = p_metrics["vf_predictions_variance"]
 
+    # Add learning rate if available
+    if p_metrics["lr"] is not None:
+        log_dict["plunger_lr"] = p_metrics["lr"]
+
     # Barrier policy metrics
     b_metrics = metrics["barrier_metrics"]
     if b_metrics["policy_loss"] is not None:
@@ -302,6 +310,10 @@ def log_to_wandb(result: Dict[str, Any], iteration: int):
     # Add gradient norm if available
     if b_metrics["grad_norm"] is not None:
         log_dict["barrier_grad_norm"] = b_metrics["grad_norm"]
+
+    # Add learning rate if available
+    if b_metrics["lr"] is not None:
+        log_dict["barrier_lr"] = b_metrics["lr"]
 
     # Policy log std metrics from callbacks
     learners = result.get("learners", {})
@@ -402,4 +414,6 @@ def setup_wandb_metrics(ema_period: int = 20):
     wandb.define_metric("barrier_return_avg", step_metric="iteration", summary="max")
     wandb.define_metric("plunger_policy_loss", step_metric="iteration", summary="min")
     wandb.define_metric("barrier_policy_loss", step_metric="iteration", summary="min")
+    wandb.define_metric("plunger_lr", step_metric="iteration")
+    wandb.define_metric("barrier_lr", step_metric="iteration")
 
