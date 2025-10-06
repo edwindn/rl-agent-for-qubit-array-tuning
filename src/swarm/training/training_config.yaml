@@ -140,6 +140,8 @@ neural_networks:
       feature_size: 256
       load_pretrained: true
       freeze_backbone: false
+      adaptive_pooling: true  # Required for SimpleCNN/IMPALA
+      num_res_blocks: 2  # Required for IMPALA
 #       type: "IMPALA"
 #       # note custom backbone layers will only be applied for SimplCNN and IMPALA
 #       conv_layers:
@@ -163,7 +165,7 @@ neural_networks:
         feedforward_dim: null  # FFN hidden dim (defaults to 4*latent_size=1024). The FFN expands then projects back.
         dropout: 0.1
         pooling_mode: "mean"  # "mean" or "max"
-        use_ctlpe: true  # Use Continuous Time Linear Positional Embedding (voltage-based) vs learned positional encoding
+        use_ctlpe: true  # Use Continuous Time Linear Positional Embedding (voltage-based)
         add_pos_embeddings: false
     policy_head:
       hidden_layers: [64, 64, 32]
@@ -176,13 +178,15 @@ neural_networks:
 
   barrier_policy:
     backbone:
-      type: "MobileNet"
-      mobilenet_version: "small"
+      type: "SimpleCNN"
+      mobilenet_version: "small" # Required for MobileNet
       feature_size: 256
       freeze_backbone: false
+      adaptive_pooling: true  # Required for SimpleCNN/IMPALA
+      num_res_blocks: 2  # Required for IMPALA
       memory_layer: null
     policy_head:
-      hidden_layers: [32]  
+      hidden_layers: [32]
       activation: "relu"
       use_attention: false
     value_head:

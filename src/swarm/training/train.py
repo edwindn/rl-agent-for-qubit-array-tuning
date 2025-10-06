@@ -452,10 +452,12 @@ def main():
         # Optionally update the rl module config to allow log_std clamping, shared log_std vector etc.
         rl_module_config = {
             "plunger_policy": {
+                **config['neural_networks']['plunger_policy'],
                 "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
                 "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
             },
             "barrier_policy": {
+                **config['neural_networks']['barrier_policy'],
                 "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
                 "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
             }
