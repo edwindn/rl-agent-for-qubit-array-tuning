@@ -3,7 +3,7 @@
 
 # Default training parameters
 defaults:
-  num_iterations: 200        # Total training iterations
+  num_iterations: 400        # Total training iterations
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
 
 # Weights & Biases configuration
@@ -69,7 +69,9 @@ rl_config:
     grad_clip_by: "norm"            # Gradient clipping method
 
     # PPO-specific config
-    lr: [[0, 0.0003], [400000, 0.0001], [800000, 0.00005]]                      # Learning rate: constant (e.g., 0.0003) or schedule as list of [timestep, lr] pairs (e.g., [[0, 0.0003], [100000, 0.0001]])
+    # lr: [[0, 0.0003], [400000, 0.0001], [800000, 0.00005]]
+    lr: 0.0001
+    # Learning rate: constant (e.g., 0.0003) or schedule as list of [timestep, lr] pairs (e.g., [[0, 0.0003], [100000, 0.0001]])
     gamma: 0.0                      # Discount factor
     lambda_: 0.95                   # GAE lambda parameter
     clip_param: 0.2                 # PPO clipping parameter

@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 import ray
+import torch
 import wandb
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.algorithms.sac import SACConfig
@@ -166,6 +167,29 @@ def apply_config_overrides(config, overrides):
         print(f"Config override applied: {key} = {value}")
     
     return config
+
+
+def fix_optimizer_betas_after_checkpoint_load(algo):
+    """Fix optimizer beta parameters that may have been saved as tensors.
+
+    When checkpoints are saved with LR schedules, optimizer parameters like betas
+    can be stored as tensors. This causes errors when loading with certain optimizer
+    configurations. This function converts any tensor betas back to scalar values.
+
+    Args:
+        algo: The RLlib Algorithm instance after restore_from_path() has been called
+    """
+    def fix_betas(learner):
+        for name, optimizer in learner._named_optimizers.items():
+            for param_group in optimizer.param_groups:
+                if 'betas' in param_group:
+                    betas = param_group['betas']
+                    param_group['betas'] = (
+                        float(betas[0]) if torch.is_tensor(betas[0]) else betas[0],
+                        float(betas[1]) if torch.is_tensor(betas[1]) else betas[1]
+                    )
+
+    algo.learner_group.foreach_learner(fix_betas)
 
 
 def find_latest_checkpoint(checkpoint_dir):
@@ -546,7 +570,8 @@ def main():
                 print(f"\nLoading checkpoint from: {checkpoint_path}")
                 try:
                     algo.restore_from_path(str(checkpoint_path))
-                    
+                    fix_optimizer_betas_after_checkpoint_load(algo)
+
                     # Extract iteration number from path
                     match = re.search(r'iteration_(\d+)', str(checkpoint_path))
                     if match:
@@ -572,6 +597,8 @@ def main():
                 print(f"\nFound latest checkpoint: {latest_checkpoint} (iteration {latest_iteration})")
                 try:
                     algo.restore_from_path(str(Path(latest_checkpoint).absolute()))
+                    fix_optimizer_betas_after_checkpoint_load(algo)
+
                     start_iteration = latest_iteration
                     checkpoint_loaded = True
                     print(f"Latest checkpoint loaded successfully. Resuming from iteration {start_iteration + 1}")
