@@ -25,7 +25,6 @@ import matplotlib.pyplot as plt
 
 from swarm.environment.utils import VaryPeakWidth
 
-
 # NOTE: gates are zero indexed but qarray is one indexed
 
 
@@ -263,11 +262,6 @@ class QarrayBaseClass:
                 avg_coupling = (Cgd[i, j] + Cgd[j, i]) / 2
                 Cgd[i, j] = avg_coupling
                 Cgd[j, i] = avg_coupling
-
-        # Fill sensor gate couplings (last column)
-        sensor_coupling = cgd_config["sensor_coupling"]
-        for dot_i in range(self.num_dots):
-            Cgd[dot_i, self.num_dots] = self._sample_from_range(sensor_coupling, rng)
 
         return Cgd
 
@@ -948,18 +942,19 @@ class QarrayBaseClass:
 if __name__ == "__main__":
     num_dots = 4
 
-    use_barriers = False
+    use_barriers = True
 
     experiment = QarrayBaseClass(
         num_dots=num_dots,
         use_barriers=use_barriers,
-        obs_voltage_min=-1.5,
+        obs_voltage_min=-3,
         obs_voltage_max=1.5,
-        vary_peak_width=True,
+        vary_peak_width=False,
+        obs_image_size=256,
     )
     import time
 
-    experiment._apply_perfect_virtualisation()
+    #experiment._apply_perfect_virtualisation()
 
     start = time.time()
 
@@ -967,11 +962,8 @@ if __name__ == "__main__":
     # os.environ['JAX_PLATFORMS'] = 'cpu'  # Alternative JAX CPU-only setting
     # os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
-    target = [1] * num_dots + [0.5]
-    if use_barriers:
-        vg, vb, _ = experiment.calculate_ground_truth()
-    else:
-        vg, vb, _ = experiment.calculate_ground_truth()
+    vg, vb, _ = experiment.calculate_ground_truth()
+
     print("Ground truth:")
     print(vg)
     print(vb)
@@ -989,11 +981,12 @@ if __name__ == "__main__":
     if not use_barriers:
         image = experiment._get_obs(vg)["image"][:, :, 0]
     else:
-        vg = np.array(vg)
-        vg += np.random.normal(0, .1, size=vg.shape)
-        vb = np.array(vb)
-        vb += np.random.normal(0, 1, size=vb.shape)
-        vb = np.ones_like(vb) * 10.
+        #vg = np.array(vg)
+        #vg += np.random.normal(0, .1, size=vg.shape)
+        #vb = np.array(vb)
+        #vb += np.random.normal(0, 1, size=vb.shape)
+        #vb = np.ones_like(vb) * 10.
+
         image = experiment._get_obs(vg, vb)["image"][:, :, 0]
     print(time.time() - start)
 

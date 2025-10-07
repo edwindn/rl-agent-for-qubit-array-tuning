@@ -27,27 +27,25 @@ simulator:
       # Cross-coupling based on distance between gate and non-primary dots
       cross_coupling:
         # Distance 1: adjacent gate-dot pairs
-        1: {"min": 0.1, "max": 0.5}
+        1: {"min": 0.1, "max": 0.2}
         # Distance 2: next-adjacent gate-dot pairs
-        2: {"min": 0., "max": 0.35}
+        2: {"min": 0., "max": 0.15}
         # Distance 3+: long-range gate-dot coupling
         3_plus: {"min": 0., "max": 0.015}
-      # Sensor gate coupling to all dots (typically weaker and uniform)
-      sensor_coupling: {"min": 0.01, "max": 0.03}
     
     # Dot-to-sensor capacitance (Cds) - how quantum dots couple to charge sensor
     Cds:
-      dots: {"min": 0.05, "max": 0.08}
+      dots: {"min": 0.045, "max": 0.050}
     
     # Gate-to-sensor capacitance (Cgs) - how gates affect charge sensor
     Cgs:
       # Plunger gates to sensor (typically weak coupling)
-      plunger_gates: {"min": 0.0, "max": 0.05}
+      plunger_gates: {"min": 0.0, "max": 0.0001}
       # Sensor gate to sensor (strong direct coupling)
       sensor_gate: {"min": 0.8, "max": 1.0}
     
     # White noise amplitude for charge stability diagram
-    white_noise_amplitude: {"min": 0.000, "max": 0.0025}
+    white_noise_amplitude: {"min": 0.001, "max": 0.002}
     
     # Telegraph noise parameters (random telegraph noise)
     telegraph_noise_parameters:
@@ -57,8 +55,8 @@ simulator:
     
     # Latching model parameters for charge state transitions
     latching_model_parameters:
-      Exists: False 
-      n_dots: 2     # Number of quantum dots
+      Exists: True 
+      n_dots: 4     # Number of quantum dots
       p_leads: {"min": 0.2, "max": 1.0}  # Lead coupling probabilities
       p_inter: {"min": 0.2, "max": 1.0}  # Inter-dot coupling probabilities
     
@@ -99,17 +97,17 @@ simulator:
     
     # Barrier voltage model parameters for tunnel coupling control
     barrier_model:
-      tc_base: {"min": 0.1, "max": 0.2}        # Base tunnel coupling
+      tc_base: {"min": 0.5, "max": 3.0}        # Base tunnel coupling
       alpha_per_barrier: {"min": 0.8, "max": 2.0}  # Exponential scaling per barrier
     
     # Voltage-dependent capacitance model parameters
     voltage_capacitance_model:
-      alpha: {"min": 0.05, "max": 0.15}  # Cdd voltage dependence (5-15%)
-      beta: {"min": 0.05, "max": 0.15}   # Cgd voltage dependence (5-15%)
+      alpha: {"min": 0.05, "max": 0.10}  # Cdd voltage dependence (5-15%)
+      beta: {"min": 0.05, "max": 0.10}   # Cgd voltage dependence (5-15%)
 
     # Variable peak width model parameters
     variable_peak_width_model:
-      alpha: {"min": 0.005, "max": 0.02}  # Peak width voltage dependence
+      alpha: {"min": 0.001, "max": 0.08}  # Peak width voltage dependence
 
     # Algorithm for charge stability diagram
     algorithm: "default"
@@ -120,10 +118,10 @@ simulator:
 
   measurement:
     #model.optimal_Vg(center) gives the optimal gate voltage in volts from desired charge occupancy
-    optimal_VG_center: {"dots": 1.0, "sensor": 0.45}
+    optimal_VG_center: {"dots": 1.0, "sensor": 0.53}
 
     #target tunnel coupling
-    tc: 1e-4
+    tc: 1e-2
 
   latched_model:
     use_sparse: False

@@ -1,19 +1,10 @@
 import numpy as np
 
 class VaryPeakWidth:
-    def __init__(self, peak_width_0: float, alpha: float = 0.01):
+    def __init__(self, peak_width_0, alpha):
         self.peak_width_0 = peak_width_0
         self.alpha = alpha
 
     def linearly_vary_peak_width(self, v_x, v_y) -> float:
-        magnitude = np.linalg.norm(np.array([v_x, v_y]))
-        peak_width = self.peak_width_0 + self.alpha * magnitude
-
-        return peak_width
-
-
-
-
-
-
-
+        v_avg = (abs(v_x) + abs(v_y)) / 2
+        return self.peak_width_0 - self.alpha * v_avg
