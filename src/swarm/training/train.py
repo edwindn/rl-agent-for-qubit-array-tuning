@@ -26,6 +26,8 @@ import torch
 import wandb
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.algorithms.sac import SACConfig
+from ray.rllib.connectors.env_to_module.frame_stacking import FrameStackingEnvToModule
+from ray.rllib.connectors.learner.frame_stacking import FrameStackingLearner
 from ray.tune.registry import register_env
 
 # Set logging level to reduce verbosity
@@ -317,7 +319,7 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, store_history=False):
+def create_env(config=None, gif_config=None):
     """Create multi-agent quantum environment with JAX safety."""
     import os
     import jax
@@ -340,8 +342,8 @@ def create_env(config=None, gif_config=None, store_history=False):
 
     # Wrap in multi-agent wrapper (config unused but required by RLlib)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
-    # store_history=True when using transformer to maintain observation history
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, store_history=store_history)
+    # RLlib handles temporal sequences via ConnectorV2, not via environment
+    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config)
 
 
 def create_env_to_module_connector(env, spaces, device, use):
@@ -420,10 +422,7 @@ def main():
         # Clean up any previous GIF capture lock files
         cleanup_gif_files(gif_config['save_dir'])
 
-        # Check if plunger policy uses transformer memory layer
-        use_transformer = config['neural_networks']['plunger_policy']['backbone']['memory_layer'] == 'transformer'
-
-        create_env_fn = partial(create_env, gif_config=gif_config, store_history=use_transformer)
+        create_env_fn = partial(create_env, gif_config=gif_config)
         register_env("qarray_multiagent_env", create_env_fn)
         env_instance = create_env_fn()
 
@@ -514,7 +513,34 @@ def main():
         use_deltas = env_instance.base_env.use_deltas
         memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
         has_lstm = memory_layer == 'lstm'
-        env_to_module_connector = partial(create_env_to_module_connector, use=use_deltas and has_lstm)
+        has_transformer = memory_layer == 'transformer'
+
+        # Determine if we need frame stacking for temporal models (transformer)
+        use_frame_stacking = has_transformer
+        num_frames = 1
+        if use_frame_stacking:
+            num_frames = config['neural_networks']['plunger_policy']['backbone']['transformer']['max_seq_len']
+            print(f"\n[Frame Stacking] Enabled with {num_frames} frames for transformer\n")
+
+        # Build env-to-module connector
+        # Note: We prioritize frame stacking over custom LSTM connector when both are applicable
+        if use_frame_stacking:
+            env_to_module_connector = lambda env: FrameStackingEnvToModule(
+                num_frames=num_frames,
+                multi_agent=True
+            )
+        elif use_deltas and has_lstm:
+            env_to_module_connector = partial(create_env_to_module_connector, use=True)
+        else:
+            env_to_module_connector = None
+
+        # Build learner connector for frame stacking
+        learner_connector = None
+        if use_frame_stacking:
+            learner_connector = lambda obs_space, act_space: FrameStackingLearner(
+                num_frames=num_frames,
+                multi_agent=True
+            )
 
         algo_config = (
             algo_config_builder()
@@ -539,8 +565,8 @@ def main():
                 add_default_connectors_to_env_to_module_pipeline=True,  # Let Ray handle defaults
             )
             .learners(
-                num_learners=config['rl_config']['learners']['num_learners'], 
-                num_gpus_per_learner=config['rl_config']['learners']['num_gpus_per_learner']
+                num_learners=config['rl_config']['learners']['num_learners'],
+                num_gpus_per_learner=config['rl_config']['learners']['num_gpus_per_learner'],
             )
             .training(
                 train_batch_size=config['rl_config']['training']['train_batch_size'],
@@ -549,6 +575,7 @@ def main():
                 grad_clip=config['rl_config']['training']['grad_clip'],
                 grad_clip_by=config['rl_config']['training']['grad_clip_by'],
                 learner_class=PPOLearnerWithValueStats if algo == "ppo" else None,
+                learner_connector=learner_connector,
                 **train_config,
             )
             .resources(num_gpus=config['resources']['num_gpus'])

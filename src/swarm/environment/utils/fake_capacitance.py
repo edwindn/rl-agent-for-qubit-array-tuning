@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def fake_capacitance_model(n_steps, max_steps, cgd, alpha=0.15, beta=0.05):
+def fake_capacitance_model(n_steps, max_steps, cgd, alpha=0.10, beta=0.01):
 
     # Create base error matrix (zeros)
     error = np.zeros((cgd.shape[0], cgd.shape[1]))

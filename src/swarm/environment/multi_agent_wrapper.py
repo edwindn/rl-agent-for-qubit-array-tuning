@@ -41,7 +41,6 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         self,
         training: bool = True,
         return_voltage: bool = False,
-        store_history: bool = False,
         gif_config: dict = None,
     ):
         """
@@ -51,18 +50,12 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
 
         Args:
             training: Whether in training mode
-            return_voltage: If True, returns dict observation with image, voltage, and is_plunger.
+            return_voltage: If True, returns dict observation with image and voltage.
                           If False, returns only the image array.
         """
         super().__init__()
 
-        if store_history and not return_voltage:
-            print("WARNING: 'store_history' in MultiAgentEnvWrapper is intended to work with 'return_voltage' only. Setting return_voltage=True.")
-            return_voltage = True
-
         self.return_voltage = return_voltage
-
-        self.store_history = store_history
 
         self.gif_config = gif_config
         if self.gif_config is not None:
@@ -79,10 +72,6 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         self.gate_agent_ids = [f"plunger_{i}" for i in range(self.num_gates)]
         self.barrier_agent_ids = [f"barrier_{i}" for i in range(self.num_barriers)]
         self.all_agent_ids = self.gate_agent_ids + self.barrier_agent_ids
-
-        if self.store_history:
-            # Only store history for plunger agents (gate agents)
-            self.plunger_agent_history = {agent_id: [] for agent_id in self.gate_agent_ids}
 
         # Setup channel assignments for agents
         self._setup_channel_assignments()
@@ -378,23 +367,13 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         Returns:
             Tuple of (observations, infos) where infos is a per-agent dict
         """
-        # Reset observation history for plunger agents only
-        if self.store_history:
-            self.plunger_agent_history = {agent_id: [] for agent_id in self.gate_agent_ids}
-
         global_obs, global_info = self.base_env.reset(seed=seed, options=options)
 
         # Convert to multi-agent observations
         agent_observations = {}
         for agent_id in self.all_agent_ids:
             agent_obs = self._extract_agent_observation(global_obs, agent_id, device_state_info=None)
-
-            # Only apply history to plunger agents
-            if self.store_history and agent_id in self.gate_agent_ids:
-                self.plunger_agent_history[agent_id].append(agent_obs)
-                agent_observations[agent_id] = [agent_obs]
-            else:
-                agent_observations[agent_id] = agent_obs
+            agent_observations[agent_id] = agent_obs
 
         # Create per-agent info dict (MultiAgentEnv requirement)
         agent_infos = {agent_id: global_info for agent_id in self.all_agent_ids}
@@ -432,13 +411,8 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         agent_observations = {}
         for agent_id in self.all_agent_ids:
             agent_obs = self._extract_agent_observation(global_obs, agent_id, device_state_info)
-
-            # Only apply history to plunger agents
-            if self.store_history and agent_id in self.gate_agent_ids:
-                self.plunger_agent_history[agent_id].append(agent_obs)
-                agent_observations[agent_id] = self.plunger_agent_history[agent_id]
-            else:
-                agent_observations[agent_id] = agent_obs
+            # Always return single observation (RLlib handles temporal sequences via ConnectorV2)
+            agent_observations[agent_id] = agent_obs
 
         agent_rewards = self._distribute_rewards(global_rewards)
 

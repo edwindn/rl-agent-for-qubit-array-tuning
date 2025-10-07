@@ -917,81 +917,72 @@ class Transformer(TorchModel, Encoder):
         if isinstance(inputs, dict) and "obs" in inputs:
             inputs = inputs["obs"]
 
-        if not isinstance(inputs, list):
-            raise ValueError(f"Transformer inputs should be a list of states, got {inputs}")
+        # Debug: Print input format to understand frame stacking shape (will be removed after testing)
+        if isinstance(inputs, dict) and "image" in inputs:
+            img_shape = inputs['image'].shape if hasattr(inputs['image'], 'shape') else type(inputs['image'])
+            volt_shape = inputs['voltage'].shape if hasattr(inputs['voltage'], 'shape') else type(inputs['voltage'])
+            print(f"[Transformer Debug] Image shape: {img_shape}, Voltage shape: {volt_shape}")
 
-        batch_dim = inputs[0]["image"].size(0)
-        attention_mask, inputs = self._pad_or_truncate(inputs)
+        # Handle frame-stacked observations from RLlib's FrameStackingEnvToModule
+        # Expected format: {image: (B, T, H, W, C), voltage: (B, T, 1)} where T = num_frames
+        if not isinstance(inputs, dict) or "image" not in inputs:
+            raise ValueError(f"Transformer expects dict input with 'image' key, got {type(inputs)}")
 
-        images = []
-        voltages = []
+        images = inputs["image"]
+        voltages = inputs["voltage"]
 
-        image_shape = None
-        device = None
+        # Convert to torch tensors if needed
+        if isinstance(images, np.ndarray):
+            images = torch.from_numpy(images)
+        if isinstance(voltages, np.ndarray):
+            voltages = torch.from_numpy(voltages)
 
-        for state in inputs:
-            if state is None:
-                # padding case
-                # image_shape will be defined since at least one (the first) input will be non-padding
-                x = torch.zeros([batch_dim]+list(image_shape), device=device)
-                v = torch.zeros((batch_dim, 1), device=device)
-                images.append(x)
-                voltages.append(v)
-                continue
+        # Check if we have a time dimension (frame stacking enabled)
+        if images.dim() == 5:  # (B, T, H, W, C) - frame stacked
+            batch_size, seq_len, h, w, c = images.shape
+            # Reshape to (B*T, H, W, C) for CNN processing
+            images = images.reshape(batch_size * seq_len, h, w, c)
+            voltages = voltages.reshape(batch_size * seq_len, -1)
 
-            if isinstance(state, dict):
-                if "image" in state:
-                    x = state["image"]
-                    v = state["voltage"]
-                    if isinstance(x, np.ndarray):
-                        x = torch.from_numpy(x)
-                    if isinstance(v, np.ndarray):
-                        v = torch.from_numpy(v)
-                    if image_shape is None or device is None:
-                        image_shape = x.shape
-                        device = x.device
-                    images.append(x)
-                    voltages.append(v)
-                else:
-                    raise ValueError(f"Unexpected input dict structure: {list(state.keys())}")
-            else:
-                raise ValueError(f"Unexpected input type: {type(state)}")
+            # No attention mask needed - all frames are valid
+            device = images.device
+            attention_mask = torch.zeros(seq_len, dtype=torch.bool, device=device)
 
-        # Padding will be the trailing end of the tensors
-        images = torch.stack(images)
-        voltages = torch.stack(voltages)
+        elif images.dim() == 4:  # (B, H, W, C) - no frame stacking (shouldn't happen with frame stacking enabled)
+            # Add sequence dimension for consistency
+            batch_size = images.shape[0]
+            seq_len = 1
+            images = images.reshape(batch_size * seq_len, *images.shape[1:])
+            voltages = voltages.reshape(batch_size * seq_len, -1)
+            device = images.device
+            attention_mask = torch.zeros(seq_len, dtype=torch.bool, device=device)
+        else:
+            raise ValueError(f"Unexpected image tensor shape: {images.shape}. Expected (B, H, W, C) or (B, T, H, W, C)")
 
         # Get tokenizer features
         tokenizer_out = self.tokenizer._forward(images)
-        tokens = tokenizer_out[ENCODER_OUT]  # (seq_len, feature_dim)
+        tokens = tokenizer_out[ENCODER_OUT]  # (B*T, feature_dim)
 
-        # For spatial attention, we need to create a sequence of tokens
-        # If the tokenizer outputs a single vector, we'll treat it as a single token
-        # In a more sophisticated setup, you'd extract spatial features from intermediate CNN layers
-        if tokens.dim() == 2:
-            # (seq_len, feature_dim) -> (1, seq_len, feature_dim)
-            tokens = tokens.unsqueeze(0)
+        # Reshape tokens back to (B, T, feature_dim)
+        tokens = tokens.view(batch_size, seq_len, -1)
 
         # Project tokens to transformer dimension
-        tokens = self.token_projection(tokens)  # (batch, seq_len, latent_size)
+        tokens = self.token_projection(tokens)  # (B, T, latent_size)
 
         # Add positional encodings
         if self.config.use_ctlpe:
             # CTLPE requires voltage values for positional encoding
-            if voltages.dim() == 1:
-                voltages = voltages.unsqueeze(0)
-            tokens = self.pos_encoder(tokens, voltages)
+            # Reshape voltages back to (B, T) for CTLPE
+            voltages_2d = voltages.view(batch_size, seq_len)
+            tokens = self.pos_encoder(tokens, voltages_2d)
 
         if self.config.use_pos_embeddings:
             # Add sinusoidal positional embeddings
-            seq_len = tokens.size(1)
             tokens = tokens + self.sinusoidal_embeddings[:seq_len, :].unsqueeze(0)
 
         # Apply transformer encoder
-        attention_mask = attention_mask.to(device)
-        if attention_mask.dim() == 1:
-            attention_mask = attention_mask.unsqueeze(0)
-        transformed = self.transformer(tokens, src_key_padding_mask=attention_mask)  # (batch, seq_len, latent_size)
+        attention_mask = attention_mask.unsqueeze(0).expand(batch_size, -1)  # (B, T)
+        transformed = self.transformer(tokens, src_key_padding_mask=attention_mask)  # (B, T, latent_size)
 
         # Pool across sequence dimension
         if self.config.pooling_mode == "mean":

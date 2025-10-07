@@ -63,7 +63,7 @@ simulator:
     T: {"min": 50, "max": 200}
     
     # Width of coulomb peaks
-    coulomb_peak_width: {"min": 0.3, "max": 0.4}
+    coulomb_peak_width: {"min": 0.0, "max": 0.4}
     
     # Base tunnel coupling for TunnelCoupledChargeSensed
     tc: {"min": 0.1, "max": 0.2}
@@ -106,7 +106,7 @@ simulator:
 
     # Variable peak width model parameters
     variable_peak_width_model:
-      alpha: {"min": 0.001, "max": 0.08}  # Peak width voltage dependence
+      alpha: {"min": 0.001, "max": 0.008}  # Peak width voltage dependence
 
     # Algorithm for charge stability diagram
     algorithm: "default"
