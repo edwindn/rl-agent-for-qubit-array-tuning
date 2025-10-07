@@ -49,11 +49,11 @@ rl_config:
 
   # Environment runners configuration
   env_runners:
-    num_env_runners: 14              # Number of parallel environment runners
+    num_env_runners: 7              # Number of parallel environment runners
 
     rollout_fragment_length: 50     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
-    num_gpus_per_env_runner: 0.45     # GPU allocation per runner
+    num_gpus_per_env_runner: 0.6     # GPU allocation per runner
 
   # Learner configuration  
   learners:
@@ -70,7 +70,7 @@ rl_config:
 
     # PPO-specific config
     # lr: [[0, 0.0003], [400000, 0.0001], [800000, 0.00005]]
-    lr: 0.0001
+    lr: 0.0003
     # Learning rate: constant (e.g., 0.0003) or schedule as list of [timestep, lr] pairs (e.g., [[0, 0.0003], [100000, 0.0001]])
     gamma: 0.0                      # Discount factor
     lambda_: 0.95                   # GAE lambda parameter
@@ -154,7 +154,7 @@ neural_networks:
       lstm:
         hidden_dim: 256
         num_layers: 1
-        max_seq_len: 50
+        max_seq_len: 5
         store_voltages: True
         voltage_hidden_dim: 16
       transformer:

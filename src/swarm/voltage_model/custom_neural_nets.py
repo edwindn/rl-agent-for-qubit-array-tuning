@@ -547,7 +547,6 @@ class LSTMConfig(RecurrentEncoderConfig):
     num_layers: int = 1
     max_seq_len: int = 50
     store_voltages: bool = True
-    batch_first: bool = True
     use_bias: bool = True
 
     # hidden_weights_initializer: Optional[Union[str, Callable]] = None
@@ -591,6 +590,9 @@ class LSTM(TorchModel, Encoder):
         assert len(lstm_input_dims) == 1, "CNN tokenizer should return a flat tensor"
         lstm_input_dim = lstm_input_dims[0]
 
+        if self.config.store_voltages:
+            lstm_input_dim += self.config.voltage_hidden_dim
+
         # Get initializer functions
         # lstm_weights_initializer = get_initializer_fn(
         #     config.hidden_weights_initializer, framework="torch"
@@ -603,12 +605,14 @@ class LSTM(TorchModel, Encoder):
             lstm_input_dim,
             config.hidden_dim,
             config.num_layers,
-            batch_first=config.batch_first,
+            batch_first=True,  # Always batch-first to match Ray's convention
             bias=config.use_bias,
         )
 
-        if self.config.store_voltage:
+        if self.config.store_voltages:
             self.voltage_encoder = nn.Linear(1, config.voltage_hidden_dim)
+        else:
+            self.voltage_encoder = None
 
         # Initialize LSTM layer weights and biases
         # for layer in self.lstm.all_weights:
@@ -627,7 +631,7 @@ class LSTM(TorchModel, Encoder):
         #             layer[3], **config.hidden_bias_initializer_config or {}
         #         )
 
-        self._output_dims = (config.cell_size,)
+        self._output_dims = (config.hidden_dim,)
 
     @property
     def output_dims(self) -> Tuple[int, ...]:
@@ -640,79 +644,59 @@ class LSTM(TorchModel, Encoder):
         Shape: (num_layers, hidden_dim) per batch element.
         """
         return {
-            "h": torch.zeros(self.config.num_layers, self.config.cell_size),
-            "c": torch.zeros(self.config.num_layers, self.config.cell_size),
+            "h": torch.zeros(self.config.num_layers, self.config.hidden_dim),
+            "c": torch.zeros(self.config.num_layers, self.config.hidden_dim),
         }
 
     def _forward(self, inputs, **kwargs):
-        """Forward pass through LSTM encoder (following Ray's TorchLSTMEncoder pattern).
-
-        Args:
-            inputs: Dict with Columns.OBS key containing observation dict with "image" key,
-                   OR direct observation dict with "image" key.
-                   This is a SINGLE observation, not a sequence.
-
-        Returns:
-            Dict with ENCODER_OUT and STATE_OUT keys.
-        """
-
-        if isinstance(inputs, dict) and "obs" in inputs:
-            inputs = inputs["obs"]
+        obs = inputs[Columns.OBS]
 
         # Embed image through CNN
-        image_out = self.tokenizer._forward(inputs)[ENCODER_OUT]
+        # image_out = self.tokenizer._forward(inputs)[ENCODER_OUT]
+        image_for_tokenizer = {Columns.OBS: obs["image"]}
+        image_out = tokenize(self.tokenizer, image_for_tokenizer, framework="torch")
         
-        if isinstance(inputs, dict) and "voltage" in inputs:
-            if self.config.store_voltage:
-                voltage = inputs["voltage"]# might need to reshape / unsqueeze
+        if isinstance(obs, dict) and "voltage" in obs:
+            if self.config.store_voltages:
+                voltage = obs["voltage"]
             else:
                 voltage = None
         else:
-            if self.config.store_voltage:
+            if self.config.store_voltages:
                 raise ValueError(f"LSTM config attempting to store voltage, but none found in observation: {inputs}")
             voltage = None
 
         if voltage is not None:
-            voltage_out = self.voltage_encoder(voltage)
+            voltage_shape = voltage.shape
+            voltage_folded = voltage.reshape(-1, voltage_shape[-1])  # (B*T, 1)
+            voltage_encoded = self.voltage_encoder(voltage_folded)  # (B*T, voltage_hidden_dim)
+            voltage_out = voltage_encoded.reshape(voltage_shape[0], voltage_shape[1], -1)  # (B, T, voltage_hidden_dim)
         else:
             voltage_out = None
 
 
-        # Get states from kwargs (Ray pattern)
-        if Columns.STATE_IN in kwargs:
-            states_in = kwargs[Columns.STATE_IN]
-        else:
-            # Initialize states if not provided
-            batch_size = out.shape[0] if out.dim() > 1 else 1
-            states_in = self.get_initial_state()
-            # Repeat across batch
-            states_in = tree.map_structure(
-                lambda s: s.unsqueeze(0).repeat(batch_size, 1, 1), states_in
-            )
+        prev_hidden_states = inputs[Columns.STATE_IN]
 
-        # Ensure proper shape for LSTM input
-        if out.dim() == 2:
-            dim_to_unsqueeze = 1 if self.config.batch_first else 0
-            out = out.unsqueeze(dim_to_unsqueeze)
-            # (batch, features) -> (batch, 1, features) if batch first
-            # (batch, features) -> (1, batch, features) if seq first
+        out = torch.cat((image_out, voltage_out), dim=-1) if voltage_out is not None else image_out
 
-        # Push through LSTM
-        # states_in are always (num_layers, batch, hidden_dim)
-        # states_out will also be (num_layers, batch, hidden_dim)
-        out, states_out = self.lstm(out, (states_in["h"], states_in["c"]))
-        states_out = {"h": states_out[0], "c": states_out[1]}
+        # update LSTM
+        # RLlib stores states as (batch, num_layers, hidden_dim), but LSTM expects (num_layers, batch, hidden_dim)
+        # Swap dimensions 0 and 1
+        h = prev_hidden_states["h"].transpose(0, 1)
+        c = prev_hidden_states["c"].transpose(0, 1)
 
-        # Remove sequence dimension from output
-        if self.config.batch_first and out.shape[1] == 1:
-            out = out.squeeze(1)  # (batch, 1, features) -> (batch, features)
-        elif not self.config.batch_first and out.shape[0] == 1:
-            out = out.squeeze(0)  # (1, batch, features) -> (batch, features)
+        out, next_hidden_states = self.lstm(out, (h, c))
 
-        # Insert them into the output dict
+        # Swap dimensions back for RLlib
+        next_hidden_states = {"h": next_hidden_states[0].transpose(0, 1), "c": next_hidden_states[1].transpose(0, 1)}
+
+        # Keep time dimension - RLlib's connector will remove it
+        # out shape: (batch, time=1, features)
+        assert out.shape[1] == 1, f"Expected time dimension of 1, got shape {out.shape}"
+
         outputs = {}
         outputs[ENCODER_OUT] = out
-        outputs[Columns.STATE_OUT] = states_out
+        outputs[Columns.STATE_OUT] = next_hidden_states
 
         return outputs
 

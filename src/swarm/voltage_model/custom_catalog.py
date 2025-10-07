@@ -130,14 +130,12 @@ class CustomPPOCatalog(PPOCatalog):
             return LSTMConfig(
                 input_dims=tokenizer_config.output_dims,
                 recurrent_layer_type="lstm",
-                hidden_dim=lstm_config["cell_size"],
+                hidden_dim=lstm_config["hidden_dim"],
                 num_layers=lstm_config["num_layers"],
                 max_seq_len=lstm_config["max_seq_len"],
                 batch_major=True,
                 tokenizer_config=tokenizer_config,
                 use_bias=True,
-                use_prev_action=lstm_config["use_prev_action"],
-                use_prev_reward=lstm_config["use_prev_reward"],
             )
 
         # No memory layer - just backbone
@@ -179,7 +177,7 @@ class CustomPPOCatalog(PPOCatalog):
         # Determine input dimensions based on memory layer type
         memory_layer = backbone_config["memory_layer"]
         if memory_layer == 'lstm':
-            input_dim = backbone_config["lstm"]["cell_size"]
+            input_dim = backbone_config["lstm"]["hidden_dim"]
         elif memory_layer == 'transformer':
             input_dim = backbone_config["transformer"]["latent_size"]
         else:
@@ -204,7 +202,7 @@ class CustomPPOCatalog(PPOCatalog):
         # Determine input dimensions based on memory layer type
         memory_layer = backbone_config["memory_layer"]
         if memory_layer == 'lstm':
-            input_dim = backbone_config["lstm"]["cell_size"]
+            input_dim = backbone_config["lstm"]["hidden_dim"]
         elif memory_layer == 'transformer':
             input_dim = backbone_config["transformer"]["latent_size"]
         else:
