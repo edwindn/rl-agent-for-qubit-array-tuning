@@ -15,8 +15,8 @@ from .custom_neural_nets import (
     PolicyHeadConfig,
     ValueHeadConfig,
     TransformerConfig,
+    LSTMConfig
 )
-
 
 class CustomPPOCatalog(PPOCatalog):
     """Custom catalog for quantum neural network components."""
@@ -127,7 +127,7 @@ class CustomPPOCatalog(PPOCatalog):
                 raise ValueError(f"Unsupported backbone type: {backbone_type}. Supported types: 'SimpleCNN', 'IMPALA', 'MobileNet'")
 
             # Wrap CNN with LSTM
-            return RecurrentEncoderConfig(
+            return LSTMConfig(
                 input_dims=tokenizer_config.output_dims,
                 recurrent_layer_type="lstm",
                 hidden_dim=lstm_config["cell_size"],

@@ -1,15 +1,19 @@
 """Custom neural network components for quantum device RL agents."""
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 import sys
 from pathlib import Path
 import numpy as np
 
-from ray.rllib.core.models.base import ENCODER_OUT, Encoder
+from ray.rllib.core.models.base import ENCODER_OUT, Encoder, tokenize
 from ray.rllib.core.models.configs import CNNEncoderConfig, MLPHeadConfig, ModelConfig
+from ray.rllib.core.models.configs import RecurrentEncoderConfig
 from ray.rllib.core.models.torch.base import TorchModel
+from ray.rllib.core.columns import Columns
+from ray.rllib.models.utils import get_initializer_fn
 from ray.rllib.utils.framework import try_import_torch
+import tree
 
 torch, nn = try_import_torch()
 import torch.nn.functional as F
@@ -515,8 +519,206 @@ class MobileNet(TorchModel, Encoder):
         return {ENCODER_OUT: output_features}
 
 
+
 @dataclass
-class TransformerConfig(CNNEncoderConfig):
+class LSTMConfig(RecurrentEncoderConfig):
+    """LSTM recurrent encoder configuration for quantum charge stability diagrams.
+
+    Similar to TransformerConfig, wraps a CNN tokenizer and adds temporal processing
+    through LSTM layers for sequential decision making.
+
+    Args:
+        tokenizer_config: Configuration object for the CNN backbone
+        cell_size: Size of LSTM hidden and cell states (hidden_dim in Ray's config)
+        num_layers: Number of stacked LSTM layers
+        max_seq_len: Maximum sequence length for padding/truncation
+        store_voltages: Whether to store voltage information (custom feature)
+        batch_major: Whether input is batch-first (B, T, ...) or time-first (T, B, ...)
+        use_bias: Whether to use bias in LSTM layers
+        hidden_weights_initializer: Initializer for LSTM weights
+        hidden_weights_initializer_config: Config dict for weight initializer
+        hidden_bias_initializer: Initializer for LSTM biases
+        hidden_bias_initializer_config: Config dict for bias initializer
+    """
+
+    tokenizer_config: Optional[CNNEncoderConfig] = None
+    hidden_dim: int = 256
+    voltage_hidden_dim: int = 16
+    num_layers: int = 1
+    max_seq_len: int = 50
+    store_voltages: bool = True
+    batch_first: bool = True
+    use_bias: bool = True
+
+    # hidden_weights_initializer: Optional[Union[str, Callable]] = None
+    # hidden_weights_initializer_config: Optional[Dict] = None
+    # hidden_bias_initializer: Optional[Union[str, Callable]] = None
+    # hidden_bias_initializer_config: Optional[Dict] = None
+
+    def __post_init__(self):
+        if self.tokenizer_config is None:
+            raise ValueError("tokenizer_config must be provided")
+
+        self.input_dims = self.tokenizer_config.output_dims
+
+    @property
+    def output_dims(self):
+        return (self.hidden_dim,)
+
+    def build(self, framework: str = "torch"):
+        if framework != "torch":
+            raise ValueError(f"Only torch framework supported, got {framework}")
+        return LSTM(self)
+
+class LSTM(TorchModel, Encoder):
+    """
+    1. CNN Tokenizer converts images to feature vectors
+    2. Multi-layer LSTM processes sequence of tokens
+    3. Returns output compressed state with history
+
+    -State shape: batch-first (B, num_layers, hidden_dim)
+    """
+
+    def __init__(self, config: LSTMConfig):
+        TorchModel.__init__(self, config)
+        Encoder.__init__(self, config)
+        self.config = config
+
+        # Build CNN tokenizer backbone
+        self.tokenizer = config.tokenizer_config.build()
+
+        lstm_input_dims = self.tokenizer.output_dims
+        assert len(lstm_input_dims) == 1, "CNN tokenizer should return a flat tensor"
+        lstm_input_dim = lstm_input_dims[0]
+
+        # Get initializer functions
+        # lstm_weights_initializer = get_initializer_fn(
+        #     config.hidden_weights_initializer, framework="torch"
+        # )
+        # lstm_bias_initializer = get_initializer_fn(
+        #     config.hidden_bias_initializer, framework="torch"
+        # )
+
+        self.lstm = nn.LSTM(
+            lstm_input_dim,
+            config.hidden_dim,
+            config.num_layers,
+            batch_first=config.batch_first,
+            bias=config.use_bias,
+        )
+
+        if self.config.store_voltage:
+            self.voltage_encoder = nn.Linear(1, config.voltage_hidden_dim)
+
+        # Initialize LSTM layer weights and biases
+        # for layer in self.lstm.all_weights:
+        #     if lstm_weights_initializer:
+        #         lstm_weights_initializer(
+        #             layer[0], **config.hidden_weights_initializer_config or {}
+        #         )
+        #         lstm_weights_initializer(
+        #             layer[1], **config.hidden_weights_initializer_config or {}
+        #         )
+        #     if lstm_bias_initializer:
+        #         lstm_bias_initializer(
+        #             layer[2], **config.hidden_bias_initializer_config or {}
+        #         )
+        #         lstm_bias_initializer(
+        #             layer[3], **config.hidden_bias_initializer_config or {}
+        #         )
+
+        self._output_dims = (config.cell_size,)
+
+    @property
+    def output_dims(self) -> Tuple[int, ...]:
+        return self._output_dims
+
+    def get_initial_state(self):
+        """Return initial LSTM states (Ray pattern).
+
+        States are returned batch-first for consistency with input format.
+        Shape: (num_layers, hidden_dim) per batch element.
+        """
+        return {
+            "h": torch.zeros(self.config.num_layers, self.config.cell_size),
+            "c": torch.zeros(self.config.num_layers, self.config.cell_size),
+        }
+
+    def _forward(self, inputs, **kwargs):
+        """Forward pass through LSTM encoder (following Ray's TorchLSTMEncoder pattern).
+
+        Args:
+            inputs: Dict with Columns.OBS key containing observation dict with "image" key,
+                   OR direct observation dict with "image" key.
+                   This is a SINGLE observation, not a sequence.
+
+        Returns:
+            Dict with ENCODER_OUT and STATE_OUT keys.
+        """
+
+        if isinstance(inputs, dict) and "obs" in inputs:
+            inputs = inputs["obs"]
+
+        # Embed image through CNN
+        image_out = self.tokenizer._forward(inputs)[ENCODER_OUT]
+        
+        if isinstance(inputs, dict) and "voltage" in inputs:
+            if self.config.store_voltage:
+                voltage = inputs["voltage"]# might need to reshape / unsqueeze
+            else:
+                voltage = None
+        else:
+            if self.config.store_voltage:
+                raise ValueError(f"LSTM config attempting to store voltage, but none found in observation: {inputs}")
+            voltage = None
+
+        if voltage is not None:
+            voltage_out = self.voltage_encoder(voltage)
+        else:
+            voltage_out = None
+
+
+        # Get states from kwargs (Ray pattern)
+        if Columns.STATE_IN in kwargs:
+            states_in = kwargs[Columns.STATE_IN]
+        else:
+            # Initialize states if not provided
+            batch_size = out.shape[0] if out.dim() > 1 else 1
+            states_in = self.get_initial_state()
+            # Repeat across batch
+            states_in = tree.map_structure(
+                lambda s: s.unsqueeze(0).repeat(batch_size, 1, 1), states_in
+            )
+
+        # Ensure proper shape for LSTM input
+        if out.dim() == 2:
+            dim_to_unsqueeze = 1 if self.config.batch_first else 0
+            out = out.unsqueeze(dim_to_unsqueeze)
+            # (batch, features) -> (batch, 1, features) if batch first
+            # (batch, features) -> (1, batch, features) if seq first
+
+        # Push through LSTM
+        # states_in are always (num_layers, batch, hidden_dim)
+        # states_out will also be (num_layers, batch, hidden_dim)
+        out, states_out = self.lstm(out, (states_in["h"], states_in["c"]))
+        states_out = {"h": states_out[0], "c": states_out[1]}
+
+        # Remove sequence dimension from output
+        if self.config.batch_first and out.shape[1] == 1:
+            out = out.squeeze(1)  # (batch, 1, features) -> (batch, features)
+        elif not self.config.batch_first and out.shape[0] == 1:
+            out = out.squeeze(0)  # (1, batch, features) -> (batch, features)
+
+        # Insert them into the output dict
+        outputs = {}
+        outputs[ENCODER_OUT] = out
+        outputs[Columns.STATE_OUT] = states_out
+
+        return outputs
+
+
+@dataclass
+class TransformerConfig(ModelConfig):
     """Transformer encoder configuration for quantum charge stability diagrams.
 
     Wraps a CNN tokenizer (SimpleCNN, IMPALA, or MobileNet) and adds
@@ -718,6 +920,7 @@ class Transformer(TorchModel, Encoder):
         if not isinstance(inputs, list):
             raise ValueError(f"Transformer inputs should be a list of states, got {inputs}")
 
+        batch_dim = inputs[0]["image"].size(0)
         attention_mask, inputs = self._pad_or_truncate(inputs)
 
         images = []
@@ -730,8 +933,8 @@ class Transformer(TorchModel, Encoder):
             if state is None:
                 # padding case
                 # image_shape will be defined since at least one (the first) input will be non-padding
-                x = torch.zeros(image_shape, device=device)
-                v = torch.zeros(1, device=device)
+                x = torch.zeros([batch_dim]+list(image_shape), device=device)
+                v = torch.zeros((batch_dim, 1), device=device)
                 images.append(x)
                 voltages.append(v)
                 continue

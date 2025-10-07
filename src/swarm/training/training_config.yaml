@@ -150,13 +150,13 @@ neural_networks:
 #         - {channels: 32, kernel: 3, stride: 1}
 #       feature_size: 256
 #       adaptive_pooling: true
-      memory_layer: 'transformer' # null, 'lstm', 'transformer'
+      memory_layer: 'lstm' # null, 'lstm', 'transformer'
       lstm:
-        cell_size: 256
+        hidden_dim: 256
         num_layers: 1
         max_seq_len: 50
-        use_prev_action: false
-        use_prev_reward: false
+        store_voltages: True
+        voltage_hidden_dim: 16
       transformer:
         latent_size: 128
         num_attention_heads: 4
