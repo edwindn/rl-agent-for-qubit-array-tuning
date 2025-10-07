@@ -317,30 +317,31 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None):
+def create_env(config=None, gif_config=None, store_history=False):
     """Create multi-agent quantum environment with JAX safety."""
     import os
     import jax
-    
+
     # Ensure JAX settings are applied in worker processes
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.1")
     os.environ.setdefault("JAX_ENABLE_X64", "true")
 
     assert gif_config is not None, "Gif config dict required to set up rollout visualisation"
-    
+
     # Try to clear any existing JAX state
     try:
         # Force JAX to use a fresh backend in each worker
         jax.clear_backends()
     except:
         pass
-    
+
     from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
 
     # Wrap in multi-agent wrapper (config unused but required by RLlib)
-    # need return_voltage=True if we are using deltas + LSTM
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config)
+    # need return_voltage=True if we are using deltas + LSTM/Transformer
+    # store_history=True when using transformer to maintain observation history
+    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, store_history=store_history)
 
 
 def create_env_to_module_connector(env, spaces, device, use):
@@ -419,7 +420,10 @@ def main():
         # Clean up any previous GIF capture lock files
         cleanup_gif_files(gif_config['save_dir'])
 
-        create_env_fn = partial(create_env, gif_config=gif_config)
+        # Check if plunger policy uses transformer memory layer
+        use_transformer = config['neural_networks']['plunger_policy']['backbone']['memory_layer'] == 'transformer'
+
+        create_env_fn = partial(create_env, gif_config=gif_config, store_history=use_transformer)
         register_env("qarray_multiagent_env", create_env_fn)
         env_instance = create_env_fn()
 

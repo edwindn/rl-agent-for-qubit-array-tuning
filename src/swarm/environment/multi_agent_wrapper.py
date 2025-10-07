@@ -81,7 +81,8 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         self.all_agent_ids = self.gate_agent_ids + self.barrier_agent_ids
 
         if self.store_history:
-            self.per_agent_history = {agent_id: [] for agent_id in self.all_agent_ids}
+            # Only store history for plunger agents (gate agents)
+            self.plunger_agent_history = {agent_id: [] for agent_id in self.gate_agent_ids}
 
         # Setup channel assignments for agents
         self._setup_channel_assignments()
@@ -377,9 +378,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         Returns:
             Tuple of (observations, infos) where infos is a per-agent dict
         """
-        # Reset observation history
+        # Reset observation history for plunger agents only
         if self.store_history:
-            self.per_agent_history = {agent_id: [] for agent_id in self.all_agent_ids}
+            self.plunger_agent_history = {agent_id: [] for agent_id in self.gate_agent_ids}
 
         global_obs, global_info = self.base_env.reset(seed=seed, options=options)
 
@@ -388,10 +389,10 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         for agent_id in self.all_agent_ids:
             agent_obs = self._extract_agent_observation(global_obs, agent_id, device_state_info=None)
 
-            if self.store_history:
-                self.per_agent_history[agent_id].append(agent_obs)
+            # Only apply history to plunger agents
+            if self.store_history and agent_id in self.gate_agent_ids:
+                self.plunger_agent_history[agent_id].append(agent_obs)
                 agent_observations[agent_id] = [agent_obs]
-
             else:
                 agent_observations[agent_id] = agent_obs
 
@@ -432,10 +433,10 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         for agent_id in self.all_agent_ids:
             agent_obs = self._extract_agent_observation(global_obs, agent_id, device_state_info)
 
-            if self.store_history:
-                self.per_agent_history[agent_id].append(agent_obs)
-                agent_observations[agent_id] = self.per_agent_history[agent_id]
-
+            # Only apply history to plunger agents
+            if self.store_history and agent_id in self.gate_agent_ids:
+                self.plunger_agent_history[agent_id].append(agent_obs)
+                agent_observations[agent_id] = self.plunger_agent_history[agent_id]
             else:
                 agent_observations[agent_id] = agent_obs
 

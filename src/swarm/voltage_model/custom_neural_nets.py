@@ -712,8 +712,11 @@ class Transformer(TorchModel, Encoder):
             return attn_mask, inputs + padding
 
     def _forward(self, inputs, **kwargs):
+        if isinstance(inputs, dict) and "obs" in inputs:
+            inputs = inputs["obs"]
+
         if not isinstance(inputs, list):
-            raise ValueError(f"Transformer inputs should be a list of states, got {type(inputs)}")
+            raise ValueError(f"Transformer inputs should be a list of states, got {inputs}")
 
         attention_mask, inputs = self._pad_or_truncate(inputs)
 
@@ -732,9 +735,6 @@ class Transformer(TorchModel, Encoder):
                 images.append(x)
                 voltages.append(v)
                 continue
-
-            if isinstance(state, dict) and "obs" in state:
-                state = state["obs"]
 
             if isinstance(state, dict):
                 if "image" in state:
