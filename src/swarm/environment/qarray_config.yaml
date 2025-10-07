@@ -23,7 +23,7 @@ simulator:
     # Uses distance-based rules for scalability
     Cgd:
       # Primary coupling: gate directly controls its corresponding dot
-      primary_coupling: {"min": 0.9, "max": 1.0}
+      primary_coupling: {"min": 0.95, "max": 1.0}
       # Cross-coupling based on distance between gate and non-primary dots
       cross_coupling:
         # Distance 1: adjacent gate-dot pairs
@@ -35,14 +35,14 @@ simulator:
     
     # Dot-to-sensor capacitance (Cds) - how quantum dots couple to charge sensor
     Cds:
-      dots: {"min": 0.045, "max": 0.050}
+      dots: {"min": 0.035, "max": 0.050}
     
     # Gate-to-sensor capacitance (Cgs) - how gates affect charge sensor
     Cgs:
       # Plunger gates to sensor (typically weak coupling)
       plunger_gates: {"min": 0.0, "max": 0.0001}
       # Sensor gate to sensor (strong direct coupling)
-      sensor_gate: {"min": 0.8, "max": 1.0}
+      sensor_gate: {"min": 0.95, "max": 1.0}
     
     # White noise amplitude for charge stability diagram
     white_noise_amplitude: {"min": 0.001, "max": 0.002}
@@ -55,8 +55,7 @@ simulator:
     
     # Latching model parameters for charge state transitions
     latching_model_parameters:
-      Exists: True 
-      n_dots: 4     # Number of quantum dots
+      Exists: True
       p_leads: {"min": 0.2, "max": 1.0}  # Lead coupling probabilities
       p_inter: {"min": 0.2, "max": 1.0}  # Inter-dot coupling probabilities
     
