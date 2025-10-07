@@ -691,8 +691,8 @@ class LSTM(TorchModel, Encoder):
         next_hidden_states = {"h": next_hidden_states[0].transpose(0, 1), "c": next_hidden_states[1].transpose(0, 1)}
 
         # Keep time dimension - RLlib's connector will remove it
-        # out shape: (batch, time=1, features)
-        assert out.shape[1] == 1, f"Expected time dimension of 1, got shape {out.shape}"
+        # out shape during inference: (batch, time=1, features)
+        # out shape during training: (batch, time<=max_seq_len, features)
 
         outputs = {}
         outputs[ENCODER_OUT] = out
