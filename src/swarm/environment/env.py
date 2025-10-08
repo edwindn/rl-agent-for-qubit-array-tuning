@@ -181,7 +181,9 @@ class QuantumDeviceEnv(gym.Env):
         )
 
         plungers, barriers = self._starting_voltages()
-
+        #note this overrides the ideal ground truth calculated for zero charge occupation
+        if self.use_barriers:
+            barrier_ground_truth = self.array.calculate_barrier_ground_truth(plungers)
 
         self.device_state = {
             "gate_ground_truth": plunger_ground_truth,
@@ -244,6 +246,11 @@ class QuantumDeviceEnv(gym.Env):
             
         self.device_state["current_gate_voltages"] = gate_voltages
         self.device_state["current_barrier_voltages"] = barrier_voltages
+
+        if self.use_barriers:
+            self.device_state["barrier_ground_truth"] = self.array.calculate_barrier_ground_truth(gate_voltages)
+
+
 
         reward = self._get_reward()
 

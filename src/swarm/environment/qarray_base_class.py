@@ -873,6 +873,34 @@ class QarrayBaseClass:
             config = yaml.safe_load(file)
 
         return config
+    
+    def calculate_barrier_ground_truth(self, vg_plunger):
+        """
+        Calculate barrier ground truth voltages given current plunger voltages.
+
+        Args:
+            vg_plunger: Current plunger gate voltages (n_dots,)
+
+        Returns:
+            vb_optimal: Optimal barrier voltages accounting for gate contributions (n_barrier,)
+        """
+        # Calculate base barrier voltages needed for optimal tunnel coupling
+        # From barrier model: tc = tc_base * exp(-alpha * Vb)
+        # Solving for Vb: Vb = -ln(tc / tc_base) / alpha
+        tc_ratio = float(self.optimal_tc) / self.barrier_tc_base
+
+        # Calculate barrier voltage for each barrier using its own alpha value
+        vb_base = np.array([-np.log(tc_ratio) / alpha_i for alpha_i in self.barrier_alpha])
+
+        # Account for gate contributions using only plunger gates (ignore sensor gate column)
+        # Cbg is (n_barrier, n_gate) where n_gate = n_dots + 1
+        # We only use the first n_dots columns (plunger gates)
+        gate_contribution = self.model.Cbg[:, :self.num_dots] @ vg_plunger
+
+        vb_optimal = vb_base - gate_contribution
+
+        return vb_optimal
+
 
     def calculate_ground_truth(self, debug=False):
         """
@@ -911,9 +939,9 @@ class QarrayBaseClass:
 
         if debug:
             print(tc_ratio)
-            
-        vb_mag = -np.log(tc_ratio) / self.model.barrier_model.alpha
-        vb_optimal = np.full(self.num_barrier_voltages, vb_mag)
+
+        # Calculate barrier voltage for each barrier using its own alpha value
+        vb_optimal = np.array([-np.log(tc_ratio) / alpha_i for alpha_i in self.barrier_alpha])
 
         # calculate change in dot potential due to barriers
         dot_potential = cgd[: ndot + numsensor, -nbarrier:] @ vb_optimal

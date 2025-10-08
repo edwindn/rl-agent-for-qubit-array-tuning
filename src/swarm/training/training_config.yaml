@@ -155,7 +155,7 @@ neural_networks:
         hidden_dim: 256
         num_layers: 1
         max_seq_len: 1
-        store_voltages: True
+        store_voltages: false
         voltage_hidden_dim: 16
       transformer:
         latent_size: 128
@@ -168,11 +168,11 @@ neural_networks:
         use_ctlpe: true  # Use Continuous Time Linear Positional Embedding (voltage-based)
         add_pos_embeddings: false
     policy_head:
-      hidden_layers: [64, 32]
+      hidden_layers: [128, 128]
       activation: "relu"
       use_attention: false
     value_head:
-      hidden_layers: [64, 32]
+      hidden_layers: [128, 128]
       activation: "relu"
       use_attention: false
 
