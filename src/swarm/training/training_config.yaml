@@ -154,7 +154,7 @@ neural_networks:
       lstm:
         hidden_dim: 256
         num_layers: 1
-        max_seq_len: 50
+        max_seq_len: 1
         store_voltages: True
         voltage_hidden_dim: 16
       transformer:
