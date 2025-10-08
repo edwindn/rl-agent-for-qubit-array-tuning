@@ -238,8 +238,8 @@ class QuantumDeviceEnv(gym.Env):
         # Random actions for debugging
         # gate_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_plunger_voltages).astype(np.float32)
         # barrier_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_barrier_voltages).astype(np.float32)
-        gate_voltages = np.zeros(self.num_plunger_voltages).astype(np.float32)
-        barrier_voltages = np.zeros(self.num_barrier_voltages).astype(np.float32)
+        # gate_voltages = np.zeros(self.num_plunger_voltages).astype(np.float32)
+        # barrier_voltages = np.zeros(self.num_barrier_voltages).astype(np.float32)
         
         # Rescale voltages from [-1, 1] to actual ranges
         gate_voltages = self._rescale_gate_voltages(gate_voltages)
