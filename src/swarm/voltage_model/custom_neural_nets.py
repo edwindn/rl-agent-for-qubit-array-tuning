@@ -114,10 +114,15 @@ class SimpleCNN(TorchModel, Encoder):
         if isinstance(inputs, dict):
             if "image" in inputs:
                 x = inputs["image"]
+                voltage = inputs["voltage"]
             else:
                 raise ValueError(f"Unexpected input dict structure: {list(inputs.keys())}")
         else:
+            raise ValueError("For using voltage memory we need return_voltage to be enabled.")
             x = inputs
+
+        if voltage.dim() == 1:
+            voltage = voltage.unsqueeze(0)
 
         if x.dim() == 3:
             x = x.unsqueeze(0)
@@ -127,8 +132,13 @@ class SimpleCNN(TorchModel, Encoder):
         
         cnn_features = self.cnn(x)
         output_features = self.final_mlp(cnn_features)
+
+        out = {
+            "image_features": output_features,
+            "voltage": voltage,
+        }
         
-        return {ENCODER_OUT: output_features}
+        return {ENCODER_OUT: out}
 
 
 @dataclass
@@ -161,6 +171,8 @@ class PolicyHead(TorchModel):
         super().__init__(config)
         
         self.config = config
+
+        voltage_embedding_dim = 16 # VOLTAGE DIM HARDCODED FOR NOW
         
         layers = []
         in_dim = config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims
@@ -172,9 +184,13 @@ class PolicyHead(TorchModel):
             ])
             in_dim = hidden_dim
         
-        layers.append(nn.Linear(in_dim, config.output_layer_dim))
+        # layers.append(nn.Linear(in_dim, config.output_layer_dim))
         
         self.mlp = nn.Sequential(*layers)
+
+        self.voltage_layer = nn.Linear(1, voltage_embedding_dim)
+
+        self.final_layer = nn.Linear(in_dim + voltage_embedding_dim, config.output_layer_dim)
         
         if config.use_attention:
             self.attention = nn.MultiheadAttention(
@@ -190,13 +206,20 @@ class PolicyHead(TorchModel):
         return self._output_dims
     
     def _forward(self, inputs, **kwargs):
-        if self.config.use_attention and inputs.dim() == 2:
+        voltage = inputs["voltage"]
+        inputs = inputs["image_features"]
+
+        if self.config.use_attention:
             inputs = inputs.unsqueeze(1)
             attended, _ = self.attention(inputs, inputs, inputs)
             inputs = attended.squeeze(1)
-        
+
         x = self.mlp(inputs)
-        return F.tanh(x)
+
+        voltage_features = self.voltage_layer(voltage)
+        x = torch.cat((x, voltage_features), dim=1)
+
+        return self.final_layer(x)
 
 @dataclass
 class IMPALAConfig(CNNEncoderConfig):
@@ -383,6 +406,9 @@ class ValueHead(TorchModel):
         return self._output_dims
     
     def _forward(self, inputs, **kwargs):
+        if isinstance(inputs, dict):
+            inputs = inputs["image_features"]
+
         if self.config.use_attention and inputs.dim() == 2:
             inputs = inputs.unsqueeze(1)
             attended, _ = self.attention(inputs, inputs, inputs)

@@ -150,11 +150,11 @@ neural_networks:
 #         - {channels: 32, kernel: 3, stride: 1}
 #       feature_size: 256
 #       adaptive_pooling: true
-      memory_layer: 'lstm' # null, 'lstm', 'transformer'
+      memory_layer: null # null, 'lstm', 'transformer'
       lstm:
         hidden_dim: 256
         num_layers: 1
-        max_seq_len: 5
+        max_seq_len: 1
         store_voltages: True
         voltage_hidden_dim: 16
       transformer:
@@ -168,13 +168,13 @@ neural_networks:
         use_ctlpe: true  # Use Continuous Time Linear Positional Embedding (voltage-based)
         add_pos_embeddings: false
     policy_head:
-      hidden_layers: [64, 64, 32]
+      hidden_layers: [64, 64, 32] # voltage gets injected before the last layer
       activation: "relu"
-      use_attention: true
+      use_attention: false
     value_head:
       hidden_layers: [64, 64, 32]
       activation: "relu"
-      use_attention: true
+      use_attention: false
 
   barrier_policy:
     backbone:
