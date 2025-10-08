@@ -106,7 +106,7 @@ simulator:
 
     # Variable peak width model parameters
     variable_peak_width_model:
-      alpha: {"min": 0.001, "max": 0.008}  # Peak width voltage dependence
+      alpha: {"min": 0.0001, "max": 0.0008}  # Peak width voltage dependence
 
     # Algorithm for charge stability diagram
     algorithm: "default"
@@ -120,7 +120,7 @@ simulator:
     optimal_VG_center: {"dots": 1.0, "sensor": 0.53}
 
     #target tunnel coupling
-    tc: 1e-2
+    tc: 1e-3
 
   latched_model:
     use_sparse: False

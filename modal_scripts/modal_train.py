@@ -25,7 +25,7 @@ image = (
     .apt_install("git")  # Required for pip_install_private_repos
     .pip_install_private_repos(
         # Install qarray-latched from private repo at specific commit
-        "github.com/b-vanstraaten/qarray-latched@c076d4cef57a071dd6e52458ad5937589747c18f",
+        "github.com/b-vanstraaten/qarray-latched@fcc472276f27e7633bb3aafc6f0d6c92966875d7",
         git_user="rahul-marchand",  # Your GitHub username
         secrets=[modal.Secret.from_name("github-private")],
     )

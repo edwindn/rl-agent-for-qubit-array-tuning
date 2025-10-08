@@ -70,7 +70,7 @@ rl_config:
 
     # PPO-specific config
     # lr: [[0, 0.0003], [400000, 0.0001], [800000, 0.00005]]
-    lr: 0.0003
+    lr: 0.0005
     # Learning rate: constant (e.g., 0.0003) or schedule as list of [timestep, lr] pairs (e.g., [[0, 0.0003], [100000, 0.0001]])
     gamma: 0.0                      # Discount factor
     lambda_: 0.95                   # GAE lambda parameter

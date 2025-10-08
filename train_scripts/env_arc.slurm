@@ -77,7 +77,7 @@ PACKAGES=(
     "qarray"
     "wandb[media]"
     "scikit-learn"
-    "git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@c076d4cef57a071dd6e52458ad5937589747c18f"
+    "git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@fcc472276f27e7633bb3aafc6f0d6c92966875d7"
     "scienceplots"
     "jax[cuda12]"
     "python-dotenv"
