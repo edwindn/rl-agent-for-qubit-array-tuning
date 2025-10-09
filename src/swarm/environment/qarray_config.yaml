@@ -45,7 +45,7 @@ simulator:
       sensor_gate: {"min": 0.95, "max": 1.0}
     
     # White noise amplitude for charge stability diagram
-    white_noise_amplitude: {"min": 0.001, "max": 0.002}
+    white_noise_amplitude: {"min": 0.0, "max": 0.002}
     
     # Telegraph noise parameters (random telegraph noise)
     telegraph_noise_parameters:
