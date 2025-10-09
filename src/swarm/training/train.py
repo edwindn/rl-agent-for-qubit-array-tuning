@@ -319,7 +319,7 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None):
+def create_env(config=None, gif_config=None, distance_data_dir=None):
     """Create multi-agent quantum environment with JAX safety."""
     import os
     import jax
@@ -343,7 +343,7 @@ def create_env(config=None, gif_config=None):
     # Wrap in multi-agent wrapper (config unused but required by RLlib)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
     # RLlib handles temporal sequences via ConnectorV2, not via environment
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config)
+    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, distance_data_dir=distance_data_dir)
 
 
 def create_env_to_module_connector(env, spaces, device, use):
@@ -389,10 +389,19 @@ def main():
     if hasattr(args, 'config_overrides') and args.config_overrides:
         config = apply_config_overrides(config, args.config_overrides)
 
+    # Create timestamped data folder if save_distance_data is enabled
+    distance_data_dir = None
+    if config['defaults']['save_distance_data']:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        distance_data_dir = Path(__file__).parent / "data" / timestamp
+        distance_data_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\nDistance data will be saved to: {distance_data_dir}\n")
+
     # Initialize Weights & Biases
     if use_wandb:
         wandb.init(
-            entity=config['wandb']['entity'], 
+            entity=config['wandb']['entity'],
             project=config['wandb']['project']
         )
         # Note: We'll update wandb config with merged config later after env creation
@@ -422,7 +431,7 @@ def main():
         # Clean up any previous GIF capture lock files
         cleanup_gif_files(gif_config['save_dir'])
 
-        create_env_fn = partial(create_env, gif_config=gif_config)
+        create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir)
         register_env("qarray_multiagent_env", create_env_fn)
         env_instance = create_env_fn()
 
@@ -687,7 +696,7 @@ def main():
             print_training_progress(result, i, training_start_time)
 
             # Log metrics to wandb (EMA is calculated automatically in metrics_logger)
-            log_to_wandb(result, i)
+            log_to_wandb(result, i, distance_data_dir)
 
             # Process and log GIFs if enabled
             if config['gif_config']['enabled'] and use_wandb:
