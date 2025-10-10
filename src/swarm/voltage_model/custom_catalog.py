@@ -133,6 +133,8 @@ class CustomPPOCatalog(PPOCatalog):
                 hidden_dim=lstm_config["hidden_dim"],
                 num_layers=lstm_config["num_layers"],
                 max_seq_len=lstm_config["max_seq_len"],
+                store_voltages=lstm_config["store_voltages"],
+                voltage_hidden_dim=lstm_config["voltage_hidden_dim"],
                 batch_major=True,
                 tokenizer_config=tokenizer_config,
                 use_bias=True,

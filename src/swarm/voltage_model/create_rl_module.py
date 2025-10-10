@@ -99,8 +99,19 @@ def create_rl_module_spec(env_instance, algo: str="ppo", config: dict=None) -> M
         neural_networks_config = {}
     
     # Create model configs for each policy
-    plunger_config = neural_networks_config.get('plunger_policy', {})
-    barrier_config = neural_networks_config.get('barrier_policy', {})
+    plunger_config = neural_networks_config['plunger_policy']
+    barrier_config = neural_networks_config['barrier_policy']
+
+    # Add max_seq_len to plunger model_config if using LSTM or transformer
+    backbone = plunger_config['backbone']
+    memory_layer = backbone.get('memory_layer')
+
+    if memory_layer == 'lstm':
+        lstm_config = backbone['lstm']
+        plunger_config['max_seq_len'] = lstm_config['max_seq_len']
+    elif memory_layer == 'transformer':
+        transformer_config = backbone['transformer']
+        plunger_config['max_seq_len'] = transformer_config['max_seq_len']
 
     if algo=="ppo":
         module_class = DefaultPPOTorchRLModule
