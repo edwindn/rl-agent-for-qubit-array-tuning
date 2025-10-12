@@ -5,6 +5,7 @@
 defaults:
   num_iterations: 200        # Total training iterations
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
+  save_distance_data: true
 
 # Weights & Biases configuration
 wandb:

@@ -207,7 +207,7 @@ def print_training_progress(result: Dict[str, Any], iteration: int, start_time: 
     print(f"{'='*80}\n")
 
 
-def log_to_wandb(result: Dict[str, Any], iteration: int):
+def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Optional[str] = None):
     """
     Log comprehensive metrics to wandb using latest API.
 
@@ -354,6 +354,89 @@ def log_to_wandb(result: Dict[str, Any], iteration: int):
 
     # Log to wandb (don't specify step since we're logging iteration explicitly)
     wandb.log(log_dict)
+
+    # Plot distance data if available (logged separately under agent_vision)
+    if distance_data_dir is not None:
+        try:
+            from pathlib import Path
+            import glob
+
+            distance_data_path = Path(distance_data_dir)
+
+            # Get all agent folders
+            plunger_folders = sorted([f for f in distance_data_path.iterdir() if f.is_dir() and f.name.startswith("plunger_")])
+            barrier_folders = sorted([f for f in distance_data_path.iterdir() if f.is_dir() and f.name.startswith("barrier_")])
+
+            # Plot plunger distances
+            if plunger_folders:
+                fig, ax = plt.subplots(figsize=(10, 6))
+
+                for agent_folder in plunger_folders:
+                    # Get all .npy files and find the one with highest count
+                    npy_files = glob.glob(str(agent_folder / "*.npy"))
+                    if npy_files:
+                        # Extract counts and find max
+                        max_count = 0
+                        latest_file = None
+                        for filepath in npy_files:
+                            filename = Path(filepath).stem
+                            count_str = filename.split('_')[0]
+                            count = int(count_str)
+                            if count > max_count:
+                                max_count = count
+                                latest_file = filepath
+
+                        if latest_file is not None:
+                            # Load and plot the data
+                            distances = np.load(latest_file)
+                            steps = np.arange(1, len(distances) + 1)
+                            ax.plot(steps, distances, label=agent_folder.name, alpha=0.7)
+
+                ax.set_xlabel("Episode Step")
+                ax.set_ylabel("Distance from Ground Truth")
+                ax.set_title("Plunger Agent Distances")
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+
+                wandb.log({"agent_vision/plunger_distances": wandb.Image(fig)})
+                plt.close(fig)
+
+            # Plot barrier distances
+            if barrier_folders:
+                fig, ax = plt.subplots(figsize=(10, 6))
+
+                for agent_folder in barrier_folders:
+                    # Get all .npy files and find the one with highest count
+                    npy_files = glob.glob(str(agent_folder / "*.npy"))
+                    if npy_files:
+                        # Extract counts and find max
+                        max_count = 0
+                        latest_file = None
+                        for filepath in npy_files:
+                            filename = Path(filepath).stem
+                            count_str = filename.split('_')[0]
+                            count = int(count_str)
+                            if count > max_count:
+                                max_count = count
+                                latest_file = filepath
+
+                        if latest_file is not None:
+                            # Load and plot the data
+                            distances = np.load(latest_file)
+                            steps = np.arange(1, len(distances) + 1)
+                            ax.plot(steps, distances, label=agent_folder.name, alpha=0.7)
+
+                ax.set_xlabel("Episode Step")
+                ax.set_ylabel("Distance from Ground Truth")
+                ax.set_title("Barrier Agent Distances")
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+
+                wandb.log({"agent_vision/barrier_distances": wandb.Image(fig)})
+                plt.close(fig)
+
+        except Exception as e:
+            print(f"Error plotting distance data: {e}")
 
     # Update summary metrics for best performance tracking
     if metrics["episode_return_mean"] is not None:

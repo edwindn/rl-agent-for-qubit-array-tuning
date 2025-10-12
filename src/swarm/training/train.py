@@ -317,7 +317,7 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, store_history=False):
+def create_env(config=None, gif_config=None, distance_data_dir=None):
     """Create multi-agent quantum environment with JAX safety."""
     import os
     import jax
@@ -341,7 +341,7 @@ def create_env(config=None, gif_config=None, store_history=False):
     # Wrap in multi-agent wrapper (config unused but required by RLlib)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
     # store_history=True when using transformer to maintain observation history
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, store_history=store_history)
+    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, distance_data_dir=distance_data_dir)
 
 
 def create_env_to_module_connector(env, spaces, device, use):
@@ -387,6 +387,14 @@ def main():
     if hasattr(args, 'config_overrides') and args.config_overrides:
         config = apply_config_overrides(config, args.config_overrides)
 
+    distance_data_dir = None
+    if config['defaults']['save_distance_data']:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        distance_data_dir = Path(__file__).parent / "data" / timestamp
+        distance_data_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\nDistance data will be saved to: {distance_data_dir}\n")
+
     # Initialize Weights & Biases
     if use_wandb:
         wandb.init(
@@ -423,7 +431,7 @@ def main():
         # Check if plunger policy uses transformer memory layer
         use_transformer = config['neural_networks']['plunger_policy']['backbone']['memory_layer'] == 'transformer'
 
-        create_env_fn = partial(create_env, gif_config=gif_config, store_history=use_transformer)
+        create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir)
         register_env("qarray_multiagent_env", create_env_fn)
         env_instance = create_env_fn()
 
@@ -660,7 +668,7 @@ def main():
             print_training_progress(result, i, training_start_time)
 
             # Log metrics to wandb (EMA is calculated automatically in metrics_logger)
-            log_to_wandb(result, i)
+            log_to_wandb(result, i, distance_data_dir)
 
             # Process and log GIFs if enabled
             if config['gif_config']['enabled'] and use_wandb:

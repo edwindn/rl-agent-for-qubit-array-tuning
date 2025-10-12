@@ -6,6 +6,8 @@ and handles the conversion between single-agent actions and global environment a
 """
 
 import sys
+import glob
+import random
 from typing import Dict
 
 import numpy as np
@@ -41,8 +43,8 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         self,
         training: bool = True,
         return_voltage: bool = False,
-        store_history: bool = False,
         gif_config: dict = None,
+        distance_data_dir: str = None,
     ):
         """
         Initialize multi-agent wrapper.
@@ -56,13 +58,16 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         """
         super().__init__()
 
-        if store_history and not return_voltage:
-            print("WARNING: 'store_history' in MultiAgentEnvWrapper is intended to work with 'return_voltage' only. Setting return_voltage=True.")
-            return_voltage = True
+        # if store_history and not return_voltage:
+        #     print("WARNING: 'store_history' in MultiAgentEnvWrapper is intended to work with 'return_voltage' only. Setting return_voltage=True.")
+        #     return_voltage = True
 
         self.return_voltage = return_voltage
 
-        self.store_history = store_history
+        self.store_history = False
+
+        self.distance_data_dir = distance_data_dir
+        self.distance_history = None
 
         self.gif_config = gif_config
         if self.gif_config is not None:
@@ -83,6 +88,12 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         if self.store_history:
             # Only store history for plunger agents (gate agents)
             self.plunger_agent_history = {agent_id: [] for agent_id in self.gate_agent_ids}
+
+        if self.distance_data_dir is not None:
+            distance_data_path = Path(self.distance_data_dir)
+            for agent_id in self.all_agent_ids:
+                agent_folder = distance_data_path / agent_id
+                agent_folder.mkdir(parents=False, exist_ok=True)
 
         # Setup channel assignments for agents
         self._setup_channel_assignments()
@@ -384,6 +395,12 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
 
         global_obs, global_info = self.base_env.reset(seed=seed, options=options)
 
+        if self.distance_history is not None:
+            self._save_agent_histories(self.distance_history)
+
+        if self.distance_data_dir is not None:
+            self.distance_history = {_id: [] for _id in self.all_agent_ids}
+
         # Convert to multi-agent observations
         agent_observations = {}
         for agent_id in self.all_agent_ids:
@@ -460,16 +477,29 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                 barrier_ids = [f"barrier_{i}" for i in range(self.num_barriers)]
 
                 for idx, agent_id in enumerate(plunger_ids):
+                    ground_truth = device_state_info["gate_ground_truth"][idx]
+                    current_voltage = device_state_info["current_gate_voltages"][idx]
+                    
                     agent_infos[agent_id] = {
-                        "ground_truth": device_state_info["gate_ground_truth"][idx],
-                        "current_voltage": device_state_info["current_gate_voltages"][idx],
+                        "ground_truth": ground_truth,
+                        "current_voltage": current_voltage,
                     }
+
+                    if self.distance_data_dir is not None:
+                        self.distance_history[agent_id].append(current_voltage - ground_truth)
                 
                 for idx, agent_id in enumerate(barrier_ids):
+                    ground_truth = device_state_info["barrier_ground_truth"][idx]
+                    current_voltage = device_state_info["current_barrier_voltages"][idx]
+
                     agent_infos[agent_id] = {
-                        "ground_truth": device_state_info["barrier_ground_truth"][idx],
-                        "current_voltage": device_state_info["current_barrier_voltages"][idx],
+                        "ground_truth": ground_truth,
+                        "current_voltage": current_voltage,
                     }
+
+                    if self.distance_data_dir is not None:
+                        self.distance_history[agent_id].append(current_voltage - ground_truth)
+
             except Exception as e:
                 agent_infos = dict.fromkeys(self.all_agent_ids, {
                     "error": f"Error creating multi-agent info: {e}"
@@ -482,6 +512,43 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             agent_truncated,
             agent_infos,
         )
+
+    
+    def _save_agent_histories(self, history: dict):
+        assert set(history.keys()) == set(self.all_agent_ids), "Mismatch in agent ids in saved history"
+
+        distance_data_path = Path(self.distance_data_dir)
+
+        for agent_id in self.all_agent_ids:
+            dists = history[agent_id]
+            dists = np.array(dists)
+
+            # Get agent folder
+            agent_folder = distance_data_path / agent_id
+
+            # Find existing files to determine next count
+            existing_files = glob.glob(str(agent_folder / "*.npy"))
+
+            if len(existing_files) == 0:
+                next_count = 1
+            else:
+                # Extract counts from filenames (format: XXXX_YYYYYY.npy)
+                counts = []
+                for filepath in existing_files:
+                    filename = Path(filepath).stem
+                    count_str = filename.split('_')[0]
+                    counts.append(int(count_str))
+                next_count = max(counts) + 1
+
+            # Generate random 6-digit number
+            random_suffix = random.randint(0, 999999)
+
+            # Create filename with 4-digit zero-padded count and 6-digit zero-padded random suffix
+            filename = f"{next_count:04d}_{random_suffix:06d}.npy"
+            filepath = agent_folder / filename
+
+            # Save the array
+            np.save(filepath, dists)
 
     # def _get_obs_images(self, obs: Dict[str, Union[np.ndarray, torch.tensor]]):
     #     barrier_keys = [k for k in obs.keys() if k.lower().startswith('barrier')]
