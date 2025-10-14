@@ -196,7 +196,7 @@ class PolicyHead(TorchModel):
             inputs = attended.squeeze(1)
         
         x = self.mlp(inputs)
-        return F.tanh(x)
+        return x
 
 @dataclass
 class IMPALAConfig(CNNEncoderConfig):
