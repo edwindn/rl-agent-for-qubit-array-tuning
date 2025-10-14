@@ -7,13 +7,13 @@ simulator:
 
   num_dots: 4
 
-  use_barriers: false
+  use_barriers: true
 
   use_deltas: false # Whether the plunger agents' output is a ΔV or V
   
   delta_max: 2.0 #only used if use_deltas is true
   
-  full_plunger_range_width: {"min": 20, "max": 30} #range in V of plungers
+  full_plunger_range_width: {"min": 60, "max": 80} #range in V of plungers
 
   window_delta_range: {"min": 1.5, "max": 2.0} #range in V for a single scan/sweep
 
@@ -24,7 +24,7 @@ simulator:
 
 reward:
   # Gate/Plunger reward configuration
-  gate_ramp_start: 20.0 # Distance from ground truth where reward = 0
+  gate_ramp_start: 60.0 # Distance from ground truth where reward = 0
   gate_quadratic_start: 1.0 # Distance where curved region begins (reward = 0.5)
   gate_curve_type: "constant" # Type of curve for final approach: "polynomial", "exponential", "linear", "constant"
   gate_curve_exponent: 2.0 # Exponent for polynomial/exponential curves
@@ -34,7 +34,7 @@ reward:
 
 
 capacitance_model:
-  update_method: "perfect"  # Options: null (does not update vgm), "perfect", "fake", "bayesian", "kriging"
+  update_method: "fake"  # Options: null (does not update vgm), "perfect", "fake", "bayesian", "kriging"
   # note that the perfect method will also remove any cross-talk with and between the barriers
 
 init:
