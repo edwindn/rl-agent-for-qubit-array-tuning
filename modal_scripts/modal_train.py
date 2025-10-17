@@ -37,7 +37,7 @@ app = modal.App("quantum-rl-training")
 
 
 @app.function(
-    gpu="A100:8",  # Single GPU - Change to "A100:2", "A100:4", or "A100:8" for multiple GPUs
+    gpu="H100:8",  # Single GPU - Change to "A100:2", "A100:4", or "A100:8" for multiple GPUs
     # Options: "A100", "H100", "L40S", "L4", "T4", etc.
     # Multi-GPU: "A100:2" (2 GPUs), "H100:8" (8 GPUs), etc.
     # Note: H100, A100, L40S, L4, T4 support up to 8 GPUs; A10 supports up to 4
