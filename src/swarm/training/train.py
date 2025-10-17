@@ -26,8 +26,6 @@ import torch
 import wandb
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.algorithms.sac import SACConfig
-from ray.rllib.connectors.env_to_module.frame_stacking import FrameStackingEnvToModule
-from ray.rllib.connectors.learner.frame_stacking import FrameStackingLearner
 from ray.tune.registry import register_env
 
 # Set logging level to reduce verbosity
@@ -50,6 +48,8 @@ from swarm.training.utils import (  # noqa: E402
     policy_mapping_fn,
     cleanup_gif_files,
     process_and_log_gifs,
+    CustomFrameStackingEnvToModule,
+    CustomFrameStackingLearner,
 )
 
 from swarm.voltage_model import create_rl_module_spec
@@ -534,7 +534,7 @@ def main():
         # Build env-to-module connector
         # Note: We prioritize frame stacking over custom LSTM connector when both are applicable
         if use_frame_stacking:
-            env_to_module_connector = lambda env: FrameStackingEnvToModule(
+            env_to_module_connector = lambda env: CustomFrameStackingEnvToModule(
                 num_frames=num_frames,
                 multi_agent=True
             )
@@ -546,7 +546,7 @@ def main():
         # Build learner connector for frame stacking
         learner_connector = None
         if use_frame_stacking:
-            learner_connector = lambda obs_space, act_space: FrameStackingLearner(
+            learner_connector = lambda obs_space, act_space: CustomFrameStackingLearner(
                 num_frames=num_frames,
                 multi_agent=True
             )
