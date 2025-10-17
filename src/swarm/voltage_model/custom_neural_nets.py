@@ -919,11 +919,10 @@ class Transformer(TorchModel, Encoder):
 
         if images.dim() == 5:  # (B, T, H, W, C)
             batch_size, seq_len, h, w, c = images.shape
-            images_flat = images.reshape(batch_size * seq_len, h, w, c)
         elif images.dim() == 4:  # (T, H, W, C)
             seq_len, h, w, c = images.shape
             batch_size = 1
-            images_flat = images
+            images = images.unsqueeze(0)  # Add batch dimension: (1, T, H, W, C)
         else:
             raise ValueError(f"Unexpected image tensor shape: {images.shape}. Expected (B, T, H, W, C) or (T, H, W, C)")
 
@@ -932,11 +931,17 @@ class Transformer(TorchModel, Encoder):
         if attention_mask.dim() == 1:
             attention_mask = attention_mask.unsqueeze(0)  # (1, T)
 
-        tokenizer_out = self.tokenizer._forward(images_flat)
-        tokens = tokenizer_out[ENCODER_OUT]  # (B*T, feature_dim)
+        # Process each frame through CNN sequentially to avoid OOM from large B*T batches
+        # This processes T frames at a time with batch size B instead of B*T all at once
+        token_list = []
+        for t in range(seq_len):
+            frame_t = images[:, t, :, :, :]  # (B, H, W, C)
+            tokenizer_out = self.tokenizer._forward(frame_t)
+            tokens_t = tokenizer_out[ENCODER_OUT]  # (B, feature_dim)
+            token_list.append(tokens_t)
 
-        # Reshape tokens back to (B, T, feature_dim)
-        tokens = tokens.view(batch_size, seq_len, -1)
+        # Stack tokens: list of T tensors (B, feature_dim) -> (B, T, feature_dim)
+        tokens = torch.stack(token_list, dim=1)
 
         # Project tokens to transformer dimension
         tokens = self.token_projection(tokens)  # (B, T, latent_size)
