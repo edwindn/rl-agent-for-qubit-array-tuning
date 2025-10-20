@@ -17,7 +17,7 @@ from .gif_logger import (
     process_and_log_gifs,
     process_episode_gif,
 )
-from.custom_frame_stacking import (
+from .custom_frame_stacking import (
     CustomFrameStackingEnvToModule,
     CustomFrameStackingLearner,
 )
