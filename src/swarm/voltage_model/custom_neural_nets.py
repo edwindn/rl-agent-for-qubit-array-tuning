@@ -959,6 +959,7 @@ class Transformer(TorchModel, Encoder):
         # Apply transformer encoder with attention mask
         # attention_mask is (B, T) where True = padding (ignore these positions)
         attention_mask = attention_mask.bool()
+        attention_mask = attention_mask.to(tokens.device)
         transformed = self.transformer(tokens, src_key_padding_mask=attention_mask)  # (B, T, latent_size)
 
         # Pool across sequence dimension
