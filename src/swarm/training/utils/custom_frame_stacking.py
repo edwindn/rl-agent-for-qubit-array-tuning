@@ -7,7 +7,6 @@ from functools import partial
 from typing import Any, Dict, List, Optional
 import numpy as np
 import gymnasium as gym
-import tree
 from ray.rllib.connectors.common.frame_stacking import FrameStacking
 from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module.rl_module import RLModule
