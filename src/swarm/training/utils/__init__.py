@@ -17,6 +17,10 @@ from .gif_logger import (
     process_and_log_gifs,
     process_episode_gif,
 )
+from .custom_frame_stacking import (
+    CustomFrameStackingEnvToModule,
+    CustomFrameStackingLearner,
+)
 
 __all__ = [
     "log_to_wandb",
@@ -27,4 +31,6 @@ __all__ = [
     "cleanup_gif_files",
     "process_and_log_gifs",
     "process_episode_gif",
+    "CustomFrameStackingEnvToModule",
+    "CustomFrameStackingLearner",
 ]

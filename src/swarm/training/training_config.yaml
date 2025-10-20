@@ -5,7 +5,7 @@
 defaults:
   num_iterations: 400        # Total training iterations
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
-  save_distance_data: true # Save per-agent diagnostic state info
+  save_distance_data: false # Save per-agent diagnostic state info
 
 # Weights & Biases configuration
 wandb:
@@ -151,11 +151,11 @@ neural_networks:
 #         - {channels: 32, kernel: 3, stride: 1}
 #       feature_size: 256
 #       adaptive_pooling: true
-      memory_layer: null # null, 'lstm', 'transformer'
+      memory_layer: 'transformer' # null, 'lstm', 'transformer'
       lstm:
         hidden_dim: 256
         num_layers: 1
-        max_seq_len: 1
+        max_seq_len: 1 # Leave at 1 due to Ray conventions, in reality the state will accumulate indefinitely
         store_voltages: false
         voltage_hidden_dim: 16
       transformer:

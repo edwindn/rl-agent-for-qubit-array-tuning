@@ -110,7 +110,7 @@ class SimpleCNN(TorchModel, Encoder):
     def _forward(self, inputs, **kwargs):
         if isinstance(inputs, dict) and "obs" in inputs:
             inputs = inputs["obs"]
-        
+
         if isinstance(inputs, dict):
             if "image" in inputs:
                 x = inputs["image"]
@@ -121,13 +121,13 @@ class SimpleCNN(TorchModel, Encoder):
 
         if x.dim() == 3:
             x = x.unsqueeze(0)
-        
+
         if x.shape[-1] <= 8:
             x = x.permute(0, 3, 1, 2)
-        
+
         cnn_features = self.cnn(x)
         output_features = self.final_mlp(cnn_features)
-        
+
         return {ENCODER_OUT: output_features}
 
 
@@ -901,54 +901,52 @@ class Transformer(TorchModel, Encoder):
         if isinstance(inputs, dict) and "obs" in inputs:
             inputs = inputs["obs"]
 
-        # Debug: Print input format to understand frame stacking shape (will be removed after testing)
-        if isinstance(inputs, dict) and "image" in inputs:
-            img_shape = inputs['image'].shape if hasattr(inputs['image'], 'shape') else type(inputs['image'])
-            volt_shape = inputs['voltage'].shape if hasattr(inputs['voltage'], 'shape') else type(inputs['voltage'])
-            print(f"[Transformer Debug] Image shape: {img_shape}, Voltage shape: {volt_shape}")
-
-        # Handle frame-stacked observations from RLlib's FrameStackingEnvToModule
-        # Expected format: {image: (B, T, H, W, C), voltage: (B, T, 1)} where T = num_frames
+        # Handle frame-stacked observations from CustomFrameStacking
+        # Expected format: {image: (B, T, H, W, C), voltage: (B, T), attention_mask: (B, T)}
         if not isinstance(inputs, dict) or "image" not in inputs:
             raise ValueError(f"Transformer expects dict input with 'image' key, got {type(inputs)}")
 
         images = inputs["image"]
         voltages = inputs["voltage"]
+        attention_mask = inputs["attention_mask"]
 
-        # Convert to torch tensors if needed
         if isinstance(images, np.ndarray):
             images = torch.from_numpy(images)
         if isinstance(voltages, np.ndarray):
             voltages = torch.from_numpy(voltages)
+        if isinstance(attention_mask, np.ndarray):
+            attention_mask = torch.from_numpy(attention_mask)
 
-        # Check if we have a time dimension (frame stacking enabled)
-        if images.dim() == 5:  # (B, T, H, W, C) - frame stacked
+        # Move tensors to the model's device
+        device = next(self.parameters()).device
+        images = images.to(device)
+        voltages = voltages.to(device)
+        attention_mask = attention_mask.to(device)
+        if images.dim() == 5:  # (B, T, H, W, C)
             batch_size, seq_len, h, w, c = images.shape
-            # Reshape to (B*T, H, W, C) for CNN processing
-            images = images.reshape(batch_size * seq_len, h, w, c)
-            voltages = voltages.reshape(batch_size * seq_len, -1)
-
-            # No attention mask needed - all frames are valid
-            device = images.device
-            attention_mask = torch.zeros(seq_len, dtype=torch.bool, device=device)
-
-        elif images.dim() == 4:  # (B, H, W, C) - no frame stacking (shouldn't happen with frame stacking enabled)
-            # Add sequence dimension for consistency
-            batch_size = images.shape[0]
-            seq_len = 1
-            images = images.reshape(batch_size * seq_len, *images.shape[1:])
-            voltages = voltages.reshape(batch_size * seq_len, -1)
-            device = images.device
-            attention_mask = torch.zeros(seq_len, dtype=torch.bool, device=device)
+        elif images.dim() == 4:  # (T, H, W, C)
+            seq_len, h, w, c = images.shape
+            batch_size = 1
+            images = images.unsqueeze(0)  # Add batch dimension: (1, T, H, W, C)
         else:
-            raise ValueError(f"Unexpected image tensor shape: {images.shape}. Expected (B, H, W, C) or (B, T, H, W, C)")
+            raise ValueError(f"Unexpected image tensor shape: {images.shape}. Expected (B, T, H, W, C) or (T, H, W, C)")
 
-        # Get tokenizer features
-        tokenizer_out = self.tokenizer._forward(images)
-        tokens = tokenizer_out[ENCODER_OUT]  # (B*T, feature_dim)
+        if voltages.dim() == 1:
+            voltages = voltages.unsqueeze(0)  # (1, T)
+        if attention_mask.dim() == 1:
+            attention_mask = attention_mask.unsqueeze(0)  # (1, T)
 
-        # Reshape tokens back to (B, T, feature_dim)
-        tokens = tokens.view(batch_size, seq_len, -1)
+        # Process each frame through CNN sequentially to avoid OOM from large B*T batches
+        # This processes T frames at a time with batch size B instead of B*T all at once
+        token_list = []
+        for t in range(seq_len):
+            frame_t = images[:, t, :, :, :]  # (B, H, W, C)
+            tokenizer_out = self.tokenizer._forward(frame_t)
+            tokens_t = tokenizer_out[ENCODER_OUT]  # (B, feature_dim)
+            token_list.append(tokens_t)
+
+        # Stack tokens: list of T tensors (B, feature_dim) -> (B, T, feature_dim)
+        tokens = torch.stack(token_list, dim=1)
 
         # Project tokens to transformer dimension
         tokens = self.token_projection(tokens)  # (B, T, latent_size)
@@ -956,16 +954,17 @@ class Transformer(TorchModel, Encoder):
         # Add positional encodings
         if self.config.use_ctlpe:
             # CTLPE requires voltage values for positional encoding
-            # Reshape voltages back to (B, T) for CTLPE
-            voltages_2d = voltages.view(batch_size, seq_len)
-            tokens = self.pos_encoder(tokens, voltages_2d)
+            # voltages shape: (B, T)
+            tokens = self.pos_encoder(tokens, voltages)
 
         if self.config.use_pos_embeddings:
             # Add sinusoidal positional embeddings
             tokens = tokens + self.sinusoidal_embeddings[:seq_len, :].unsqueeze(0)
 
-        # Apply transformer encoder
-        attention_mask = attention_mask.unsqueeze(0).expand(batch_size, -1)  # (B, T)
+        # Apply transformer encoder with attention mask
+        # attention_mask is (B, T) where True = padding (ignore these positions)
+        attention_mask = attention_mask.bool()
+        attention_mask = attention_mask.to(tokens.device)
         transformed = self.transformer(tokens, src_key_padding_mask=attention_mask)  # (B, T, latent_size)
 
         # Pool across sequence dimension
