@@ -917,6 +917,11 @@ class Transformer(TorchModel, Encoder):
         if isinstance(attention_mask, np.ndarray):
             attention_mask = torch.from_numpy(attention_mask)
 
+        # Move tensors to the model's device
+        device = next(self.parameters()).device
+        images = images.to(device)
+        voltages = voltages.to(device)
+        attention_mask = attention_mask.to(device)
         if images.dim() == 5:  # (B, T, H, W, C)
             batch_size, seq_len, h, w, c = images.shape
         elif images.dim() == 4:  # (T, H, W, C)
