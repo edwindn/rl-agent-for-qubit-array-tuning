@@ -125,7 +125,7 @@ simulator:
   latched_model:
     use_sparse: False
     num_charge_states: 32
-    charge_state_batch_size: 2000
+    charge_state_batch_size: 1000
 
   voltage_capacitance_model:
     type: "linear" #  null, 'linear', 'quadratic', etc.

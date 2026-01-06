@@ -120,6 +120,7 @@ models/
 weights/
 saved_models/
 *.png
+*.gif
 
 # Data directories
 data/
