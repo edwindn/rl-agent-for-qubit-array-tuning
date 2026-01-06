@@ -1,0 +1,26 @@
+# Inference Configuration
+# This file controls the behavior of the inference benchmark script
+
+# Checkpoint selection
+checkpoint:
+  # Options:
+  #   - "auto": Use the latest checkpoint in weights/artifacts/
+  #   - checkpoint name: e.g., "run_240" (looks in weights/artifacts/run_240/)
+  #   - full path: e.g., "/path/to/checkpoint"
+  name: "run_240"
+
+# Episode configuration
+episodes:
+  num_episodes: 4        # Number of episodes to run
+  max_steps: 100          # Maximum steps per episode
+  deterministic: true     # If true, use mean action; if false, sample from distribution
+
+# Output configuration
+output:
+  verbose: true           # Print detailed step-by-step information
+  save_results: false     # Save benchmark results to JSON file
+  results_dir: "./results"  # Directory to save results (if save_results is true)
+  save_gifs: true         # Save GIFs of agent vision for each episode
+  gif_save_dir: "./gifs"  # Directory to save GIFs (relative to benchmarks directory)
+  save_distance_plots: true  # Save distance plots for each episode
+  distance_plot_dir: "./distance_plots"  # Directory to save distance plots (relative to benchmarks directory)

@@ -45,15 +45,14 @@ from swarm.training.utils import (  # noqa: E402
     print_training_progress,
     setup_wandb_metrics,
     upload_checkpoint_artifact,
-    policy_mapping_fn,
-    cleanup_gif_files,
-    process_and_log_gifs,
     CustomFrameStackingEnvToModule,
     CustomFrameStackingLearner,
 )
 
-from swarm.voltage_model import create_rl_module_spec
 from swarm.training.utils.custom_ppo_learner import PPOLearnerWithValueStats # for logging
+
+# Import single-agent utilities
+from utils.create_rl_module import create_single_agent_rl_module_spec
 
 def parse_config_overrides(unknown_args):
     """Parse config override arguments in the format --key.subkey value or --key=value (allows dynamically overriding settings when calling train.py)"""
@@ -288,7 +287,7 @@ def delete_old_checkpoint_if_needed(checkpoint_dir):
 
 def parse_arguments():
     """Parse command line arguments for checkpoint loading and config overrides."""
-    parser = argparse.ArgumentParser(description='Multi-agent RL training for quantum device tuning')
+    parser = argparse.ArgumentParser(description='Single-agent RL training for quantum device tuning')
     
     parser.add_argument(
         '--load-checkpoint', 
@@ -325,8 +324,8 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path="env_config.yaml"):
-    """Create multi-agent quantum environment with JAX safety."""
+def create_env(config=None, env_config_path="env_config.yaml"):
+    """Create single-agent quantum environment with JAX safety."""
     import os
     import jax
 
@@ -335,8 +334,6 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.1")
     os.environ.setdefault("JAX_ENABLE_X64", "true")
 
-    assert gif_config is not None, "Gif config dict required to set up rollout visualisation"
-
     # Try to clear any existing JAX state
     try:
         # Force JAX to use a fresh backend in each worker
@@ -344,12 +341,10 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     except:
         pass
 
-    from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
+    from utils.env_wrapper import SingleAgentEnvWrapper
 
-    # Wrap in multi-agent wrapper (config unused but required by RLlib)
-    # need return_voltage=True if we are using deltas + LSTM/Transformer
-    # RLlib handles temporal sequences via ConnectorV2, not via environment
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=env_config_path)
+    # Wrap base env in single-agent wrapper (barriers always zero)
+    return SingleAgentEnvWrapper(training=True, config_path=env_config_path)
 
 
 def create_env_to_module_connector(env, spaces, device, use):
@@ -374,6 +369,8 @@ def create_env_to_module_connector(env, spaces, device, use):
 def load_config():
     """Load training configuration from YAML file."""
     config_path = Path(__file__).parent / "training_config.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Training config not found at {config_path}")
     return load_config_from_path(config_path)
 
 
@@ -425,14 +422,10 @@ def main():
     if hasattr(args, 'config_overrides') and args.config_overrides:
         config = apply_config_overrides(config, args.config_overrides)
 
-    # Create timestamped data folder if save_distance_data is enabled
+    # Distance data disabled for single-agent benchmark
     distance_data_dir = None
-    if config['defaults']['save_distance_data']:
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        distance_data_dir = Path(__file__).parent / "data" / timestamp
-        distance_data_dir.mkdir(parents=True, exist_ok=True)
-        print(f"\nDistance data will be saved to: {distance_data_dir}\n")
+    if config['defaults'].get('save_distance_data', False):
+        print("\nWarning: save_distance_data is enabled but not supported in single-agent benchmark\n")
 
     # Initialize Weights & Biases
     if use_wandb:
@@ -463,61 +456,50 @@ def main():
     ray.init(**ray_config)
 
     try:
-        gif_config = config["gif_config"]
-        # Clean up any previous GIF capture lock files
-        cleanup_gif_files(gif_config['save_dir'])
-
         # Use checkpoint's env_config if available, otherwise use default
         if env_config_path is not None:
-            create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=env_config_path)
+            create_env_fn = partial(create_env, env_config_path=env_config_path)
         else:
-            create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir)
-        register_env("qarray_multiagent_env", create_env_fn)
+            create_env_fn = create_env
+        register_env("qarray_singleagent_env", create_env_fn)
         env_instance = create_env_fn()
 
         # Extract environment config and merge with training config for wandb
         if use_wandb:
             env_config = env_instance.base_env.config
-            
+
             # Create a copy of the training config and merge with env config
             import copy
             merged_config = copy.deepcopy(config)
             merged_config['env_config'] = env_config
-            
+
             # Update wandb config with the merged config
             wandb.config.update(merged_config)
-            
+
             # Save the merged config as a file artifact
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp_file:
                 yaml.dump(merged_config, tmp_file, default_flow_style=False, sort_keys=False)
                 merged_config_path = tmp_file.name
-            
+
             # Log the complete merged config as an artifact
             merged_config_artifact = wandb.Artifact("full_training_config", type="config", metadata=merged_config)
             merged_config_artifact.add_file(merged_config_path, "full_training_config.yaml")
             wandb.log_artifact(merged_config_artifact)
-            
+
             # Clean up temporary file
             os.unlink(merged_config_path)
 
-        # Optionally update the rl module config to allow log_std clamping, shared log_std vector etc.
+        # Configure RL module with single-agent network architecture
         rl_module_config = {
-            "plunger_policy": {
-                **config['neural_networks']['plunger_policy'],
-                "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
-                "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
-            },
-            "barrier_policy": {
-                **config['neural_networks']['barrier_policy'],
-                "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
-                "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
-            }
+            **config['neural_networks']['single_agent_policy'],
+            "free_log_std": config['rl_config']['single_agent']['free_log_std'],
+            "log_std_bounds": config['rl_config']['single_agent']['log_std_bounds'],
         }
-        
+
         algo = config['rl_config']['algorithm'].lower()
 
-        rl_module_spec = create_rl_module_spec(env_instance, algo=algo, config=rl_module_config)
+        rl_module_spec = create_single_agent_rl_module_spec(env_instance, algo=algo, config=rl_module_config)
 
         # Configure custom callbacks for logging to Wandb
         # log_images = config['wandb']['log_images']
@@ -560,7 +542,7 @@ def main():
 
         # Handle voltage parsing to memory manually
         use_deltas = env_instance.base_env.use_deltas
-        memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
+        memory_layer = config['neural_networks']['single_agent_policy']['backbone'].get('memory_layer')
         has_lstm = memory_layer == 'lstm'
         has_transformer = memory_layer == 'transformer'
 
@@ -568,7 +550,7 @@ def main():
         use_frame_stacking = has_transformer
         num_frames = 1
         if use_frame_stacking:
-            num_frames = config['neural_networks']['plunger_policy']['backbone']['transformer']['max_seq_len']
+            num_frames = config['neural_networks']['single_agent_policy']['backbone']['transformer']['max_seq_len']
             print(f"\n[Frame Stacking] Enabled with {num_frames} frames for transformer\n")
 
         # Build env-to-module connector
@@ -576,7 +558,7 @@ def main():
         if use_frame_stacking:
             env_to_module_connector = lambda env: CustomFrameStackingEnvToModule(
                 num_frames=num_frames,
-                multi_agent=True
+                multi_agent=False  # Single-agent
             )
         elif use_deltas and has_lstm:
             env_to_module_connector = partial(create_env_to_module_connector, use=True)
@@ -588,19 +570,13 @@ def main():
         if use_frame_stacking:
             learner_connector = lambda obs_space, act_space: CustomFrameStackingLearner(
                 num_frames=num_frames,
-                multi_agent=True
+                multi_agent=False  # Single-agent
             )
 
         algo_config = (
             algo_config_builder()
             .environment(
-                env="qarray_multiagent_env",
-            )
-            .multi_agent(
-                policy_mapping_fn=policy_mapping_fn,
-                policies=config['rl_config']['multi_agent']['policies'],
-                policies_to_train=config['rl_config']['multi_agent']['policies_to_train'],
-                count_steps_by=config['rl_config']['multi_agent']['count_steps_by'],
+                env="qarray_singleagent_env",
             )
             .rl_module(
                 rl_module_spec=rl_module_spec,
@@ -739,7 +715,7 @@ def main():
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
         
         # Also save environment config to checkpoint directory for inference
-        env_config_src = Path(__file__).parent.parent / "environment" / "env_config.yaml"
+        env_config_src = src_dir / "swarm" / "environment" / "env_config.yaml"
         if env_config_src.exists():
             env_config_dst = checkpoint_base_dir / "env_config.yaml"
             import shutil
@@ -763,9 +739,7 @@ def main():
             # Log metrics to wandb (EMA is calculated automatically in metrics_logger)
             log_to_wandb(result, i, distance_data_dir)
 
-            # Process and log GIFs if enabled
-            if config['gif_config']['enabled'] and use_wandb:
-                process_and_log_gifs(i + 1, config, use_wandb)
+            # GIF logging disabled for single-agent benchmark
 
             # Save checkpoint using modern RLlib API
             local_checkpoint_dir = Path(config['checkpoints']['save_dir']) / f"iteration_{i+1}"

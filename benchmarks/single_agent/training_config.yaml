@@ -1,0 +1,146 @@
+# Training Configuration for Single-Agent RL Quantum Device Tuning Benchmark
+# This file contains all configurable parameters for the single-agent training pipeline
+
+# Default training parameters
+defaults:
+  num_iterations: 400        # Total training iterations
+  delete_old_checkpoints: true # Delete local checkpoints as we go along
+  save_distance_data: false  # Disable distance data for single-agent benchmark
+
+# Weights & Biases configuration
+wandb:
+  entity: "rl_agents_for_tuning"
+  project: "SingleAgentBenchmark"
+  ema_period: 20          # EMA smoothing length
+
+# Ray cluster configuration
+ray:
+  include_dashboard: false   # Disable Ray dashboard for cleaner output
+  log_to_driver: false       # Reduce driver logs
+  logging_level: 40         # WARNING level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR)
+
+  # Runtime environment settings
+  runtime_env:
+    excludes:
+      - "dataset"
+      - "dataset_v1"
+      - "wandb"
+      - "outputs"
+      - "test_outputs"
+      - "checkpoints"
+      - "weights*"
+      - "*dataset*"
+
+    env_vars:
+      JAX_PLATFORM_NAME: "cuda"
+      JAX_PLATFORMS: "cuda"
+
+      PYTHONWARNINGS: "ignore::DeprecationWarning"
+      RAY_DEDUP_LOGS: "0"
+      RAY_DISABLE_IMPORT_WARNING: "1"
+
+      # Memory contention
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+      XLA_PYTHON_CLIENT_MEM_FRACTION: "0.25"
+      JAX_ENABLE_X64: "true"
+
+# Algorithm Configuration
+rl_config:
+  algorithm: "PPO" # PPO or SAC
+
+  # Environment runners configuration
+  env_runners:
+    num_env_runners: 14              # Number of parallel environment runners
+    rollout_fragment_length: 50     # Steps per rollout fragment
+    sample_timeout_s: 600.0         # Timeout for sampling
+    num_gpus_per_env_runner: 0.45     # GPU allocation per runner
+
+  # Learner configuration
+  learners:
+    num_learners: 1                 # Number of learner workers
+    num_gpus_per_learner: 0.75       # GPU allocation per learner
+
+  # Training hyperparameters
+  training:
+    train_batch_size: 16384          # Total batch size for training
+    minibatch_size: 2048             # Size of minibatches for SGD
+    num_epochs: 10                   # Number of SGD epochs per training iteration
+    grad_clip: 40.0                 # Amount of gradient clipping
+    grad_clip_by: "norm"            # Gradient clipping method
+
+    # PPO-specific config
+    lr: 0.0003
+    gamma: 0.0                      # Discount factor
+    lambda_: 0.95                   # GAE lambda parameter
+    clip_param: 0.2                 # PPO clipping parameter
+    entropy_coeff: 0.01             # Entropy regularization coefficient
+    vf_loss_coeff: 0.5              # Value function loss coefficient
+    kl_target: 0.01                 # Target size of KL penalty on policy updates
+
+    # SAC-specific config
+    actor_lr: 0.0003
+    critic_lr: 0.0003
+    alpha_lr: 0.0003
+    twin_q: true                   # Whether to use twin Q-networks
+    tau: 0.005                     # Target network update rate
+    initial_alpha: 1.0              # Initial entropy coefficient
+    target_entropy: "auto"       # Target entropy
+    n_step: 1                # Number of steps to look ahead
+    clip_actions: true          # Whether to clip actions
+    target_network_update_freq: 1  # Frequency of target network updates
+    num_steps_sampled_before_learning_starts: 1000
+    replay_buffer_config: {
+      "type": "PrioritizedEpisodeReplayBuffer",
+      "capacity": 1000000,
+      "alpha": 0.6,
+      "beta": 0.4,
+    }
+
+  # Single-agent configuration
+  single_agent:
+    free_log_std: false         # Whether to predict the std
+    log_std_bounds: [-10, 2]    # Ranges within which to clip predicted log_std
+
+# Resource allocation
+resources:
+  num_gpus: 8                       # Total GPUs for the algorithm
+
+# Checkpoint configuration
+checkpoints:
+  save_dir: "./checkpoints"         # Directory to save checkpoints
+  upload_best_only: true           # Only upload checkpoints with improved performance
+
+# Neural Network Architecture Configuration
+neural_networks:
+  single_agent_policy:
+    num_dots: 4  # Number of quantum dots in the array
+
+    # Encoder configuration (InputEncoder)
+    encoder:
+      num_input_scans: 3  # num_dots - 1 = 3 charge stability diagrams
+      feature_size: 256
+      cnn_activation: "relu"
+
+    # Optional memory layer configuration
+    backbone:
+      memory_layer: null  # null, 'lstm'
+      lstm:
+        hidden_dim: 256
+        num_layers: 1
+        max_seq_len: 1
+        store_voltages: false
+        voltage_hidden_dim: 16
+
+    # Policy head configuration
+    policy_head:
+      hidden_layers: [128, 128]
+      activation: "relu"
+      use_attention: false
+      num_outputs: 4  # num_dots gates
+
+    # Value head configuration
+    value_head:
+      hidden_layers: [128, 64]
+      activation: "relu"
+      use_attention: false
+      num_outputs: 4  # num_dots gates

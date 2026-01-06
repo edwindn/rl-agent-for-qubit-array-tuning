@@ -5,7 +5,7 @@
 defaults:
   num_iterations: 400        # Total training iterations
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
-  save_distance_data: false # Save per-agent diagnostic state info
+  save_distance_data: true # Save per-agent diagnostic state info
 
 # Weights & Biases configuration
 wandb:
@@ -71,7 +71,7 @@ rl_config:
 
     # PPO-specific config
     # lr: [[0, 0.0003], [400000, 0.0001], [800000, 0.00005]]
-    lr: 0.0005
+    lr: 0.0003
     # Learning rate: constant (e.g., 0.0003) or schedule as list of [timestep, lr] pairs (e.g., [[0, 0.0003], [100000, 0.0001]])
     gamma: 0.0                      # Discount factor
     lambda_: 0.95                   # GAE lambda parameter
@@ -151,7 +151,7 @@ neural_networks:
 #         - {channels: 32, kernel: 3, stride: 1}
 #       feature_size: 256
 #       adaptive_pooling: true
-      memory_layer: 'transformer' # null, 'lstm', 'transformer'
+      memory_layer: null # null, 'lstm', 'transformer'
       lstm:
         hidden_dim: 256
         num_layers: 1
@@ -169,11 +169,11 @@ neural_networks:
         use_ctlpe: true  # Use Continuous Time Linear Positional Embedding (voltage-based)
         add_pos_embeddings: false
     policy_head:
-      hidden_layers: [128, 128]
+      hidden_layers: [64, 64, 32]
       activation: "relu"
       use_attention: false
     value_head:
-      hidden_layers: [128, 128]
+      hidden_layers: [64, 64, 32]
       activation: "relu"
       use_attention: false
 

@@ -45,6 +45,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         return_voltage: bool = False,
         gif_config: dict = None,
         distance_data_dir: str = None,
+        env_config_path: str = "env_config.yaml",
     ):
         """
         Initialize multi-agent wrapper.
@@ -56,6 +57,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             return_voltage: If True, returns dict observation with image and voltage.
                           If False, returns only the image array.
             distance_data_dir: Path to directory for saving distance data (if enabled)
+            env_config_path: Path to environment config yaml file
         """
         super().__init__()
 
@@ -68,7 +70,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         if self.gif_config is not None:
             self._init_gif_capture()
 
-        self.base_env = QuantumDeviceEnv(training=training)
+        self.base_env = QuantumDeviceEnv(training=training, config_path=env_config_path)
 
         self.num_gates = self.base_env.num_dots
         self.use_barriers = self.base_env.use_barriers

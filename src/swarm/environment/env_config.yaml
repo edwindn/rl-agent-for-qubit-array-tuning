@@ -7,9 +7,9 @@ simulator:
 
   num_dots: 4
 
-  use_barriers: false
+  use_barriers: true
 
-  use_deltas: true # Whether the plunger agents' output is a ΔV or V
+  use_deltas: false # Whether the plunger agents' output is a ΔV or V
   
   delta_max: 5.0 #only used if use_deltas is true
   
