@@ -583,7 +583,7 @@ def main():
             if checkpoint_path.exists():
                 print(f"\nLoading checkpoint from: {checkpoint_path}")
                 try:
-                    algo.restore_from_path(str(checkpoint_path))
+                    algo.restore_from_path(str(checkpoint_path.absolute()))
                     fix_optimizer_betas_after_checkpoint_load(algo)
 
                     # Extract iteration number from path
@@ -594,6 +594,9 @@ def main():
                         print(f"Checkpoint loaded successfully. Resuming from iteration {start_iteration + 1}")
                     else:
                         print("Warning: Could not determine iteration number from checkpoint path")
+                        start_iteration = 0
+                        checkpoint_loaded = True
+                        print(f"Checkpoint loaded successfully. Starting from iteration 1")
                         
                 except Exception as e:
                     print(f"Error loading checkpoint: {e}")
