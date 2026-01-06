@@ -5,7 +5,7 @@
 defaults:
   num_iterations: 400        # Total training iterations
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
-  save_distance_data: false # Save per-agent diagnostic state info
+  save_distance_data: true # Save per-agent diagnostic state info
 
 # Weights & Biases configuration
 wandb:
@@ -50,11 +50,11 @@ rl_config:
 
   # Environment runners configuration
   env_runners:
-    num_env_runners: 14              # Number of parallel environment runners
+    num_env_runners: 21              # Number of parallel environment runners
 
     rollout_fragment_length: 50     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
-    num_gpus_per_env_runner: 0.45     # GPU allocation per runner
+    num_gpus_per_env_runner: 0.3     # GPU allocation per runner
 
   # Learner configuration  
   learners:
@@ -151,7 +151,7 @@ neural_networks:
 #         - {channels: 32, kernel: 3, stride: 1}
 #       feature_size: 256
 #       adaptive_pooling: true
-      memory_layer: 'transformer' # null, 'lstm', 'transformer'
+      memory_layer: null # null, 'lstm', 'transformer'
       lstm:
         hidden_dim: 256
         num_layers: 1
