@@ -1,8 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=arc_qarray_rl_training
-#SBATCH --output=logs/%x_%j.out
-#SBATCH --error=logs/%x_%j.err
-#SBATCH --time=100:00:00
+#SBATCH --time=20:00:00
 #SBATCH --gres=gpu:8
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -52,6 +50,19 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     nvidia-smi
 else
     echo "nvidia-smi not available — GPU may not be allocated correctly."
+    exit 1
+fi
+
+# Load environment variables from .env
+ENV_FILE="$SLURM_SUBMIT_DIR/.env"
+
+if [[ -f "$ENV_FILE" ]]; then
+    echo "Loading environment variables from $ENV_FILE"
+    set -a
+    source "$ENV_FILE"
+    set +a
+else
+    echo ".env file not found at $ENV_FILE — exiting."
     exit 1
 fi
 

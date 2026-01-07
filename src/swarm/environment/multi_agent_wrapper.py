@@ -85,7 +85,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             distance_data_path = Path(self.distance_data_dir)
             for agent_id in self.all_agent_ids:
                 agent_folder = distance_data_path / agent_id
-                agent_folder.mkdir(parents=False, exist_ok=True)
+                agent_folder.mkdir(parents=True, exist_ok=True, mode=0o777)
 
         # Setup channel assignments for agents
         self._setup_channel_assignments()
