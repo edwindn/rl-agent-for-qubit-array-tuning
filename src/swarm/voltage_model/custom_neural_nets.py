@@ -114,10 +114,15 @@ class SimpleCNN(TorchModel, Encoder):
         if isinstance(inputs, dict):
             if "image" in inputs:
                 x = inputs["image"]
+                voltage = inputs["voltage"]
             else:
                 raise ValueError(f"Unexpected input dict structure: {list(inputs.keys())}")
         else:
+            raise ValueError("For using voltage memory we need return_voltage to be enabled.")
             x = inputs
+
+        if voltage.dim() == 1:
+            voltage = voltage.unsqueeze(0)
 
         if x.dim() == 3:
             x = x.unsqueeze(0)
@@ -128,7 +133,12 @@ class SimpleCNN(TorchModel, Encoder):
         cnn_features = self.cnn(x)
         output_features = self.final_mlp(cnn_features)
 
-        return {ENCODER_OUT: output_features}
+        out = {
+            "image_features": output_features,
+            "voltage": voltage,
+        }
+
+        return {ENCODER_OUT: out}
 
 
 @dataclass
@@ -156,47 +166,60 @@ class PolicyHeadConfig(MLPHeadConfig):
 
 class PolicyHead(TorchModel):
     """Policy head for quantum device control with optional attention."""
-    
+
     def __init__(self, config: PolicyHeadConfig):
         super().__init__(config)
-        
+
         self.config = config
-        
+
+        voltage_embedding_dim = 16 # VOLTAGE DIM HARDCODED FOR NOW
+
         layers = []
         in_dim = config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims
-        
+
         for hidden_dim in config.hidden_layer_dims:
             layers.extend([
                 nn.Linear(in_dim, hidden_dim),
                 nn.ReLU() if config.activation == "relu" else nn.Tanh(),
             ])
             in_dim = hidden_dim
-        
-        layers.append(nn.Linear(in_dim, config.output_layer_dim))
-        
+
+        # layers.append(nn.Linear(in_dim, config.output_layer_dim))
+
         self.mlp = nn.Sequential(*layers)
-        
+
+        self.voltage_layer = nn.Linear(1, voltage_embedding_dim)
+
+        self.final_layer = nn.Linear(in_dim + voltage_embedding_dim, config.output_layer_dim)
+
         if config.use_attention:
             self.attention = nn.MultiheadAttention(
                 embed_dim=config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims,
                 num_heads=4,
                 batch_first=True
             )
-        
+
         self._output_dims = (config.output_layer_dim,)
-    
+
     @property
     def output_dims(self) -> Tuple[int, ...]:
         return self._output_dims
-    
+
     def _forward(self, inputs, **kwargs):
-        if self.config.use_attention and inputs.dim() == 2:
+        voltage = inputs["voltage"]
+        inputs = inputs["image_features"]
+
+        if self.config.use_attention:
             inputs = inputs.unsqueeze(1)
             attended, _ = self.attention(inputs, inputs, inputs)
             inputs = attended.squeeze(1)
-        
+
         x = self.mlp(inputs)
-        return x
+
+        voltage_features = self.voltage_layer(voltage)
+        x = torch.cat((x, voltage_features), dim=1)
+
+        return self.final_layer(x)
 
 @dataclass
 class IMPALAConfig(CNNEncoderConfig):
@@ -302,25 +325,35 @@ class IMPALA(TorchModel, Encoder):
     def _forward(self, inputs, **kwargs):
         if isinstance(inputs, dict) and "obs" in inputs:
             inputs = inputs["obs"]
-        
+
         if isinstance(inputs, dict):
             if "image" in inputs:
                 x = inputs["image"]
+                voltage = inputs["voltage"]
             else:
                 raise ValueError(f"Unexpected input dict structure: {list(inputs.keys())}")
         else:
+            raise ValueError("For using voltage memory we need return_voltage to be enabled.")
             x = inputs
-        
+
+        if voltage.dim() == 1:
+            voltage = voltage.unsqueeze(0)
+
         if x.dim() == 3:
             x = x.unsqueeze(0)
-        
+
         if x.shape[-1] <= 8:
             x = x.permute(0, 3, 1, 2)
-        
+
         cnn_features = self.cnn(x)
         output_features = self.final_mlp(cnn_features)
-        
-        return {ENCODER_OUT: output_features}
+
+        out = {
+            "image_features": output_features,
+            "voltage": voltage,
+        }
+
+        return {ENCODER_OUT: out}
 
 
 @dataclass
@@ -349,46 +382,58 @@ class ValueHeadConfig(MLPHeadConfig):
 
 class ValueHead(TorchModel):
     """Value head for quantum device RL with optional attention mechanism."""
-    
+
     def __init__(self, config: ValueHeadConfig):
         super().__init__(config)
-        
+
         self.config = config
-        
+
+        voltage_embedding_dim = 16 # VOLTAGE DIM HARDCODED FOR NOW
+
         layers = []
         in_dim = config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims
-        
+
         for hidden_dim in config.hidden_layer_dims:
             layers.extend([
                 nn.Linear(in_dim, hidden_dim),
                 nn.ReLU() if config.activation == "relu" else nn.Tanh(),
             ])
             in_dim = hidden_dim
-        
-        layers.append(nn.Linear(in_dim, 1))
-        
+
         self.mlp = nn.Sequential(*layers)
-        
+
+        self.voltage_layer = nn.Linear(1, voltage_embedding_dim)
+
+        self.final_layer = nn.Linear(in_dim + voltage_embedding_dim, 1)
+
         if config.use_attention:
             self.attention = nn.MultiheadAttention(
                 embed_dim=config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims,
                 num_heads=4,
                 batch_first=True
             )
-        
+
         self._output_dims = (1,)
-    
+
     @property
     def output_dims(self) -> Tuple[int, ...]:
         return self._output_dims
-    
+
     def _forward(self, inputs, **kwargs):
-        if self.config.use_attention and inputs.dim() == 2:
+        voltage = inputs["voltage"]
+        inputs = inputs["image_features"]
+
+        if self.config.use_attention:
             inputs = inputs.unsqueeze(1)
             attended, _ = self.attention(inputs, inputs, inputs)
             inputs = attended.squeeze(1)
-        
-        return self.mlp(inputs)
+
+        x = self.mlp(inputs)
+
+        voltage_features = self.voltage_layer(voltage)
+        x = torch.cat((x, voltage_features), dim=1)
+
+        return self.final_layer(x)
 
 
 @dataclass
@@ -498,10 +543,15 @@ class MobileNet(TorchModel, Encoder):
         if isinstance(inputs, dict):
             if "image" in inputs:
                 x = inputs["image"]
+                voltage = inputs["voltage"]
             else:
                 raise ValueError(f"Unexpected input dict structure: {list(inputs.keys())}")
         else:
+            raise ValueError("For using voltage memory we need return_voltage to be enabled.")
             x = inputs
+
+        if voltage.dim() == 1:
+            voltage = voltage.unsqueeze(0)
 
         if x.dim() == 3:
             x = x.unsqueeze(0)
@@ -516,7 +566,12 @@ class MobileNet(TorchModel, Encoder):
         # Project to desired feature size
         output_features = self.projection(backbone_features)
 
-        return {ENCODER_OUT: output_features}
+        out = {
+            "image_features": output_features,
+            "voltage": voltage,
+        }
+
+        return {ENCODER_OUT: out}
 
 
 
