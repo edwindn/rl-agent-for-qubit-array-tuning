@@ -9,9 +9,12 @@ from typing import Any, Dict, Optional
 import numpy as np
 import psutil
 import wandb
-import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+# Disable LaTeX rendering to avoid missing LaTeX package errors on compute nodes
+plt.rcParams['text.usetex'] = False
 
 
 # Global EMA state for sweep optimization
