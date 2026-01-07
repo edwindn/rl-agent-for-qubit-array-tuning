@@ -7,7 +7,7 @@ simulator:
 
   num_dots: 4
 
-  use_barriers: true
+  use_barriers: false
 
   use_deltas: false # Whether the plunger agents' output is a ΔV or V
   
