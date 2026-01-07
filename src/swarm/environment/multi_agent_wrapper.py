@@ -82,10 +82,19 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
 
         # Create subfolders for each agent if distance_data_dir is provided
         if self.distance_data_dir is not None:
+            import os
+            print(f"[DISTANCE DEBUG] Initializing distance data directory: {self.distance_data_dir}")
             distance_data_path = Path(self.distance_data_dir)
             for agent_id in self.all_agent_ids:
                 agent_folder = distance_data_path / agent_id
+                print(f"[DISTANCE DEBUG] Creating folder for agent {agent_id}: {agent_folder}")
                 agent_folder.mkdir(parents=True, exist_ok=True, mode=0o777)
+                # Ensure permissions are set correctly even if directory already existed
+                try:
+                    os.chmod(agent_folder, 0o777)
+                except:
+                    pass  # Directory may not exist or permissions may not be settable
+                print(f"[DISTANCE DEBUG] Folder created successfully: {agent_folder}")
 
         # Setup channel assignments for agents
         self._setup_channel_assignments()
@@ -384,10 +393,16 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         global_obs, global_info = self.base_env.reset(seed=seed, options=options)
 
         if self.distance_history is not None:
+            print(f"[DISTANCE DEBUG] Calling _save_agent_histories in reset()")
             self._save_agent_histories(self.distance_history)
+        else:
+            print(f"[DISTANCE DEBUG] distance_history is None in reset(), skipping save")
 
         if self.distance_data_dir is not None:
+            print(f"[DISTANCE DEBUG] Initializing new distance_history in reset()")
             self.distance_history = {_id: [] for _id in self.all_agent_ids}
+        else:
+            print(f"[DISTANCE DEBUG] distance_data_dir is None in reset(), skipping history init")
 
         # Convert to multi-agent observations
         agent_observations = {}
@@ -463,8 +478,10 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                     }
 
                     if self.distance_data_dir is not None:
-                        self.distance_history[agent_id].append(current_voltage - ground_truth)
-                
+                        distance_val = current_voltage - ground_truth
+                        self.distance_history[agent_id].append(distance_val)
+                        print(f"[DISTANCE DEBUG] Appended distance for {agent_id}: {distance_val}")
+
                 for idx, agent_id in enumerate(barrier_ids):
                     ground_truth = device_state_info["barrier_ground_truth"][idx]
                     current_voltage = device_state_info["current_barrier_voltages"][idx]
@@ -475,7 +492,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                     }
 
                     if self.distance_data_dir is not None:
-                        self.distance_history[agent_id].append(current_voltage - ground_truth)
+                        distance_val = current_voltage - ground_truth
+                        self.distance_history[agent_id].append(distance_val)
+                        print(f"[DISTANCE DEBUG] Appended distance for {agent_id}: {distance_val}")
 
             except Exception as e:
                 agent_infos = dict.fromkeys(self.all_agent_ids, {
@@ -492,19 +511,23 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
 
 
     def _save_agent_histories(self, history: dict):
+        print(f"[DISTANCE DEBUG] _save_agent_histories called with {len(history)} agents")
         assert set(history.keys()) == set(self.all_agent_ids), "Mismatch in agent ids in saved history"
 
         distance_data_path = Path(self.distance_data_dir)
+        print(f"[DISTANCE DEBUG] Saving to directory: {distance_data_path}")
 
         for agent_id in self.all_agent_ids:
             dists = history[agent_id]
             dists = np.array(dists)
+            print(f"[DISTANCE DEBUG] Processing {agent_id}: {len(dists)} distance values")
 
             # Get agent folder
             agent_folder = distance_data_path / agent_id
 
             # Find existing files to determine next count
             existing_files = glob.glob(str(agent_folder / "*.npy"))
+            print(f"[DISTANCE DEBUG] Found {len(existing_files)} existing files in {agent_folder}")
 
             if len(existing_files) == 0:
                 next_count = 1
@@ -525,7 +548,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             filepath = agent_folder / filename
 
             # Save the array
+            print(f"[DISTANCE DEBUG] Saving to: {filepath}")
             np.save(filepath, dists)
+            print(f"[DISTANCE DEBUG] Successfully saved {agent_id} data to {filepath}")
 
 
     # def _get_obs_images(self, obs: Dict[str, Union[np.ndarray, torch.tensor]]):

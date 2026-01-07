@@ -394,8 +394,23 @@ def main():
     if config['defaults']['save_distance_data']:
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        distance_data_dir = Path(__file__).parent / "data" / timestamp
-        distance_data_dir.mkdir(parents=True, exist_ok=True)
+        data_parent_dir = Path(__file__).parent / "data"
+        distance_data_dir = data_parent_dir / timestamp
+
+        # Create parent data directory first with proper permissions
+        data_parent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
+        try:
+            os.chmod(data_parent_dir, 0o777)
+        except:
+            pass
+
+        # Create timestamped subdirectory with proper permissions
+        distance_data_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
+        # Ensure permissions are set correctly even if directory already existed
+        try:
+            os.chmod(distance_data_dir, 0o777)
+        except:
+            pass  # Directory may not exist or permissions may not be settable
         print(f"\nDistance data will be saved to: {distance_data_dir}\n")
 
     # Initialize Weights & Biases
