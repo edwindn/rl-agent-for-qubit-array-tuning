@@ -45,13 +45,14 @@ class GenerationConfig:
     num_dots: int
     use_barriers: bool
     output_dir: str
-    config_path: str
+    config_path: str = "qarray_config.yaml"
     batch_size: int = 1000
-    voltage_offset_range: float = 0.1
+    voltage_offset_min: float = -20.0
+    voltage_offset_max: float = 10.0
     barrier_offset_range: float = 5.0
     seed_base: int = 42
-    min_obs_voltage_size: float = 0.5 # allows adjustable random window width, set equal to give fixed values
-    max_obs_voltage_size: float = 1.5 #
+    min_obs_voltage_size: float = 1.5 # allows adjustable random window width, set equal to give fixed values
+    max_obs_voltage_size: float = 2.0 #
     obs_image_size: int = 100 # must match size used in RL training
 
 
@@ -87,13 +88,13 @@ def generate_sample(sample_id: int, config: GenerationConfig) -> Dict[str, Any]:
         if use_barriers:
             gt_voltages, vb_optimal, _ = qarray.calculate_ground_truth()
         else:
-            gt_voltages = qarray.calculate_ground_truth()
+            gt_voltages, _, _ = qarray.calculate_ground_truth()
         
         # Add random offset to ground truth for observation
         rng = np.random.default_rng(config.seed_base + sample_id)
         voltage_offset = rng.uniform(
-            -config.voltage_offset_range, 
-            config.voltage_offset_range, 
+            config.voltage_offset_min,
+            config.voltage_offset_max,
             size=len(gt_voltages)
         )
         gate_voltages = gt_voltages + voltage_offset
@@ -108,7 +109,7 @@ def generate_sample(sample_id: int, config: GenerationConfig) -> Dict[str, Any]:
             barrier_voltages = vb_optimal + barrier_offset
         
         else:
-            barrier_voltages = [0.0] * (config.num_dots - 1)
+            barrier_voltages = np.array([0.0] * (config.num_dots - 1))
         
         # Generate observation
         obs = qarray._get_obs(gate_voltages, barrier_voltages)
@@ -448,20 +449,10 @@ def main():
                        help='Number of quantum dots')
     parser.add_argument('--use_barriers', action='store_true',
                        help='Whether to use barrier gates in the model')
-    parser.add_argument('--obs_image_size', type=int, default=100,
-                       help='Size of the observation image (pixels)')
     parser.add_argument('--batch_size', type=int, default=1000,
                        help='Number of samples per batch file')
     parser.add_argument('--output_dir', type=str, default='./dataset',
                        help='Output directory for dataset')
-    parser.add_argument('--config_path', type=str, default='qarray_config.yaml',
-                       help='Path to qarray configuration file')
-    parser.add_argument('--voltage_offset_range', type=float, default=0.1,
-                       help='Range for random voltage offset from ground truth')
-    parser.add_argument('--min_obs_voltage_size', type=float, default=0.5,
-                       help='Minimum observation voltage window size (symmetric around 0)')
-    parser.add_argument('--max_obs_voltage_size', type=float, default=1.5,
-                       help='Maximum observation voltage window size (symmetric around 0)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Base random seed for reproducibility')
     parser.add_argument('--test', action='store_true',
@@ -482,13 +473,8 @@ def main():
         num_dots=args.num_dots,
         use_barriers=args.use_barriers,
         output_dir=args.output_dir,
-        config_path=args.config_path,
         batch_size=args.batch_size,
-        voltage_offset_range=args.voltage_offset_range,
         seed_base=args.seed,
-        min_obs_voltage_size=args.min_obs_voltage_size,
-        max_obs_voltage_size=args.max_obs_voltage_size,
-        obs_image_size=args.obs_image_size,
     )
     
     # Run in test mode or normal generation mode

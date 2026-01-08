@@ -295,7 +295,7 @@ if __name__ == "__main__":
     import random
     
     # Test the dataset
-    data_dir = "/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/dataset3"
+    data_dir = "/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/qarray_dataset/dataset"
     
     print("Testing dataset loading...")
     dataset = CapacitanceDataset(data_dir, load_to_memory=False)

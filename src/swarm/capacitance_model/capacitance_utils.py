@@ -32,19 +32,6 @@ def get_channel_targets(channel_idx: int, cgd_matrix: np.ndarray, num_dots: int,
     left_pair = (channel_idx-1, channel_idx+1) # out of bounds for channel 0
     middle_pair = (channel_idx, channel_idx+1)
     right_pair = (channel_idx, channel_idx+2) # out of bounds for last channel
-
-    # # Convert to 1-indexed for the logic as specified
-    # channel_1indexed = channel_idx + 1
-    
-    # # Calculate the three target indices for this channel (1-indexed)
-    # target1_row = channel_1indexed - 1  # Will be -1 for channel 0, which doesn't exist
-    # target1_col = channel_1indexed + 1
-    
-    # target2_row = channel_1indexed
-    # target2_col = channel_1indexed + 1
-    
-    # target3_row = channel_1indexed - 1  # Will be -1 for channel 0  - ? should be not minus 1??
-    # target3_col = channel_1indexed + 2
     
     targets = []
 
@@ -59,24 +46,6 @@ def get_channel_targets(channel_idx: int, cgd_matrix: np.ndarray, num_dots: int,
         targets.append(0.0)
     else:
         targets.append(float(cgd_matrix[right_pair[0], right_pair[1]]))
-
-    # # Target 1: Check if indices are valid (convert back to 0-indexed for array access)
-    # if target1_row < 0 or target1_row >= num_dots or target1_col >= cgd_matrix.shape[1]:
-    #     targets.append(0.0)  # Pad with zero if doesn't exist
-    # else:
-    #     targets.append(float(cgd_matrix[target1_row, target1_col]))
-    
-    # # Target 2: Check if indices are valid
-    # if target2_row >= num_dots or target2_col >= cgd_matrix.shape[1]:
-    #     targets.append(0.0)
-    # else:
-    #     targets.append(float(cgd_matrix[target2_row, target2_col]))
-    
-    # # Target 3: Check if indices are valid
-    # if target3_row < 0 or target3_row >= num_dots or target3_col >= cgd_matrix.shape[1]:
-    #     targets.append(0.0)
-    # else:
-    #     targets.append(float(cgd_matrix[target3_row, target3_col]))
 
     # reorder to match expected model output: l, m, r -> m, r, l
     targets = np.array(targets, dtype=np.float32)[[1, 2, 0]]

@@ -43,16 +43,16 @@ class GenerationConfig:
     use_barriers: bool
     output_dir: str
     gpu_ids: str
-    config_path: str = '../environment/qarray_config.yaml'
-    resolution: int = 128
+    config_path: str = "qarray_config.yaml"
+    resolution: int = 100
     batch_size: int = 1000
-    min_voltage_offset_range: float = -2.0
-    max_voltage_offset_range: float = 0.05
-    min_barrier_offset_range: float = -3.0
-    max_barrier_offset_range: float = -1.0
+    voltage_offset_min: float = -40.0
+    voltage_offset_max: float = 20.0
+    barrier_offset_min: float = -3.0
+    barrier_offset_max: float = -1.0
     seed_base: int = 42
-    min_obs_voltage_size: float = 0.5 # allows adjustable random window width, set equal to give fixed values
-    max_obs_voltage_size: float = 1.5 #
+    min_obs_voltage_size: float = 1.5 # allows adjustable random window width, set equal to give fixed values
+    max_obs_voltage_size: float = 2.0 #
 
 
 def load_ray_config(config_path: str = None) -> Dict[str, Any]:
@@ -162,23 +162,23 @@ class QarrayWorkerActor:
             # Add random offset to ground truth for observation
             rng = np.random.default_rng(self.config.seed_base + sample_id)
             voltage_offset = rng.uniform(
-                self.config.min_voltage_offset_range, 
-                self.config.max_voltage_offset_range, 
+                self.config.voltage_offset_min, 
+                self.config.voltage_offset_max, 
                 size=len(gt_voltages)
             )
             gate_voltages = gt_voltages + voltage_offset
 
             if use_barriers:
                 barrier_offset = rng.uniform(
-                    self.config.min_barrier_offset_range,
-                    self.config.max_barrier_offset_range,
+                    self.config.barrier_offset_min,
+                    self.config.barrier_offset_max,
                     size=len(vb_optimal)
                 )
 
                 barrier_voltages = vb_optimal + barrier_offset
             
             else:
-                barrier_voltages = [0.0] * (self.config.num_dots - 1)
+                barrier_voltages = np.array([0.0] * (self.config.num_dots - 1))
             
             # Generate observation
             obs = qarray._get_obs(gate_voltages, barrier_voltages)
@@ -200,7 +200,7 @@ class QarrayWorkerActor:
         except Exception as e:
             return {
                 'sample_id': sample_id,
-                'worker_pid': self.worker_pid, # for debugging purposes
+                'worker_pid': self.worker_pid,
                 'gpu_id': self.gpu_id,
                 'success': False,
                 'error': str(e)
@@ -320,10 +320,10 @@ def run_test_mode(config: GenerationConfig, ray_config_path: str = None) -> None
             'config_path': config.config_path,
             'gpu_ids': config.gpu_ids,
             'batch_size': config.batch_size,
-            'min_voltage_offset_range': config.min_voltage_offset_range,
-            'max_voltage_offset_range': config.max_voltage_offset_range,
-            'min_barrier_offset_range': config.min_barrier_offset_range,
-            'max_barrier_offset_range': config.max_barrier_offset_range,
+            'voltage_offset_min': config.voltage_offset_min,
+            'voltage_offset_max': config.voltage_offset_max,
+            'barrier_offset_min': config.barrier_offset_min,
+            'barrier_offset_max': config.barrier_offset_max,
             'seed_base': config.seed_base,
             'min_obs_voltage_size': config.min_obs_voltage_size,
             'max_obs_voltage_size': config.max_obs_voltage_size
@@ -439,8 +439,8 @@ def save_metadata(config: GenerationConfig, output_dir: Path,
             'batch_size': config.batch_size,
             'num_dots': config.num_dots,
             'gpu_ids': config.gpu_ids,
-            'min_voltage_offset_range': config.min_voltage_offset_range,
-            'max_voltage_offset_range': config.max_voltage_offset_range,
+            'voltage_offset_min': config.voltage_offset_min,
+            'voltage_offset_max': config.voltage_offset_max,
             'seed_base': config.seed_base
         },
         'generation_stats': generation_stats,
@@ -514,10 +514,10 @@ def generate_dataset(config: GenerationConfig, ray_config_path: str = None) -> N
             'config_path': config.config_path,
             'gpu_ids': config.gpu_ids,
             'batch_size': config.batch_size,
-            'min_voltage_offset_range': config.min_voltage_offset_range,
-            'max_voltage_offset_range': config.max_voltage_offset_range,
-            'min_barrier_offset_range': config.min_barrier_offset_range,
-            'max_barrier_offset_range': config.max_barrier_offset_range,
+            'voltage_offset_min': config.voltage_offset_min,
+            'voltage_offset_max': config.voltage_offset_max,
+            'barrier_offset_min': config.barrier_offset_min,
+            'barrier_offset_max': config.barrier_offset_max,
             'seed_base': config.seed_base,
             'min_obs_voltage_size': config.min_obs_voltage_size,
             'max_obs_voltage_size': config.max_obs_voltage_size

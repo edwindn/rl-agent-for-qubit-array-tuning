@@ -15,7 +15,7 @@ simulator:
   
   full_plunger_range_width: {"min": 60, "max": 80} #range in V of plungers
 
-  window_delta_range: {"min": 1.5, "max": 2.0} #range in V for a single scan/sweep
+  window_delta_range: {"min": 1.5, "max": 2.0} #half range in V for a single scan/sweep (goes from -range to +range)
 
   full_barrier_range_width: {"min": 6, "max": 10} #range in V of barriers
 
