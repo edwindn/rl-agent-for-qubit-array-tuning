@@ -22,7 +22,7 @@ def main():
         subprocess.run([
             sys.executable, "-m", "streamlit", "run",
             "streamlit_app.py",
-            "--server.port", "8501",
+            "--server.port", "8502",
             "--server.address", "localhost"
         ], check=True)
     except subprocess.CalledProcessError as e:

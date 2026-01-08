@@ -71,6 +71,7 @@ class QarrayBaseClass:
 
         self.barrier_alpha = None
         self.barrier_tc_base = None
+        self.gate_ground_truth = None  # Set by env.py for radial noise
 
         # Store peak width settings for use in _load_model
         self.vary_peak_width = vary_peak_width
@@ -173,6 +174,13 @@ class QarrayBaseClass:
             voltage1 = float(gate_voltages[i])  # Use 0-based indexing for gate_voltages array
             voltage2 = float(gate_voltages[i + 1])  # Use 0-based indexing for gate_voltages array
             z = self._get_charge_sensor_data(voltage1, voltage2, gate1, gate2, barrier_voltages)
+
+            # Apply radial noise if enabled and ground truth is set
+            if self.gate_ground_truth is not None:
+                gt1 = float(self.gate_ground_truth[i])
+                gt2 = float(self.gate_ground_truth[i + 1])
+                z = self._apply_radial_noise(z, voltage1, voltage2, gt1, gt2)
+
             all_z.append(z)  # z is now 2D, no need to index [:, :, 0]
 
         # Stack images along the channel dimension
@@ -376,6 +384,47 @@ class QarrayBaseClass:
                 "amplitude": amplitude,
             },
         }
+
+    def _apply_radial_noise(self, z: np.ndarray, v1: float, v2: float, gt1: float, gt2: float) -> np.ndarray:
+        """
+        Apply radial noise that increases with distance from ground truth.
+
+        Noise is zero within zero_radius of ground truth, then increases linearly.
+
+        Args:
+            z: CSD image array (obs_image_size, obs_image_size)
+            v1, v2: Center voltages of the scan window
+            gt1, gt2: Ground truth voltages for the two gates
+
+        Returns:
+            Image with radial noise applied
+        """
+        radial_config = self.config["simulator"]["model"].get("radial_noise", {})
+        if not radial_config.get("enabled", False):
+            return z
+
+        zero_radius = radial_config.get("zero_radius", 5.0)
+        alpha = radial_config.get("alpha", 0.05)
+        max_amplitude = radial_config.get("max_amplitude", 0.5)
+
+        # Create voltage coordinate grids for the scan window
+        v1_coords = np.linspace(
+            v1 + self.obs_voltage_min, v1 + self.obs_voltage_max, self.obs_image_size
+        )
+        v2_coords = np.linspace(
+            v2 + self.obs_voltage_min, v2 + self.obs_voltage_max, self.obs_image_size
+        )
+        V1, V2 = np.meshgrid(v1_coords, v2_coords)
+
+        # Compute distance from ground truth for each pixel
+        distance = np.sqrt((V1 - gt1) ** 2 + (V2 - gt2) ** 2)
+
+        # Compute noise amplitude: zero within zero_radius, linear increase beyond
+        noise_amplitude = np.clip(alpha * (distance - zero_radius), 0, max_amplitude)
+
+        # Apply noise
+        noise = np.random.randn(*z.shape) * noise_amplitude
+        return z + noise
 
     def _generate_latching_parameters(self, config_ranges: dict, rng: np.random.Generator) -> dict:
         """Generate symmetric latching model parameters."""

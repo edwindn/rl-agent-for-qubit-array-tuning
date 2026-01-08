@@ -46,6 +46,13 @@ simulator:
     
     # White noise amplitude for charge stability diagram
     white_noise_amplitude: {"min": 0.0, "max": 0.002}
+
+    # Radial noise: zero within zero_radius of ground truth, then linearly increasing
+    radial_noise:
+      enabled: false
+      zero_radius: 5.0      # No noise within this distance (V) from ground truth
+      alpha: 0.001          # Noise increase rate per volt beyond zero_radius
+      max_amplitude: 0.05   # Cap on noise amplitude
     
     # Telegraph noise parameters (random telegraph noise)
     telegraph_noise_parameters:
