@@ -375,6 +375,16 @@ def load_config():
     return config
 
 
+def load_env_config():
+    """Load environment configuration from YAML file."""
+    config_path = Path(__file__).parent.parent / "environment" / "env_config.yaml"
+
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    return config
+
+
 def main():
     """Main inference function - single iteration with local saving."""
 
@@ -426,7 +436,9 @@ def main():
 
         create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir)
         register_env("qarray_multiagent_env", create_env_fn)
-        env_instance = create_env_fn()
+
+        # Load env config directly from YAML (no GPU initialization needed on driver)
+        env_config = load_env_config()
 
         # Optionally update the rl module config to allow log_std clamping, shared log_std vector etc.
         rl_module_config = {
@@ -444,7 +456,7 @@ def main():
         
         algo = config['rl_config']['algorithm'].lower()
 
-        rl_module_spec = create_rl_module_spec(env_instance, algo=algo, config=rl_module_config)
+        rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
 
         # Configure custom callbacks for logging to Wandb
         # log_images = config['wandb']['log_images']
@@ -486,7 +498,7 @@ def main():
             raise ValueError(f"Unsupported algorithm: {algo}")
 
         # Handle voltage parsing to memory manually
-        use_deltas = env_instance.base_env.use_deltas
+        use_deltas = env_config['simulator']['use_deltas']
         memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
         has_lstm = memory_layer == 'lstm'
         env_to_module_connector = partial(create_env_to_module_connector, use=use_deltas and has_lstm)
@@ -535,10 +547,6 @@ def main():
 
         algo = algo_config.build()
 
-
-        # Clean up the environment instance used for spec creation
-        env_instance.close()
-        del env_instance
 
         # Handle checkpoint loading if requested
         start_iteration = 0

@@ -5,10 +5,15 @@ Enhanced with comprehensive memory usage logging.
 """
 import os
 import sys
+import warnings
 
-# Suppress Ray warnings and verbose output
-os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
-os.environ["RAY_DEDUP_LOGS"] = "0"
+# Suppress deprecation/future warnings on driver (before Ray/RLlib imports)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+# Must be set before ray.init() to take effect
+os.environ["RAY_METRICS_EXPORT_INTERVAL_MS"] = "0"  # Suppress metrics exporter error (Ray 2.53+ bug)
+os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"  # Opt into future Ray behavior for GPU env var handling
 
 import argparse
 import glob
@@ -29,9 +34,9 @@ from ray.rllib.algorithms.sac import SACConfig
 from ray.tune.registry import register_env
 
 # Set logging level to reduce verbosity
-logging.getLogger("ray").setLevel(logging.WARNING)
-logging.getLogger("ray.tune").setLevel(logging.WARNING)
-logging.getLogger("ray.rllib").setLevel(logging.WARNING)
+logging.getLogger("ray").setLevel(logging.ERROR)
+logging.getLogger("ray.tune").setLevel(logging.ERROR)
+logging.getLogger("ray.rllib").setLevel(logging.ERROR)
 
 # Add src directory to path for clean imports
 current_dir = Path(__file__).parent
@@ -368,10 +373,20 @@ def create_env_to_module_connector(env, spaces, device, use):
 def load_config():
     """Load training configuration from YAML file."""
     config_path = Path(__file__).parent / "training_config.yaml"
-    
+
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-    
+
+    return config
+
+
+def load_env_config():
+    """Load environment configuration from YAML file."""
+    config_path = Path(__file__).parent.parent / "environment" / "env_config.yaml"
+
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
     return config
 
 
@@ -448,31 +463,30 @@ def main():
 
         create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir)
         register_env("qarray_multiagent_env", create_env_fn)
-        env_instance = create_env_fn()
 
-        # Extract environment config and merge with training config for wandb
+        # Load env config directly from YAML (no GPU initialization needed on driver)
+        env_config = load_env_config()
+
+        # Merge with training config for wandb logging
         if use_wandb:
-            env_config = env_instance.base_env.config
-            
-            # Create a copy of the training config and merge with env config
             import copy
             merged_config = copy.deepcopy(config)
             merged_config['env_config'] = env_config
-            
+
             # Update wandb config with the merged config
             wandb.config.update(merged_config)
-            
+
             # Save the merged config as a file artifact
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp_file:
                 yaml.dump(merged_config, tmp_file, default_flow_style=False, sort_keys=False)
                 merged_config_path = tmp_file.name
-            
+
             # Log the complete merged config as an artifact
             merged_config_artifact = wandb.Artifact("full_training_config", type="config", metadata=merged_config)
             merged_config_artifact.add_file(merged_config_path, "full_training_config.yaml")
             wandb.log_artifact(merged_config_artifact)
-            
+
             # Clean up temporary file
             os.unlink(merged_config_path)
 
@@ -492,7 +506,7 @@ def main():
         
         algo = config['rl_config']['algorithm'].lower()
 
-        rl_module_spec = create_rl_module_spec(env_instance, algo=algo, config=rl_module_config)
+        rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
 
         # Configure custom callbacks for logging to Wandb
         # log_images = config['wandb']['log_images']
@@ -534,7 +548,7 @@ def main():
             raise ValueError(f"Unsupported algorithm: {algo}")
 
         # Handle voltage parsing to memory manually
-        use_deltas = env_instance.base_env.use_deltas
+        use_deltas = env_config['simulator']['use_deltas']
         memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
         has_lstm = memory_layer == 'lstm'
         has_transformer = memory_layer == 'transformer'
@@ -602,7 +616,6 @@ def main():
                 learner_connector=learner_connector,
                 **train_config,
             )
-            .resources(num_gpus=config['resources']['num_gpus'])
             # .callbacks([custom_callbacks] if use_wandb else [])
         )
 
@@ -610,11 +623,6 @@ def main():
         print(f"\nBuilding {algo} algorithm...\n")
 
         algo = algo_config.build()
-
-
-        # Clean up the environment instance used for spec creation
-        env_instance.close()
-        del env_instance
 
         # Handle checkpoint loading if requested
         start_iteration = 0

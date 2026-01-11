@@ -34,10 +34,12 @@ ray:
     env_vars:
       JAX_PLATFORM_NAME: "cuda"
       JAX_PLATFORMS: "cuda"
-      
-      PYTHONWARNINGS: "ignore::DeprecationWarning"
-      RAY_DEDUP_LOGS: "0"
+
+      PYTHONWARNINGS: "ignore::DeprecationWarning,ignore::FutureWarning"
       RAY_DISABLE_IMPORT_WARNING: "1"
+
+      # Suppress metrics exporter error (known Ray 2.53+ bug, doesn't affect training)
+      RAY_METRICS_EXPORT_INTERVAL_MS: "0"
 
       # Memory contention
       XLA_PYTHON_CLIENT_PREALLOCATE: "false"
@@ -50,11 +52,11 @@ rl_config:
 
   # Environment runners configuration
   env_runners:
-    num_env_runners: 14              # Number of parallel environment runners
+    num_env_runners: 28              # Number of parallel environment runners
 
     rollout_fragment_length: 50     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
-    num_gpus_per_env_runner: 0.45     # GPU allocation per runner
+    num_gpus_per_env_runner: 0.22     # GPU allocation per runner (~4.4GB, actual usage ~2.4GB)
 
   # Learner configuration  
   learners:
@@ -113,10 +115,6 @@ rl_config:
     free_log_std: false         # Whether to predict the std (better exploration) or not (more stable)
                                 # Note this will affect how we extract the log std for logging
     log_std_bounds: [-10, 2]    # Ranges within which to clip predicted log_std for the policy head
-
-# Resource allocation
-resources:
-  num_gpus: 8                       # Total GPUs for the algorithm
 
 # Checkpoint configuration
 checkpoints:

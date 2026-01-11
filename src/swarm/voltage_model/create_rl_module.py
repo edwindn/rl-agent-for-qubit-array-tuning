@@ -6,14 +6,15 @@ from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec, RLModule
 from swarm.voltage_model.custom_catalog import CustomPPOCatalog
 
 
-def create_rl_module_spec(env_instance, algo: str="ppo", config: dict=None) -> MultiRLModuleSpec:
+def create_rl_module_spec(env_config: dict, algo: str="ppo", config: dict=None) -> MultiRLModuleSpec:
     """
     Create policy specifications for RLlib with the plunger and barrier policies
     (note there are only TWO policies although each has multiple agent instances)
 
     Args:
-        env_instance: Instance of the quantum device environment
-        config: Optional config dict
+        env_config: Environment configuration dict (from env_config.yaml)
+        algo: Algorithm type ("ppo" or "sac")
+        config: Neural network config dict
 
     Returns:
         MultiRLModuleSpec object
@@ -21,20 +22,16 @@ def create_rl_module_spec(env_instance, algo: str="ppo", config: dict=None) -> M
     import numpy as np
     from gymnasium import spaces
 
-    # Get full environment spaces from base environment
-    full_obs_space = env_instance.base_observation_space
-    full_action_space = env_instance.base_action_space
+    # Extract dimensions from env config (no GPU initialization needed)
+    resolution = env_config['simulator']['resolution']
+    num_dots = env_config['simulator']['num_dots']
+    num_channels = num_dots - 1  # N-1 charge stability diagrams
 
-    # Extract dimensions from environment
-    image_shape = full_obs_space["image"].shape  # (H, W, channels)
-    # num_gates = full_action_space["action_gate_voltages"].shape[0]  # Currently unused
-    # num_barriers = full_action_space["action_barrier_voltages"].shape[0]  # Currently unused
+    image_shape = (resolution, resolution, num_channels)
 
-    # Gate voltage ranges
-    gate_low = full_action_space["action_gate_voltages"].low[0]
-    gate_high = full_action_space["action_gate_voltages"].high[0]
-    barrier_low = full_action_space["action_barrier_voltages"].low[0]
-    barrier_high = full_action_space["action_barrier_voltages"].high[0]
+    # Voltage ranges are always [-1, 1] (normalized in env)
+    gate_low, gate_high = -1.0, 1.0
+    barrier_low, barrier_high = -1.0, 1.0
 
     # Create observation space for gate agents
     gate_obs_space = spaces.Box(
