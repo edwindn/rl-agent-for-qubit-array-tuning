@@ -75,8 +75,9 @@ def build_encoder_config(observation_space: gym.Space, model_config_dict: dict) 
             num_layers=transformer_config["num_layers"],
             feedforward_dim=transformer_config.get("feedforward_dim"),
             dropout=transformer_config["dropout"],
-            pooling_mode=transformer_config["pooling_mode"],
-            use_ctlpe=transformer_config["use_ctlpe"],
+            voltage_num_frequencies=transformer_config.get("voltage_num_frequencies", 8),
+            voltage_learnable_frequencies=transformer_config.get("voltage_learnable_frequencies", True),
+            pooling_mode=transformer_config.get("pooling_mode", "attention"),
         )
 
     elif memory_layer == "lstm":

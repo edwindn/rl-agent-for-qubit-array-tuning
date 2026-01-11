@@ -19,8 +19,8 @@ from .backbones import (
 from .memory import (
     LSTM,
     Transformer,
-    LearnedPositionalEncoding,
-    CTLPEPositionalEncoding,
+    FourierFeatures,
+    AttentionPooling,
 )
 
 from .heads import (
@@ -38,8 +38,8 @@ __all__ = [
     # Memory
     "LSTM",
     "Transformer",
-    "LearnedPositionalEncoding",
-    "CTLPEPositionalEncoding",
+    "FourierFeatures",
+    "AttentionPooling",
     # Heads
     "PolicyHead",
     "ValueHead",

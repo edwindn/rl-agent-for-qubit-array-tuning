@@ -49,18 +49,21 @@ class LSTMConfig(RecurrentEncoderConfig):
 class TransformerConfig(ModelConfig):
     """Transformer encoder configuration.
 
-    Wraps a CNN tokenizer and adds spatial attention through self-attention.
+    Treats observations as an unordered set of (voltage, image) pairs.
+    Uses self-attention to learn relationships between observations,
+    with voltage encoded via Fourier features as an equal partner to images.
 
     Args:
         tokenizer_config: Configuration object for the CNN backbone
         latent_size: Output feature dimension
         num_attention_heads: Number of attention heads
         num_layers: Number of transformer encoder layers
+        max_seq_len: Maximum sequence length for padding/truncation
         feedforward_dim: Hidden dimension of feedforward network
         dropout: Dropout probability
-        pooling_mode: How to pool outputs ("mean" or "max")
-        use_ctlpe: Whether to use CTLPE positional embedding
-        use_pos_embeddings: Whether to use sinusoidal positional embeddings
+        voltage_num_frequencies: Number of Fourier frequencies for voltage encoding
+        voltage_learnable_frequencies: Whether Fourier frequencies are learnable
+        pooling_mode: How to pool outputs ("attention", "mean", or "max")
     """
 
     tokenizer_config: Optional[CNNEncoderConfig] = None
@@ -70,9 +73,11 @@ class TransformerConfig(ModelConfig):
     max_seq_len: int = 20
     feedforward_dim: Optional[int] = None
     dropout: float = 0.1
-    pooling_mode: str = "mean"
-    use_ctlpe: bool = False
-    use_pos_embeddings: bool = False
+    # Voltage encoding
+    voltage_num_frequencies: int = 8
+    voltage_learnable_frequencies: bool = True
+    # Pooling
+    pooling_mode: str = "attention"
 
     def __post_init__(self):
         if self.tokenizer_config is None:
@@ -81,8 +86,8 @@ class TransformerConfig(ModelConfig):
         if self.feedforward_dim is None:
             self.feedforward_dim = 4 * self.latent_size
 
-        if self.pooling_mode not in ["mean", "max"]:
-            raise ValueError(f"pooling_mode must be 'mean' or 'max', got {self.pooling_mode}")
+        if self.pooling_mode not in ["attention", "mean", "max"]:
+            raise ValueError(f"pooling_mode must be 'attention', 'mean', or 'max', got {self.pooling_mode}")
 
     @property
     def output_dims(self):

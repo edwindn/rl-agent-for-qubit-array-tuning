@@ -52,7 +52,6 @@ from swarm.training.utils import (  # noqa: E402
     process_and_log_gifs,
     CustomFrameStackingEnvToModule,
     CustomFrameStackingLearner,
-    TD3TorchLearner,
 )
 
 from swarm.voltage_model import create_rl_module_spec
@@ -527,17 +526,13 @@ def main():
         # log_images = config['wandb']['log_images']
         # custom_callbacks = partial(CustomCallbacks, log_images=log_images)
 
-        # Specify algorithm-specific training parameters
         # Select algorithm config builder
-        # Note: TD3 uses SACConfig as base (similar infrastructure) but with TD3 learner
         if algo == "ppo":
             algo_config_builder = PPOConfig
         elif algo == "sac":
             algo_config_builder = SACConfig
-        elif algo == "td3":
-            algo_config_builder = SACConfig  # TD3 uses SAC infrastructure
         else:
-            raise ValueError(f"Unsupported algorithm: {algo}")
+            raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, sac")
 
         # Handle voltage parsing to memory manually
         use_deltas = env_config['simulator']['use_deltas']
@@ -555,7 +550,8 @@ def main():
         # Build env-to-module connector
         # Note: We prioritize frame stacking over custom LSTM connector when both are applicable
         if use_frame_stacking:
-            env_to_module_connector = lambda env: CustomFrameStackingEnvToModule(
+            # Note: RLlib expects signature (env, spaces, device) - spaces and device are optional
+            env_to_module_connector = lambda env, spaces=None, device=None: CustomFrameStackingEnvToModule(
                 num_frames=num_frames,
                 multi_agent=True
             )
@@ -605,7 +601,6 @@ def main():
                 learner_connector=learner_connector,
                 # Algorithm-specific learner classes
                 **({"learner_class": PPOLearnerWithValueStats} if algo == "ppo" else {}),
-                **({"learner_class": TD3TorchLearner} if algo == "td3" else {}),
             )
             # .callbacks([custom_callbacks] if use_wandb else [])
         )

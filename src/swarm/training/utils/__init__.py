@@ -21,7 +21,6 @@ from .custom_frame_stacking import (
     CustomFrameStackingEnvToModule,
     CustomFrameStackingLearner,
 )
-from .custom_td3_learner import TD3TorchLearner
 
 __all__ = [
     "log_to_wandb",
@@ -34,5 +33,4 @@ __all__ = [
     "process_episode_gif",
     "CustomFrameStackingEnvToModule",
     "CustomFrameStackingLearner",
-    "TD3TorchLearner",
 ]

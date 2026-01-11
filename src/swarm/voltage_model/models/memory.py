@@ -3,9 +3,10 @@ Temporal memory models for sequential decision making.
 
 Contains:
 - LSTM: Recurrent encoder with CNN tokenizer
-- Transformer: Attention-based encoder with CNN tokenizer
+- Transformer: Set-based attention encoder with CNN tokenizer
 """
 
+import math
 from typing import TYPE_CHECKING, Tuple
 
 import numpy as np
@@ -22,6 +23,84 @@ from swarm.voltage_model.models.transformer import TransformerEncoder, Transform
 
 if TYPE_CHECKING:
     from swarm.voltage_model.configs import LSTMConfig, TransformerConfig
+
+
+# =============================================================================
+# Voltage Encoding
+# =============================================================================
+
+class FourierFeatures(nn.Module):
+    """Fourier feature encoding for continuous values.
+
+    Encodes continuous values (like voltage) using sinusoidal features
+    at multiple frequencies, providing a smooth representation that
+    neural networks can easily interpolate.
+
+    Args:
+        num_frequencies: Number of frequency bands
+        learnable: If True, frequencies are learned; else fixed exponential
+    """
+
+    def __init__(self, num_frequencies: int = 8, learnable: bool = True):
+        super().__init__()
+        self.num_frequencies = num_frequencies
+        if learnable:
+            # Initialize with small random values for stable training
+            self.frequencies = nn.Parameter(torch.randn(num_frequencies) * 0.1)
+        else:
+            # Fixed exponential frequencies like in NeRF
+            self.register_buffer('frequencies', 2.0 ** torch.arange(num_frequencies).float())
+        self.output_dim = num_frequencies * 2  # sin + cos for each frequency
+
+    def forward(self, x):
+        """
+        Args:
+            x: Input tensor of shape (B, T) or (B, T, 1)
+
+        Returns:
+            Fourier features of shape (B, T, num_frequencies * 2)
+        """
+        if x.dim() == 2:
+            x = x.unsqueeze(-1)  # (B, T) -> (B, T, 1)
+
+        # Compute frequencies: x * freq * pi
+        freqs = x * self.frequencies * math.pi  # (B, T, num_freq)
+        return torch.cat([torch.sin(freqs), torch.cos(freqs)], dim=-1)
+
+
+# =============================================================================
+# Attention Pooling
+# =============================================================================
+
+class AttentionPooling(nn.Module):
+    """Aggregate a set of tokens into a single vector via attention.
+
+    Uses a learnable query to attend over all tokens, producing a
+    weighted combination that serves as the set representation.
+
+    Args:
+        d_model: Dimension of input tokens
+        num_heads: Number of attention heads
+    """
+
+    def __init__(self, d_model: int, num_heads: int = 1):
+        super().__init__()
+        self.query = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
+
+    def forward(self, tokens, key_padding_mask=None):
+        """
+        Args:
+            tokens: Input tokens of shape (B, T, D)
+            key_padding_mask: Boolean mask where True = padding (B, T)
+
+        Returns:
+            Pooled output of shape (B, D)
+        """
+        B = tokens.size(0)
+        query = self.query.expand(B, -1, -1)  # (B, 1, D)
+        output, _ = self.attention(query, tokens, tokens, key_padding_mask=key_padding_mask)
+        return output.squeeze(1)  # (B, D)
 
 
 # =============================================================================
@@ -136,52 +215,19 @@ class LSTM(TorchModel, Encoder):
 # Transformer
 # =============================================================================
 
-class LearnedPositionalEncoding(nn.Module):
-    """Learnable positional encoding for transformer."""
-
-    def __init__(self, max_seq_len: int, d_model: int):
-        super().__init__()
-        self.pos_embedding = nn.Parameter(torch.randn(1, max_seq_len, d_model))
-
-    def forward(self, x):
-        return x + self.pos_embedding[:, :x.size(1), :]
-
-
-class CTLPEPositionalEncoding(nn.Module):
-    """Continuous Time Linear Positional Embedding.
-
-    From "CTLPE: Continuous Time Linear Positional Embedding for Irregular Time Series"
-    Uses voltage values as continuous "time" to create positional embeddings.
-    Formula: p(v) = slope * v + bias
-    """
-
-    def __init__(self, d_model: int):
-        super().__init__()
-        self.slope = nn.Parameter(torch.randn(d_model))
-        self.bias = nn.Parameter(torch.randn(d_model))
-
-    def forward(self, x, voltages):
-        """
-        Args:
-            x: Token embeddings (batch, seq_len, d_model)
-            voltages: Voltage values (batch, seq_len)
-
-        Returns:
-            Token embeddings with CTLPE positional encoding added
-        """
-        pos_emb = voltages.unsqueeze(-1) * self.slope + self.bias
-        return x + pos_emb
-
-
 class Transformer(TorchModel, Encoder):
-    """Transformer encoder for spatial attention in quantum device control.
+    """Transformer encoder for set-based attention over voltage-image observations.
+
+    Treats observations as an UNORDERED SET of (voltage, image) pairs.
+    Uses self-attention to learn relationships between observations at
+    different voltage points, then pools via attention to produce output.
 
     Architecture:
-    1. CNN Tokenizer converts images to spatial feature tokens
-    2. Linear projection to transformer dimension
-    3. Positional encoding added to tokens
-    4. Multi-layer transformer encoder (self-attention + FFN)
-    5. Pooling across spatial dimension
+    1. CNN Tokenizer converts images to feature vectors
+    2. Fourier features encode voltage as equal partner
+    3. Fused (image, voltage) tokens projected to transformer dimension
+    4. Self-attention over all tokens (NO positional encoding)
+    5. Attention pooling aggregates set into single output vector
     """
 
     def __init__(self, config: "TransformerConfig"):
@@ -194,21 +240,18 @@ class Transformer(TorchModel, Encoder):
         self.tokenizer = config.tokenizer_config.build()
         tokenizer_output_dim = self.tokenizer.output_dims[0]
 
-        # Linear projection from tokenizer features to transformer dimension
-        self.token_projection = nn.Linear(tokenizer_output_dim, config.latent_size)
+        # Voltage encoder using Fourier features
+        self.voltage_encoder = FourierFeatures(
+            num_frequencies=config.voltage_num_frequencies,
+            learnable=config.voltage_learnable_frequencies,
+        )
+        voltage_feature_dim = self.voltage_encoder.output_dim
 
-        # Positional encoding
-        if config.use_ctlpe:
-            self.pos_encoder = CTLPEPositionalEncoding(config.latent_size)
-        else:
-            self.pos_encoder = None
+        # Fuse image + voltage features, then project to transformer dimension
+        fused_dim = tokenizer_output_dim + voltage_feature_dim
+        self.token_projection = nn.Linear(fused_dim, config.latent_size)
 
-        # Sinusoidal positional embeddings
-        if config.use_pos_embeddings:
-            sinusoids = self._get_sinusoids(config.max_seq_len, config.latent_size)
-            self.register_buffer('sinusoidal_embeddings', sinusoids)
-
-        # Transformer encoder layers
+        # Transformer encoder layers (self-attention over the set)
         encoder_layer = TransformerEncoderLayer(
             d_model=config.latent_size,
             nhead=config.num_attention_heads,
@@ -225,25 +268,20 @@ class Transformer(TorchModel, Encoder):
             norm=nn.LayerNorm(config.latent_size)
         )
 
+        # Pooling mechanism
+        if config.pooling_mode == "attention":
+            self.attention_pool = AttentionPooling(
+                d_model=config.latent_size,
+                num_heads=1,
+            )
+        else:
+            self.attention_pool = None
+
         self._output_dims = (config.latent_size,)
 
     @property
     def output_dims(self) -> Tuple[int, ...]:
         return self._output_dims
-
-    def _get_sinusoids(self, seq_len: int, d_model: int) -> torch.Tensor:
-        """Generate sinusoidal positional embeddings."""
-        position = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
-        div_term = torch.exp(
-            torch.arange(0, d_model, 2, dtype=torch.float32) *
-            -(np.log(10000.0) / d_model)
-        )
-
-        pe = torch.zeros(seq_len, d_model)
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-
-        return pe
 
     def _forward(self, inputs, **kwargs):
         if isinstance(inputs, dict) and "obs" in inputs:
@@ -283,36 +321,54 @@ class Transformer(TorchModel, Encoder):
         if attention_mask.dim() == 1:
             attention_mask = attention_mask.unsqueeze(0)
 
-        # Process each frame through CNN
-        token_list = []
+        # Encode images through CNN tokenizer
+        # Backbone expects dict with 'image' and 'voltage' keys
+        # Backbone returns {ENCODER_OUT: {"image_features": tensor, "voltage": tensor}}
+        image_feature_list = []
         for t in range(seq_len):
-            frame_t = images[:, t, :, :, :]
-            tokenizer_out = self.tokenizer._forward(frame_t)
-            tokens_t = tokenizer_out[ENCODER_OUT]
-            token_list.append(tokens_t)
+            frame_t = images[:, t, :, :, :]  # (B, H, W, C)
+            voltage_t = voltages[:, t:t+1]   # (B, 1) - keep dim for backbone
 
-        tokens = torch.stack(token_list, dim=1)
+            tokenizer_input = {
+                "image": frame_t,
+                "voltage": voltage_t,
+            }
+            tokenizer_out = self.tokenizer._forward(tokenizer_input)
 
-        # Project tokens to transformer dimension
-        tokens = self.token_projection(tokens)
+            # Extract image features from backbone output dict
+            image_feat_t = tokenizer_out[ENCODER_OUT]["image_features"]
+            image_feature_list.append(image_feat_t)
 
-        # Add positional encodings
-        if self.config.use_ctlpe:
-            tokens = self.pos_encoder(tokens, voltages)
+        image_features = torch.stack(image_feature_list, dim=1)  # (B, T, D_img)
 
-        if self.config.use_pos_embeddings:
-            tokens = tokens + self.sinusoidal_embeddings[:seq_len, :].unsqueeze(0)
+        # Encode voltages through Fourier features
+        voltage_features = self.voltage_encoder(voltages)  # (B, T, D_voltage)
 
-        # Apply transformer encoder with attention mask
-        attention_mask = attention_mask.bool().to(tokens.device)
-        transformed = self.transformer(tokens, src_key_padding_mask=attention_mask)
+        # Fuse image + voltage as equal partners and project
+        combined = torch.cat([image_features, voltage_features], dim=-1)  # (B, T, D_img + D_voltage)
+        tokens = self.token_projection(combined)  # (B, T, latent_size)
 
-        # Pool across sequence dimension
-        if self.config.pooling_mode == "mean":
-            output = transformed.mean(dim=1)
+        # Self-attention over the set (NO positional encoding - it's a set!)
+        mask = attention_mask.bool().to(tokens.device)
+        tokens = self.transformer(tokens, src_key_padding_mask=mask)
+
+        # Pool to single output vector
+        if self.config.pooling_mode == "attention":
+            output = self.attention_pool(tokens, key_padding_mask=mask)
+        elif self.config.pooling_mode == "mean":
+            # Mask out padding for mean
+            mask_expanded = (~mask).unsqueeze(-1).float()  # (B, T, 1), True for valid
+            output = (tokens * mask_expanded).sum(dim=1) / mask_expanded.sum(dim=1).clamp(min=1)
         elif self.config.pooling_mode == "max":
-            output = transformed.max(dim=1)[0]
+            # Mask out padding for max
+            tokens_masked = tokens.masked_fill(mask.unsqueeze(-1), float('-inf'))
+            output = tokens_masked.max(dim=1)[0]
         else:
             raise ValueError(f"Invalid pooling_mode: {self.config.pooling_mode}")
 
-        return {ENCODER_OUT: output}
+        # Return in format expected by heads (dict with "image_features" and "voltage")
+        # Note: voltage info is already fused into output, but heads expect this format
+        return {ENCODER_OUT: {
+            "image_features": output,
+            "voltage": voltages[:, -1:],  # Last voltage for compatibility with heads
+        }}
