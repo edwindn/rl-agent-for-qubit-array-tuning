@@ -52,6 +52,7 @@ from swarm.training.utils import (  # noqa: E402
     process_and_log_gifs,
     CustomFrameStackingEnvToModule,
     CustomFrameStackingLearner,
+    TD3TorchLearner,
 )
 
 from swarm.voltage_model import create_rl_module_spec
@@ -309,7 +310,14 @@ def parse_arguments():
         action='store_true',
         help='Disable Weights & Biases logging'
     )
-    
+
+    parser.add_argument(
+        '--config',
+        type=str,
+        default=None,
+        help='Path to training config YAML file (default: training_config.yaml)'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -367,9 +375,19 @@ def create_env_to_module_connector(env, spaces, device, use):
         return []
 
 
-def load_config():
-    """Load training configuration from YAML file."""
-    config_path = Path(__file__).parent / "training_config.yaml"
+def load_config(config_path=None):
+    """Load training configuration from YAML file.
+
+    Args:
+        config_path: Path to config file. If None, uses default training_config.yaml
+    """
+    if config_path is None:
+        config_path = Path(__file__).parent / "training_config.yaml"
+    else:
+        config_path = Path(config_path)
+        # Handle relative paths from training directory
+        if not config_path.is_absolute() and not config_path.exists():
+            config_path = Path(__file__).parent / config_path
 
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -394,9 +412,9 @@ def main():
     args = parse_arguments()
 
     use_wandb = not args.disable_wandb
-    
-    config = load_config()
-    
+
+    config = load_config(args.config)
+
     # Apply command line overrides to config
     if hasattr(args, 'config_overrides') and args.config_overrides:
         config = apply_config_overrides(config, args.config_overrides)
@@ -510,37 +528,14 @@ def main():
         # custom_callbacks = partial(CustomCallbacks, log_images=log_images)
 
         # Specify algorithm-specific training parameters
-        ppo_train_config = {
-            "lr": config['rl_config']['training']['lr'],
-            "gamma": config['rl_config']['training']['gamma'],
-            "lambda_": config['rl_config']['training']['lambda_'],
-            "clip_param": config['rl_config']['training']['clip_param'],
-            "entropy_coeff": config['rl_config']['training']['entropy_coeff'],
-            "vf_loss_coeff": config['rl_config']['training']['vf_loss_coeff'],
-            "kl_target": config['rl_config']['training']['kl_target'],
-        }
-
-        sac_train_config = {
-            "actor_lr": config['rl_config']['training']['actor_lr'],
-            "critic_lr": config['rl_config']['training']['critic_lr'],
-            "alpha_lr": config['rl_config']['training']['alpha_lr'],
-            "twin_q": config['rl_config']['training']['twin_q'],
-            "tau": config['rl_config']['training']['tau'],
-            "initial_alpha": config['rl_config']['training']['initial_alpha'],
-            "target_entropy": config['rl_config']['training']['target_entropy'],
-            "n_step": config['rl_config']['training']['n_step'],
-            "clip_actions": config['rl_config']['training']['clip_actions'],
-            "target_network_update_freq": config['rl_config']['training']['target_network_update_freq'],
-            "num_steps_sampled_before_learning_starts": config['rl_config']['training']['num_steps_sampled_before_learning_starts'],
-            "replay_buffer_config": config['rl_config']['training']['replay_buffer_config'],
-        }
-
+        # Select algorithm config builder
+        # Note: TD3 uses SACConfig as base (similar infrastructure) but with TD3 learner
         if algo == "ppo":
             algo_config_builder = PPOConfig
-            train_config = ppo_train_config
         elif algo == "sac":
             algo_config_builder = SACConfig
-            train_config = sac_train_config
+        elif algo == "td3":
+            algo_config_builder = SACConfig  # TD3 uses SAC infrastructure
         else:
             raise ValueError(f"Unsupported algorithm: {algo}")
 
@@ -604,14 +599,13 @@ def main():
                 num_gpus_per_learner=config['rl_config']['learners']['num_gpus_per_learner'],
             )
             .training(
-                train_batch_size=config['rl_config']['training']['train_batch_size'],
-                minibatch_size=config['rl_config']['training']['minibatch_size'],
-                num_epochs=config['rl_config']['training']['num_epochs'],
-                grad_clip=config['rl_config']['training']['grad_clip'],
-                grad_clip_by=config['rl_config']['training']['grad_clip_by'],
-                learner_class=PPOLearnerWithValueStats if algo == "ppo" else None,
+                # Pass all training params from config (config is algorithm-specific)
+                **config['rl_config']['training'],
+                # Code-level settings
                 learner_connector=learner_connector,
-                **train_config,
+                # Algorithm-specific learner classes
+                **({"learner_class": PPOLearnerWithValueStats} if algo == "ppo" else {}),
+                **({"learner_class": TD3TorchLearner} if algo == "td3" else {}),
             )
             # .callbacks([custom_callbacks] if use_wandb else [])
         )

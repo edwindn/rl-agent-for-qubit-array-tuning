@@ -19,6 +19,7 @@ from .head_configs import (
     PolicyHeadConfig,
     ValueHeadConfig,
     QValueHeadConfig,
+    DeterministicPolicyHeadConfig,
 )
 
 __all__ = [
@@ -33,4 +34,5 @@ __all__ = [
     "PolicyHeadConfig",
     "ValueHeadConfig",
     "QValueHeadConfig",
+    "DeterministicPolicyHeadConfig",
 ]

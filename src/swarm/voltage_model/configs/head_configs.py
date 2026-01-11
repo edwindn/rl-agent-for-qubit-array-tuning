@@ -80,3 +80,31 @@ class QValueHeadConfig(MLPHeadConfig):
             raise ValueError(f"Only torch framework supported, got {framework}")
         from swarm.voltage_model.models.heads import QValueHead
         return QValueHead(self)
+
+
+@dataclass
+class DeterministicPolicyHeadConfig(MLPHeadConfig):
+    """Policy head configuration for TD3's deterministic policy.
+
+    Unlike PolicyHeadConfig which outputs mean+log_std (2*action_dim),
+    this outputs action directly (action_dim) with tanh activation.
+    """
+
+    hidden_layers: Optional[List[int]] = None
+    activation: str = "relu"
+    use_attention: bool = False
+
+    def __post_init__(self):
+        if self.hidden_layers:
+            self.hidden_layer_dims = self.hidden_layers
+        else:
+            self.hidden_layer_dims = [128, 128]
+
+        self.hidden_layer_activation = self.activation
+        self.output_layer_activation = "tanh"  # Bound actions to [-1, 1]
+
+    def build(self, framework: str = "torch"):
+        if framework != "torch":
+            raise ValueError(f"Only torch framework supported, got {framework}")
+        from swarm.voltage_model.models.heads import DeterministicPolicyHead
+        return DeterministicPolicyHead(self)

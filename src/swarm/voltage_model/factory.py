@@ -12,6 +12,8 @@ from swarm.voltage_model.algorithms import (
     CustomPPOCatalog,
     CustomSACCatalog,
     CustomSACTorchRLModule,
+    CustomTD3Catalog,
+    CustomTD3TorchRLModule,
 )
 
 
@@ -104,7 +106,8 @@ def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = No
         module_class = CustomSACTorchRLModule
         catalog_class = CustomSACCatalog
     elif algo == "td3":
-        raise NotImplementedError("TD3 support not yet implemented")
+        module_class = CustomTD3TorchRLModule
+        catalog_class = CustomTD3Catalog
     else:
         raise ValueError(f"Unsupported algorithm: {algo}. Supported: 'ppo', 'sac', 'td3'")
 
