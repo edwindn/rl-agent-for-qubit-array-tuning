@@ -1,19 +1,29 @@
-from ray.rllib.algorithms.ppo.torch.default_ppo_torch_rl_module import DefaultPPOTorchRLModule
-from swarm.voltage_model.custom_sac_rl_module import CustomSACTorchRLModule
+"""
+Factory for creating RLlib module specifications.
 
+This is the single entry point for creating RL modules for different algorithms.
+To add a new algorithm (e.g., TD3), add a new branch in create_rl_module_spec().
+"""
+
+from ray.rllib.algorithms.ppo.torch.default_ppo_torch_rl_module import DefaultPPOTorchRLModule
 from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec, RLModuleSpec
 
-from swarm.voltage_model.custom_catalog import CustomPPOCatalog
+from swarm.voltage_model.algorithms import (
+    CustomPPOCatalog,
+    CustomSACCatalog,
+    CustomSACTorchRLModule,
+)
 
 
-def create_rl_module_spec(env_config: dict, algo: str="ppo", config: dict=None) -> MultiRLModuleSpec:
+def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = None) -> MultiRLModuleSpec:
     """
-    Create policy specifications for RLlib with the plunger and barrier policies
-    (note there are only TWO policies although each has multiple agent instances)
+    Create policy specifications for RLlib with the plunger and barrier policies.
+
+    This is the single entry point for all algorithms (PPO, SAC, TD3, etc.)
 
     Args:
         env_config: Environment configuration dict (from env_config.yaml)
-        algo: Algorithm type ("ppo" or "sac")
+        algo: Algorithm type ("ppo", "sac", "td3")
         config: Neural network config dict
 
     Returns:
@@ -42,7 +52,6 @@ def create_rl_module_spec(env_config: dict, algo: str="ppo", config: dict=None) 
     )
 
     # Create action space for gate agents
-    # Each gate agent controls: single gate voltage
     gate_action_space = spaces.Box(
         low=gate_low,
         high=gate_high,
@@ -51,28 +60,6 @@ def create_rl_module_spec(env_config: dict, algo: str="ppo", config: dict=None) 
     )
 
     # Create observation space for barrier agents
-    # Each barrier agent sees: single-channel image + single voltage value
-    barrier_obs_space = spaces.Dict(
-        {
-            "image": spaces.Box(
-                low=0.0,
-                high=1.0,
-                shape=(
-                    image_shape[0],
-                    image_shape[1],
-                    1,
-                ),  # Single channel for barrier agents
-                dtype=np.float32,
-            ),
-            "voltage": spaces.Box(
-                low=barrier_low,
-                high=barrier_high,
-                shape=(1,),  # Single voltage value
-                dtype=np.float32,
-            ),
-        }
-    )
-    # IMAGE ONLY SPACE
     barrier_obs_space = spaces.Box(
         low=0.0,
         high=1.0,
@@ -81,7 +68,6 @@ def create_rl_module_spec(env_config: dict, algo: str="ppo", config: dict=None) 
     )
 
     # Create action space for barrier agents
-    # Each barrier agent controls: single barrier voltage
     barrier_action_space = spaces.Box(
         low=barrier_low,
         high=barrier_high,
@@ -89,12 +75,12 @@ def create_rl_module_spec(env_config: dict, algo: str="ppo", config: dict=None) 
         dtype=np.float32,
     )
 
-    # Load neural network configuration from YAML file
+    # Load neural network configuration
     if config is not None and isinstance(config, dict):
         neural_networks_config = config
     else:
         neural_networks_config = {}
-    
+
     # Create model configs for each policy
     plunger_config = neural_networks_config['plunger_policy']
     barrier_config = neural_networks_config['barrier_policy']
@@ -110,16 +96,19 @@ def create_rl_module_spec(env_config: dict, algo: str="ppo", config: dict=None) 
         transformer_config = backbone['transformer']
         plunger_config['max_seq_len'] = transformer_config['max_seq_len']
 
-    if algo=="ppo":
+    # Select algorithm-specific classes
+    if algo == "ppo":
         module_class = DefaultPPOTorchRLModule
         catalog_class = CustomPPOCatalog
-    elif algo=="sac":
+    elif algo == "sac":
         module_class = CustomSACTorchRLModule
         catalog_class = CustomSACCatalog
+    elif algo == "td3":
+        raise NotImplementedError("TD3 support not yet implemented")
     else:
-        raise ValueError(f"Unsupported algorithm: {algo}")
+        raise ValueError(f"Unsupported algorithm: {algo}. Supported: 'ppo', 'sac', 'td3'")
 
-    # Create single agent RLModule specs using new API
+    # Create single agent RLModule specs
     plunger_spec = RLModuleSpec(
         module_class=module_class,
         observation_space=gate_obs_space,

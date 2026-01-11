@@ -10,10 +10,7 @@ import warnings
 # Suppress deprecation/future warnings on driver (before Ray/RLlib imports)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
-
-# Must be set before ray.init() to take effect
-os.environ["RAY_METRICS_EXPORT_INTERVAL_MS"] = "0"  # Suppress metrics exporter error (Ray 2.53+ bug)
-os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"  # Opt into future Ray behavior for GPU env var handling
+os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0" #not neccessary but suppresses warning, opts into future behaviour of Ray accel
 
 import argparse
 import glob
