@@ -117,6 +117,7 @@ dmypy.json
 *.weights
 checkpoints/
 models/
+!src/swarm/voltage_model/models/
 weights/
 saved_models/
 *.png

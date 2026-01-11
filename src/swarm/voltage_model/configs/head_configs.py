@@ -53,3 +53,30 @@ class ValueHeadConfig(MLPHeadConfig):
             raise ValueError(f"Only torch framework supported, got {framework}")
         from swarm.voltage_model.models.heads import ValueHead
         return ValueHead(self)
+
+
+@dataclass
+class QValueHeadConfig(MLPHeadConfig):
+    """Q-function head configuration for SAC.
+
+    Unlike ValueHead, this takes a flat tensor [encoder_features, action] as input.
+    """
+
+    hidden_layers: Optional[List[int]] = None
+    activation: str = "relu"
+
+    def __post_init__(self):
+        if self.hidden_layers:
+            self.hidden_layer_dims = self.hidden_layers
+        else:
+            self.hidden_layer_dims = [256, 256]
+
+        self.hidden_layer_activation = self.activation
+        self.output_layer_activation = "linear"
+        self.output_layer_dim = 1
+
+    def build(self, framework: str = "torch"):
+        if framework != "torch":
+            raise ValueError(f"Only torch framework supported, got {framework}")
+        from swarm.voltage_model.models.heads import QValueHead
+        return QValueHead(self)

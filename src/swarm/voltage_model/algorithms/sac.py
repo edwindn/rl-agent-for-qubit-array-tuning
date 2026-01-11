@@ -13,7 +13,7 @@ from ray.rllib.core.models.configs import ModelConfig
 from ray.rllib.utils.annotations import override
 
 from swarm.voltage_model.algorithms.common import build_encoder_config, get_head_input_dim
-from swarm.voltage_model.configs import PolicyHeadConfig, ValueHeadConfig
+from swarm.voltage_model.configs import PolicyHeadConfig, QValueHeadConfig
 
 
 class CustomSACCatalog(SACCatalog):
@@ -74,11 +74,10 @@ class CustomSACCatalog(SACCatalog):
         # Q-function takes concatenated [encoded_obs, action] as input
         input_dim = encoder_output_dim + action_dim
 
-        config = ValueHeadConfig(
+        config = QValueHeadConfig(
             input_dims=(input_dim,),
             hidden_layers=value_config["hidden_layers"],
             activation=value_config["activation"],
-            use_attention=value_config["use_attention"],
         )
 
         return config.build(framework=framework)
@@ -123,14 +122,27 @@ class CustomSACTorchRLModule(DefaultSACTorchRLModule):
         if isinstance(self.action_space, gym.spaces.Box):
             # Encode observations
             obs_encoded = encoder(batch)
+
+            # Extract ENCODER_OUT from dict
             if isinstance(obs_encoded, dict) and ENCODER_OUT in obs_encoded:
                 obs_encoded = obs_encoded[ENCODER_OUT]
+
+            # Handle CNN backbone output format: {"image_features": tensor, "voltage": tensor}
+            # We only need image_features for Q-function (voltage is handled separately)
+            if isinstance(obs_encoded, dict):
+                if "image_features" in obs_encoded:
+                    obs_tensor = obs_encoded["image_features"]
+                else:
+                    raise ValueError(f"Unexpected encoder output structure: {list(obs_encoded.keys())}")
+            else:
+                # Already a tensor (e.g., from LSTM/Transformer)
+                obs_tensor = obs_encoded
 
             # Get actions from batch
             actions = batch[Columns.ACTIONS]
 
             # Concatenate encoded observations with actions
-            qf_input = torch.concat((obs_encoded, actions), dim=-1)
+            qf_input = torch.concat((obs_tensor, actions), dim=-1)
 
             # Q-function forward pass
             qf_out = head(qf_input)
@@ -143,7 +155,13 @@ class CustomSACTorchRLModule(DefaultSACTorchRLModule):
             # Discrete action spaces - Q outputs values for each action
             qf_batch = {Columns.OBS: batch[Columns.OBS]}
             qf_encoder_outs = encoder(qf_batch)
-            qf_out = head(qf_encoder_outs[ENCODER_OUT])
+            encoder_out = qf_encoder_outs[ENCODER_OUT]
+
+            # Handle dict output format
+            if isinstance(encoder_out, dict) and "image_features" in encoder_out:
+                encoder_out = encoder_out["image_features"]
+
+            qf_out = head(encoder_out)
 
             if squeeze:
                 qf_out = qf_out.squeeze(-1)

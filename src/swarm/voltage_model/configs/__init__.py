@@ -18,6 +18,7 @@ from .memory_configs import (
 from .head_configs import (
     PolicyHeadConfig,
     ValueHeadConfig,
+    QValueHeadConfig,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     # Heads
     "PolicyHeadConfig",
     "ValueHeadConfig",
+    "QValueHeadConfig",
 ]

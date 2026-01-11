@@ -48,7 +48,7 @@ ray:
 
 # Algorithm Configuration
 rl_config:
-  algorithm: "PPO" # PPO or SAC
+  algorithm: "SAC" # PPO or SAC
 
   # Environment runners configuration
   env_runners:
@@ -56,7 +56,7 @@ rl_config:
 
     rollout_fragment_length: 50     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
-    num_gpus_per_env_runner: 0.22     # GPU allocation per runner (~4.4GB, actual usage ~2.4GB)
+    num_gpus_per_env_runner: 0.22   
 
   # Learner configuration  
   learners:
