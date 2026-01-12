@@ -2,6 +2,32 @@ import numpy as np
 from typing import List, Tuple
 
 
+def get_nearest_targets(channel_idx: int, cgd_matrix: np.ndarray, num_dots: int, has_sensor: bool  = True) -> np.ndarray:
+    """
+    Extract capacitance values for just nearest-neighbour couplings (two values)
+
+    Args:
+        channel_idx: index of leftmost dot (0 <= idx <= num_dots - 2)
+
+    Returns:
+        tuple of (c1, c2) where
+        c1 = coupling of gate idx+1 to dot idx
+        c2 = coupling of gate idx to dot idx+1
+    """
+
+    assert channel_idx in list(range(num_dots-1)), f"Out-of-bounds channel index given for {num_dots} dots."
+
+    if has_sensor:
+        assert cgd_matrix.shape[0] == cgd_matrix.shape[1] - 1 == num_dots, f"CGD matrix must have shape ({num_dots}, {num_dots+1})"
+    else:
+        assert cgd_matrix.shape[0] == cgd_matrix.shape[1] == num_dots, f"CGD matrix must have shape ({num_dots}, {num_dots})"
+
+    c1 = float(cgd_matrix[channel_idx, channel_idx + 1])
+    c2 = float(cgd_matrix[channel_idx + 1, channel_idx])
+
+    return np.array([c1, c2], dtype=np.float32)
+
+
 def get_channel_targets(channel_idx: int, cgd_matrix: np.ndarray, num_dots: int, has_sensor: bool = True) -> np.ndarray:
     """
     Get the target CGD values for a specific channel.

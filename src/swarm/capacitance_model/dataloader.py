@@ -6,7 +6,7 @@ import glob
 from typing import Tuple, List, Optional, Union
 from sklearn.model_selection import train_test_split
 
-from capacitance_utils import get_channel_targets
+from capacitance_utils import get_channel_targets, get_nearest_targets
 
 
 class CapacitanceDataset(data.Dataset):
@@ -20,6 +20,7 @@ class CapacitanceDataset(data.Dataset):
     def __init__(
         self, 
         data_dirs: Union[str, List[str]], 
+        nearest_neighbours: bool = True,
         transform: Optional[callable] = None,
         load_to_memory: bool = False,
         validate_data: bool = True
@@ -36,6 +37,7 @@ class CapacitanceDataset(data.Dataset):
         self.data_dirs = data_dirs if isinstance(data_dirs, list) else [data_dirs]
         self.transform = transform
         self.load_to_memory = load_to_memory
+        self.nearest_neighbours = nearest_neighbours
 
         print(f"Loading data files from the following directories: {' '.join(self.data_dirs)}")
 
@@ -132,7 +134,7 @@ class CapacitanceDataset(data.Dataset):
         
         Returns:
             image: (1, H, W) tensor
-            targets: (3,) tensor containing [Cgd_1_2, Cgd_1_3, Cgd_0_2]
+            targets: (3,) or (2,) tensor
         """
         file_idx, local_idx, channel_idx = self.index_map[idx]
         
@@ -153,7 +155,10 @@ class CapacitanceDataset(data.Dataset):
         
         # Get targets for this specific channel
         num_dots = cgd_matrix.shape[0]
-        targets = get_channel_targets(channel_idx, cgd_matrix, num_dots)
+        if self.nearest_neighbours:
+            targets = get_nearest_targets(channel_idx, cgd_matrix, num_dots) # size 2
+        else:
+            targets = get_channel_targets(channel_idx, cgd_matrix, num_dots) # size 3
         
         # Convert to torch tensors
         image = torch.from_numpy(image).unsqueeze(0)  # Add channel dimension (1, H, W)
@@ -173,11 +178,12 @@ def create_data_loaders(
     num_workers: int = 4,
     load_to_memory: bool = False,
     transform: Optional[callable] = None,
-    random_state: int = 42
+    random_state: int = 42,
+    nearest_neighbours: bool = True
 ) -> Tuple[data.DataLoader, data.DataLoader]:
     """
     Create train and validation data loaders.
-    
+
     Args:
         data_dirs: Path(s) to dataset directory
         batch_size: Batch size for data loaders
@@ -186,7 +192,8 @@ def create_data_loaders(
         load_to_memory: Whether to load all data to memory
         transform: Optional image transforms
         random_state: Random seed for train/val split
-        
+        nearest_neighbours: Whether to only predict nearest-neighbour capacitances
+
     Returns:
         train_loader, val_loader
     """
@@ -194,7 +201,8 @@ def create_data_loaders(
     full_dataset = CapacitanceDataset(
         data_dirs=data_dirs,
         transform=transform,
-        load_to_memory=load_to_memory
+        load_to_memory=load_to_memory,
+        nearest_neighbours=nearest_neighbours
     )
     
     # Split dataset
@@ -357,8 +365,8 @@ if __name__ == "__main__":
             
             # Plot the image
             im = axes[plot_idx].imshow(image, cmap='viridis', aspect='equal')
-            axes[plot_idx].set_title(f'Sample {img_idx}\nTargets: [{targets[0]:.3f}, {targets[1]:.3f}, {targets[2]:.3f}]', 
-                                   fontsize=8)
+            targets_str = ", ".join(f"{t:.3f}" for t in targets)
+            axes[plot_idx].set_title(f"Sample {img_idx}\nTargets: [{targets_str}]", fontsize=8)
             axes[plot_idx].set_xlabel('Gate Voltage')
             axes[plot_idx].set_ylabel('Gate Voltage') 
             

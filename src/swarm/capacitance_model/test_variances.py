@@ -328,12 +328,13 @@ Individual Results:
     return results
 
 
-def load_trained_model(model_path: str, device: torch.device):
+def load_trained_model(model_path: str, device: torch.device, disable_nearest_neighbours: bool = False):
     """Load the trained model from checkpoint."""
     print(f"Loading model from: {model_path}")
-    
-    # Create model
-    model = create_model()
+
+    # Create model with correct output size
+    output_size = 3 if disable_nearest_neighbours else 2
+    model = create_model(output_size)
     
     # Load checkpoint
     if not os.path.exists(model_path):
@@ -356,7 +357,7 @@ def load_trained_model(model_path: str, device: torch.device):
 
 def main():
     # Configuration
-    root_data_dir = '/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/'
+    root_data_dir = '/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/qarray_dataset/'
     data_dirs = ['dataset', '4dot_dataset']
     model_path = '/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/weights/best_model.pth'
     batch_size = 64
@@ -364,6 +365,7 @@ def main():
     num_workers = 4
     load_to_memory = False
     num_samples = 1000
+    disable_nearest_neighbours = False  # Set to True if model was trained without nearest neighbours
     
     # Set random seed for reproducibility
     torch.manual_seed(42)
@@ -389,7 +391,7 @@ def main():
     )
     
     # Load trained model
-    model = load_trained_model(model_path, device)
+    model = load_trained_model(model_path, device, disable_nearest_neighbours)
     
     # Collect validation images and run inference
     all_predictions = []

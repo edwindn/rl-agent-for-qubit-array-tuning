@@ -592,7 +592,7 @@ def train_func(config: dict):
         wandb.define_metric("epoch_time", step_metric="epoch")
 
     data_dirs = [os.path.join(config['root_data_dir'], dir_) for dir_ in config['data_dirs']]
-    
+
     # Create data loaders
     print("Creating data loaders...")
     transform = get_transforms(normalize=True)
@@ -602,7 +602,8 @@ def train_func(config: dict):
         val_split=config['val_split'],
         num_workers=config['num_workers'],
         load_to_memory=config['load_to_memory'],
-        transform=transform
+        transform=transform,
+        nearest_neighbours=not config['disable_nearest_neighbours']
     )
     
     # Prepare data loaders for distributed training
@@ -688,7 +689,7 @@ def train_func(config: dict):
 def main():
     parser = argparse.ArgumentParser(description='Train Capacitance Prediction Model')
     parser.add_argument('--root_data_dir', type=str, 
-                       default='/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/',
+                       default='/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/qarray_dataset/',
                        help='Path to dataset directory')
     parser.add_argument('--data_dirs', type=str, nargs='+', default=['dataset'],
                        help='List of data directories')
@@ -722,6 +723,8 @@ def main():
                        help='Disable wandb logging')
     parser.add_argument('--mobilenet', type=str, default='small', choices=['small', 'large'],
                        help='MobileNet architecture size (small or large)')
+    parser.add_argument('--disable_nearest_neighbours', action='store_true',
+                        help='Whether to only predict nearest-neighbour capacitances (disables)')
     
     args = parser.parse_args()
     args.load_to_memory = not args.disable_data_loading
@@ -833,7 +836,7 @@ def main():
             wandb.define_metric("epoch_time", step_metric="epoch")
 
         data_dirs = [os.path.join(args.root_data_dir, dir_) for dir_ in args.data_dirs]
-        
+
         # Create data loaders
         print("Creating data loaders...")
         transform = get_transforms(normalize=True)
@@ -843,12 +846,13 @@ def main():
             val_split=args.val_split,
             num_workers=args.num_workers,
             load_to_memory=args.load_to_memory,
-            transform=transform
+            transform=transform,
+            nearest_neighbours=not args.disable_nearest_neighbours
         )
         
         # Create model and loss function
         print("Creating model...")
-        model = create_model(mobilenet=args.mobilenet)
+        model = create_model(output_size = 2 if not args.disable_nearest_neighbours else 3, mobilenet=args.mobilenet)
         model = model.to(device)
         
         loss_fn = create_loss_function(

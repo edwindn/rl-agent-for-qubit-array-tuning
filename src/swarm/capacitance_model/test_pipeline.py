@@ -25,7 +25,12 @@ from swarm.capacitance_model.dataloader import PercentileNormalize, get_channel_
 class TestCapacitancePredictionModel:
 
     @staticmethod
-    def _load_data(n_dots, seed_base=42, voltage_offset_range=0.5, reverse=True):
+    def _load_data(n_dots, seed_base=42, voltage_offset_range=0.5, reverse=True, use_barriers=False):
+        if use_barriers:
+            raise NotImplementedError
+        else:
+            print("WARNING: barriers disabled for this test")
+            
         # create data of varying levels of noise to test confidence update
         
         # create data with increasing levels of noise
@@ -47,13 +52,13 @@ class TestCapacitancePredictionModel:
         for params in param_override_list:
             qarray = QarrayBaseClass(
                 num_dots=n_dots,
-                obs_voltage_min=-0.5,
-                obs_voltage_max=0.5,
-                obs_image_size=128,
-                param_overrides=params
+                use_barriers=use_barriers,
+                obs_voltage_min=-1.5,
+                obs_voltage_max=1.5,
+                obs_image_size=100,
             )
             
-            gt_voltages = qarray.calculate_ground_truth()
+            gt_voltages, _, _ = qarray.calculate_ground_truth()
 
             rng = np.random.default_rng(seed_base)
             voltage_offset = rng.uniform(
@@ -120,7 +125,7 @@ class TestCapacitancePredictionModel:
         return observations
         
     
-    def __init__(self, n_dots, weights_path, reverse=False):
+    def __init__(self, n_dots, weights_path, reverse=False, disable_nearest_neighbours=False):
         if not os.path.exists(weights_path):
             raise FileNotFoundError(f"Model weights not found at: {weights_path}")
 
@@ -136,7 +141,9 @@ class TestCapacitancePredictionModel:
         else:
             state_dict = checkpoint
 
-        self.ml_model = CapacitancePredictionModel()
+        # Create model with correct output size
+        output_size = 3 if disable_nearest_neighbours else 2
+        self.ml_model = CapacitancePredictionModel(output_size)
 
         self.ml_model.load_state_dict(state_dict)
         print(f"Loaded weights from {weights_path}")
@@ -243,9 +250,10 @@ class TestCapacitancePredictionModel:
 if __name__ == '__main__':
     np.set_printoptions(precision=10, suppress=True)
     os.environ["CUDA_VISIBLE_DEVICES"] = "7" # change as needed
-    
-    weights_path = os.path.join(os.path.dirname(__file__), 'weights', 'best_model.pth')
 
-    test = TestCapacitancePredictionModel(n_dots=4, weights_path=weights_path, reverse=True)
+    weights_path = os.path.join(os.path.dirname(__file__), 'weights', 'best_model.pth')
+    disable_nearest_neighbours = False  # Set to True if model was trained without nearest neighbours
+
+    test = TestCapacitancePredictionModel(n_dots=4, weights_path=weights_path, reverse=True, disable_nearest_neighbours=disable_nearest_neighbours)
     test.run_test(type="noise")
     print("Test ran successfully")
