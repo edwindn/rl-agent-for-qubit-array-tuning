@@ -4,9 +4,13 @@ import pathlib
 import sys
 from functools import partial as bind
 
+# Hide GPU 0 before JAX initializes
+os.environ['CUDA_VISIBLE_DEVICES'] = '1,2'
+
 folder = pathlib.Path(__file__).parent
 sys.path.insert(0, str(folder.parent))
 sys.path.insert(1, str(folder.parent.parent))
+sys.path.insert(2, str(folder.parent.parent / 'src' / 'swarm'))
 __package__ = folder.name
 
 import elements
@@ -220,23 +224,9 @@ def make_env(config, index, **overrides):
     from embodied.envs import from_gym
     import sys
     import os
-    
-    if task == 'nav':
-      # Import the NavEnv from nav_env.py
-      nav_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'nav_env.py')
-      sys.path.insert(0, os.path.dirname(nav_env_path))
-      from nav_env import NavEnv
-    elif task == 'qarray':
-      # Import the QuantumDeviceEnv from qarray_env.py
-      qarray_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qarray_env.py')
-      sys.path.insert(0, os.path.dirname(qarray_env_path))
-      from qarray_env import QuantumDeviceEnv
 
-    elif task == 'qdarts':
-      # Import the QDartsEnv from qdarts_env.py
-      qdarts_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'qdarts_env.py')
-      sys.path.insert(0, os.path.dirname(qdarts_env_path))
-      from qdarts_env import QDartsEnv
+    # Import the DreamerEnvWrapper for QuantumDeviceEnv
+    from DreamerEnvWrapper import DreamerEnvWrapper
   
   ctor = {
       'dummy': 'embodied.envs.dummy:Dummy',
@@ -257,9 +247,7 @@ def make_env(config, index, **overrides):
           f'MemoryMaze-{task}-v0', **kw),
       # Custom environment integration
       'custom': lambda task, **kw: (
-          from_gym.FromGym(NavEnv(**kw)) if task == 'nav' 
-          else from_gym.FromGym(QuantumDeviceEnv(**kw)) if task == 'qarray'
-          else from_gym.FromGym(QDartsEnv(**kw)) if task == 'qdarts'
+          from_gym.FromGym(DreamerEnvWrapper(**kw)) if task == 'qarray'
           else None
       ),
   }[suite]

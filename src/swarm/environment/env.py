@@ -175,6 +175,9 @@ class QuantumDeviceEnv(gym.Env):
         assert len(plunger_ground_truth) == self.num_plunger_voltages, f"Expected plunger ground truth to be of length {self.num_plunger_voltages}, got {len(plunger_ground_truth)}"
         assert len(barrier_ground_truth) == self.num_barrier_voltages, f"Expected plunger ground truth to be of length {self.num_barrier_voltages}, got {len(barrier_ground_truth)}"
 
+        # Set ground truth on array for radial noise
+        self.array.gate_ground_truth = plunger_ground_truth
+
         self._init_voltage_ranges(
             plunger_ground_truth,
             barrier_ground_truth

@@ -45,7 +45,6 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         return_voltage: bool = False,
         gif_config: dict = None,
         distance_data_dir: str = None,
-        env_config_path: str = "env_config.yaml",
     ):
         """
         Initialize multi-agent wrapper.
@@ -57,7 +56,6 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             return_voltage: If True, returns dict observation with image and voltage.
                           If False, returns only the image array.
             distance_data_dir: Path to directory for saving distance data (if enabled)
-            env_config_path: Path to environment config yaml file
         """
         super().__init__()
 
@@ -70,7 +68,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         if self.gif_config is not None:
             self._init_gif_capture()
 
-        self.base_env = QuantumDeviceEnv(training=training, config_path=env_config_path)
+        self.base_env = QuantumDeviceEnv(training=training)
 
         self.num_gates = self.base_env.num_dots
         self.use_barriers = self.base_env.use_barriers
@@ -84,10 +82,16 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
 
         # Create subfolders for each agent if distance_data_dir is provided
         if self.distance_data_dir is not None:
+            import os
             distance_data_path = Path(self.distance_data_dir)
             for agent_id in self.all_agent_ids:
                 agent_folder = distance_data_path / agent_id
-                agent_folder.mkdir(parents=False, exist_ok=True)
+                agent_folder.mkdir(parents=True, exist_ok=True, mode=0o777)
+                # Ensure permissions are set correctly even if directory already existed
+                try:
+                    os.chmod(agent_folder, 0o777)
+                except:
+                    pass  # Directory may not exist or permissions may not be settable
 
         # Setup channel assignments for agents
         self._setup_channel_assignments()
@@ -465,8 +469,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                     }
 
                     if self.distance_data_dir is not None:
-                        self.distance_history[agent_id].append(current_voltage - ground_truth)
-                
+                        distance_val = current_voltage - ground_truth
+                        self.distance_history[agent_id].append(distance_val)
+
                 for idx, agent_id in enumerate(barrier_ids):
                     ground_truth = device_state_info["barrier_ground_truth"][idx]
                     current_voltage = device_state_info["current_barrier_voltages"][idx]
@@ -477,7 +482,8 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                     }
 
                     if self.distance_data_dir is not None:
-                        self.distance_history[agent_id].append(current_voltage - ground_truth)
+                        distance_val = current_voltage - ground_truth
+                        self.distance_history[agent_id].append(distance_val)
 
             except Exception as e:
                 agent_infos = dict.fromkeys(self.all_agent_ids, {

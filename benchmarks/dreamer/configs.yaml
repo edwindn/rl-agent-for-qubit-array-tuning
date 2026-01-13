@@ -35,7 +35,7 @@ defaults:
     minecraft: {size: [64, 64], break_speed: 100.0, logs: False, length: 36000}
     dmc: {size: [64, 64], repeat: 1, proprio: True, image: True, camera: -1}
     loconav: {size: [64, 64], repeat: 1, camera: -1}
-    custom: {render_mode: 'human', use_seed: True} #CUSTOM (works with array currently)
+    custom: {} #CUSTOM (works with array currently)
 
   replay:
     size: 5e6
@@ -73,8 +73,8 @@ defaults:
   jax:
     platform: cuda
     compute_dtype: bfloat16
-    policy_devices: [2]
-    train_devices: [2]
+    policy_devices: [1]
+    train_devices: [1]
     mock_devices: 0
     prealloc: True
     jit: True
