@@ -522,6 +522,23 @@ def main():
 
         rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
 
+        # Filter training parameters based on algorithm
+        # PPO-specific parameters that should NOT be passed to SAC
+        ppo_only_params = {'lr', 'lambda_', 'clip_param', 'entropy_coeff', 'vf_loss_coeff', 'kl_target', 'num_epochs', 'minibatch_size'}
+        # SAC-specific parameters that should NOT be passed to PPO
+        sac_only_params = {'actor_lr', 'critic_lr', 'alpha_lr', 'twin_q', 'tau', 'initial_alpha', 'target_entropy', 'n_step',
+                          'clip_actions', 'target_network_update_freq', 'num_steps_sampled_before_learning_starts', 'replay_buffer_config'}
+
+        training_params = config['rl_config']['training'].copy()
+        if algo == 'sac':
+            # Remove PPO-only parameters when using SAC
+            for param in ppo_only_params:
+                training_params.pop(param, None)
+        elif algo == 'ppo':
+            # Remove SAC-only parameters when using PPO
+            for param in sac_only_params:
+                training_params.pop(param, None)
+
         # Configure custom callbacks for logging to Wandb
         # log_images = config['wandb']['log_images']
         # custom_callbacks = partial(CustomCallbacks, log_images=log_images)
@@ -595,8 +612,8 @@ def main():
                 num_gpus_per_learner=config['rl_config']['learners']['num_gpus_per_learner'],
             )
             .training(
-                # Pass all training params from config (config is algorithm-specific)
-                **config['rl_config']['training'],
+                # Pass filtered training params based on algorithm
+                **training_params,
                 # Code-level settings
                 learner_connector=learner_connector,
                 # Algorithm-specific learner classes
