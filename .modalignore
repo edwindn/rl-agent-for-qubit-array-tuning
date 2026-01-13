@@ -5,9 +5,12 @@ __pycache__/
 *.pyd
 .Python
 
-# Virtual environments
+# Virtual environments (both with and without slash for safety)
+.venv
 .venv/
+.conda
 .conda/
+venv
 venv/
 env/
 ENV/
@@ -34,13 +37,41 @@ htmlcov/
 dist/
 build/
 
-# Logs
+# Logs and outputs
 *.log
+logs/
+runs/
+wandb/
+tensorboard_logs/
 
 # OS
 .DS_Store
 Thumbs.db
 
+# Large data files
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.csv
+*.json
+*.png
+*.gif
+
+# Lock files (dependencies installed from requirements.txt)
+uv.lock
+poetry.lock
+Pipfile.lock
+
 # Large output files (use Modal Volumes instead)
 src/swarm/training/checkpoints/
+checkpoints/
 *.pth
+*.pt
+*.ckpt
+
+# Claude Code
+CLAUDE.md
+.Claude
