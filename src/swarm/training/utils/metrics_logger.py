@@ -120,6 +120,15 @@ def extract_training_metrics(result: Dict[str, Any]) -> Dict[str, Any]:
         "vf_predictions_variance": plunger_policy.get("vf_predictions_variance", None),
         # Learning rate (from RLlib's optimizer tracking)
         "lr": plunger_policy.get("default_optimizer_learning_rate", None),
+        # SAC-specific metrics (keys from ray.rllib.algorithms.sac.sac_learner)
+        "qf_loss": plunger_policy.get("qf_loss", None),
+        "qf_twin_loss": plunger_policy.get("qf_twin_loss", None),
+        "alpha_loss": plunger_policy.get("alpha_loss", None),
+        "alpha_value": plunger_policy.get("alpha_value", None),
+        "qf_mean": plunger_policy.get("qf_mean", None),
+        "qf_min": plunger_policy.get("qf_min", None),
+        "qf_max": plunger_policy.get("qf_max", None),
+        "td_error_mean": plunger_policy.get("td_error_mean", None),
     }
 
     metrics["barrier_metrics"] = {
@@ -135,6 +144,15 @@ def extract_training_metrics(result: Dict[str, Any]) -> Dict[str, Any]:
         "grad_norm": barrier_policy.get("gradients_default_optimizer_global_norm", None),
         # Learning rate (from RLlib's optimizer tracking)
         "lr": barrier_policy.get("default_optimizer_learning_rate", None),
+        # SAC-specific metrics (keys from ray.rllib.algorithms.sac.sac_learner)
+        "qf_loss": barrier_policy.get("qf_loss", None),
+        "qf_twin_loss": barrier_policy.get("qf_twin_loss", None),
+        "alpha_loss": barrier_policy.get("alpha_loss", None),
+        "alpha_value": barrier_policy.get("alpha_value", None),
+        "qf_mean": barrier_policy.get("qf_mean", None),
+        "qf_min": barrier_policy.get("qf_min", None),
+        "qf_max": barrier_policy.get("qf_max", None),
+        "td_error_mean": barrier_policy.get("td_error_mean", None),
     }
 
     # System metrics
@@ -265,6 +283,24 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
                 "plunger_mean_kl": p_metrics["mean_kl"],
             }
         )
+
+    # SAC-specific metrics for plunger
+    if p_metrics["qf_loss"] is not None:
+        log_dict["plunger_qf_loss"] = p_metrics["qf_loss"]
+    if p_metrics["qf_twin_loss"] is not None:
+        log_dict["plunger_qf_twin_loss"] = p_metrics["qf_twin_loss"]
+    if p_metrics["alpha_loss"] is not None:
+        log_dict["plunger_alpha_loss"] = p_metrics["alpha_loss"]
+    if p_metrics["alpha_value"] is not None:
+        log_dict["plunger_alpha_value"] = p_metrics["alpha_value"]
+    if p_metrics["qf_mean"] is not None:
+        log_dict["plunger_qf_mean"] = p_metrics["qf_mean"]
+    if p_metrics["qf_min"] is not None:
+        log_dict["plunger_qf_min"] = p_metrics["qf_min"]
+    if p_metrics["qf_max"] is not None:
+        log_dict["plunger_qf_max"] = p_metrics["qf_max"]
+    if p_metrics["td_error_mean"] is not None:
+        log_dict["plunger_td_error_mean"] = p_metrics["td_error_mean"]
     
     # Add advantage metrics if available
     if p_metrics["advantage_mean"] is not None:
@@ -301,6 +337,24 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
                 "barrier_mean_kl": b_metrics["mean_kl"],
             }
         )
+
+    # SAC-specific metrics for barrier
+    if b_metrics["qf_loss"] is not None:
+        log_dict["barrier_qf_loss"] = b_metrics["qf_loss"]
+    if b_metrics["qf_twin_loss"] is not None:
+        log_dict["barrier_qf_twin_loss"] = b_metrics["qf_twin_loss"]
+    if b_metrics["alpha_loss"] is not None:
+        log_dict["barrier_alpha_loss"] = b_metrics["alpha_loss"]
+    if b_metrics["alpha_value"] is not None:
+        log_dict["barrier_alpha_value"] = b_metrics["alpha_value"]
+    if b_metrics["qf_mean"] is not None:
+        log_dict["barrier_qf_mean"] = b_metrics["qf_mean"]
+    if b_metrics["qf_min"] is not None:
+        log_dict["barrier_qf_min"] = b_metrics["qf_min"]
+    if b_metrics["qf_max"] is not None:
+        log_dict["barrier_qf_max"] = b_metrics["qf_max"]
+    if b_metrics["td_error_mean"] is not None:
+        log_dict["barrier_td_error_mean"] = b_metrics["td_error_mean"]
     
     # Add advantage metrics if available
     if b_metrics["advantage_mean"] is not None:

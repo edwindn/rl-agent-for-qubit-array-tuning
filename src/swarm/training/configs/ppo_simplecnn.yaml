@@ -3,7 +3,7 @@
 
 # Default training parameters
 defaults:
-  num_iterations: 400
+  num_iterations: 200
   delete_old_checkpoints: true
   save_distance_data: true
 

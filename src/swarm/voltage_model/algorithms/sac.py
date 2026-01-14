@@ -64,20 +64,20 @@ class CustomSACCatalog(SACCatalog):
     def build_qf_head(self, framework: str = "torch"):
         """Build Q-function head.
 
-        Input dimension = encoder output + action dimension
-        (action concatenation happens in CustomSACTorchRLModule._qf_forward_train_helper)
+        Input dimension = encoder output (image_features).
+        Action and voltage are passed separately and handled inside QValueHead.
         """
         value_config = self._model_config_dict["value_head"]
         encoder_output_dim = get_head_input_dim(self._model_config_dict)
         action_dim = self.action_space.shape[0]
 
-        # Q-function takes concatenated [encoded_obs, action] as input
-        input_dim = encoder_output_dim + action_dim
-
+        # Q-function input is encoder output (image_features only)
+        # Voltage and action are handled inside QValueHead
         config = QValueHeadConfig(
-            input_dims=(input_dim,),
+            input_dims=(encoder_output_dim,),
             hidden_layers=value_config["hidden_layers"],
             activation=value_config["activation"],
+            action_dim=action_dim,
         )
 
         return config.build(framework=framework)
@@ -118,6 +118,7 @@ class CustomSACTorchRLModule(DefaultSACTorchRLModule):
         """Forward pass for Q-function during training.
 
         Handles image observation spaces that RLlib's default SAC doesn't support.
+        Passes full state (image_features + voltage) and action to Q-head.
         """
         if isinstance(self.action_space, gym.spaces.Box):
             # Encode observations
@@ -128,21 +129,24 @@ class CustomSACTorchRLModule(DefaultSACTorchRLModule):
                 obs_encoded = obs_encoded[ENCODER_OUT]
 
             # Handle CNN backbone output format: {"image_features": tensor, "voltage": tensor}
-            # We only need image_features for Q-function (voltage is handled separately)
             if isinstance(obs_encoded, dict):
-                if "image_features" in obs_encoded:
-                    obs_tensor = obs_encoded["image_features"]
+                if "image_features" in obs_encoded and "voltage" in obs_encoded:
+                    image_features = obs_encoded["image_features"]
+                    voltage = obs_encoded["voltage"]
                 else:
                     raise ValueError(f"Unexpected encoder output structure: {list(obs_encoded.keys())}")
             else:
-                # Already a tensor (e.g., from LSTM/Transformer)
-                obs_tensor = obs_encoded
+                raise ValueError("Expected encoder output to be dict with image_features and voltage")
 
             # Get actions from batch
             actions = batch[Columns.ACTIONS]
 
-            # Concatenate encoded observations with actions
-            qf_input = torch.concat((obs_tensor, actions), dim=-1)
+            # Pass full state (image_features + voltage) and action to Q-head
+            qf_input = {
+                "image_features": image_features,
+                "voltage": voltage,
+                "action": actions,
+            }
 
             # Q-function forward pass
             qf_out = head(qf_input)

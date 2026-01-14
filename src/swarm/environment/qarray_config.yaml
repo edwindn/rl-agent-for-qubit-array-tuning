@@ -49,9 +49,9 @@ simulator:
 
     # Radial noise: zero within zero_radius of ground truth, then linearly increasing
     radial_noise:
-      enabled: false
-      zero_radius: 5.0      # No noise within this distance (V) from ground truth
-      alpha: 0.001          # Noise increase rate per volt beyond zero_radius
+      enabled: true
+      zero_radius: {"min": 5, "max": 10}      # No noise within this distance (V) from ground truth
+      ramp_distance: {"min": 7.5, "max": 15}    # Distance (V) over which noise ramps from 0 to max_amplitude
       max_amplitude: 0.05   # Cap on noise amplitude
     
     # Telegraph noise parameters (random telegraph noise)

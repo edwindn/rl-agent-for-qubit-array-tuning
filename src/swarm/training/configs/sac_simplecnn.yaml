@@ -3,7 +3,7 @@
 
 # Default training parameters
 defaults:
-  num_iterations: 400
+  num_iterations: 200
   delete_old_checkpoints: true
   save_distance_data: true
 
@@ -61,15 +61,19 @@ rl_config:
     grad_clip_by: "norm"
 
     # Training intensity: gradient updates per env step
-    training_intensity: 1.0
+    training_intensity: 4.0
+
+    # Batch size for sampling from replay buffer
+    train_batch_size_per_learner: 256
 
     # SAC-specific params
-    actor_lr: 0.0003
+    reward_scale: 10.0  # Scale rewards for better learning signal(only relevant to SAC)
+    actor_lr: 0.00003
     critic_lr: 0.0003
     alpha_lr: 0.0003
     twin_q: true
     tau: 0.005
-    initial_alpha: 1.0
+    initial_alpha: 0.2  
     target_entropy: "auto"
     n_step: 1
     clip_actions: true

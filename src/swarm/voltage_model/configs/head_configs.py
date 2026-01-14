@@ -59,11 +59,13 @@ class ValueHeadConfig(MLPHeadConfig):
 class QValueHeadConfig(MLPHeadConfig):
     """Q-function head configuration for SAC.
 
-    Unlike ValueHead, this takes a flat tensor [encoder_features, action] as input.
+    Takes dict input with image_features, voltage, and action.
+    Processes voltage the same way as ValueHead for consistency.
     """
 
     hidden_layers: Optional[List[int]] = None
     activation: str = "relu"
+    action_dim: int = 1  # Dimension of action space
 
     def __post_init__(self):
         if self.hidden_layers:

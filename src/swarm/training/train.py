@@ -42,6 +42,12 @@ src_dir = swarm_package_dir.parent  # src directory
 project_root = src_dir.parent  # project root directory
 sys.path.insert(0, str(src_dir))
 
+# Apply patch for Ray 2.49.0 replay buffer bug with complex observations (DQN/SAC)
+# See: https://github.com/ray-project/ray/pull/57017
+# Remove after upgrading to Ray >= 2.51.0
+from swarm.training.patches.ray_episode_patch import apply_patch  # noqa: E402
+apply_patch()
+
 from swarm.training.utils import (  # noqa: E402
     log_to_wandb,
     print_training_progress,
@@ -55,7 +61,8 @@ from swarm.training.utils import (  # noqa: E402
 )
 
 from swarm.voltage_model import create_rl_module_spec
-from swarm.training.utils.custom_ppo_learner import PPOLearnerWithValueStats # for logging
+from swarm.training.utils.custom_ppo_learner import PPOLearnerWithValueStats  # for logging
+from swarm.training.utils.custom_sac_learner import SACLearnerWithRewardScaling  # for reward scaling
 
 def parse_config_overrides(unknown_args):
     """Parse config override arguments in the format --key.subkey value or --key=value (allows dynamically overriding settings when calling train.py)"""
@@ -527,9 +534,14 @@ def main():
         ppo_only_params = {'lr', 'lambda_', 'clip_param', 'entropy_coeff', 'vf_loss_coeff', 'kl_target', 'num_epochs', 'minibatch_size'}
         # SAC-specific parameters that should NOT be passed to PPO
         sac_only_params = {'actor_lr', 'critic_lr', 'alpha_lr', 'twin_q', 'tau', 'initial_alpha', 'target_entropy', 'n_step',
-                          'clip_actions', 'target_network_update_freq', 'num_steps_sampled_before_learning_starts', 'replay_buffer_config'}
+                          'clip_actions', 'target_network_update_freq', 'num_steps_sampled_before_learning_starts', 'replay_buffer_config',
+                          'reward_scale'}  # reward_scale used by custom SAC learner
 
         training_params = config['rl_config']['training'].copy()
+
+        # Extract reward_scale for SAC (not a native SACConfig param, handled by custom learner)
+        reward_scale = training_params.pop('reward_scale', 1.0)
+
         if algo == 'sac':
             # Remove PPO-only parameters when using SAC
             for param in ppo_only_params:
@@ -617,10 +629,16 @@ def main():
                 # Code-level settings
                 learner_connector=learner_connector,
                 # Algorithm-specific learner classes
-                **({"learner_class": PPOLearnerWithValueStats} if algo == "ppo" else {}),
+                **({"learner_class": PPOLearnerWithValueStats} if algo == "ppo"
+                   else {"learner_class": SACLearnerWithRewardScaling} if algo == "sac"
+                   else {}),
             )
             # .callbacks([custom_callbacks] if use_wandb else [])
         )
+
+        # Set reward_scale on config for SAC learner to access
+        if algo == "sac":
+            algo_config.reward_scale = reward_scale
 
         # Build the algorithm
         print(f"\nBuilding {algo} algorithm...\n")

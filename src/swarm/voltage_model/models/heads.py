@@ -150,15 +150,16 @@ class ValueHead(TorchModel):
 class QValueHead(TorchModel):
     """Q-function head for SAC.
 
-    Takes concatenated [encoder_features, action] tensor as input.
-    Unlike ValueHead, this doesn't expect a dict with voltage - the encoder
-    features and actions are pre-concatenated before being passed here.
+    Takes dict input with image_features, voltage, and action.
+    Processes voltage the same way as ValueHead for consistency.
     """
 
     def __init__(self, config: "QValueHeadConfig"):
         super().__init__(config)
 
         self.config = config
+
+        voltage_embedding_dim = 16  # VOLTAGE DIM HARDCODED FOR NOW (same as other heads)
 
         layers = []
         in_dim = config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims
@@ -170,8 +171,12 @@ class QValueHead(TorchModel):
             ])
             in_dim = hidden_dim
 
-        layers.append(nn.Linear(in_dim, 1))
         self.mlp = nn.Sequential(*layers)
+
+        self.voltage_layer = nn.Linear(1, voltage_embedding_dim)
+
+        # Final layer: mlp_output + voltage_embedding + action
+        self.final_layer = nn.Linear(in_dim + voltage_embedding_dim + config.action_dim, 1)
 
         self._output_dims = (1,)
 
@@ -180,8 +185,16 @@ class QValueHead(TorchModel):
         return self._output_dims
 
     def _forward(self, inputs, **kwargs):
-        # inputs is a flat tensor [encoder_features, action]
-        return self.mlp(inputs)
+        image_features = inputs["image_features"]
+        voltage = inputs["voltage"]
+        action = inputs["action"]
+
+        x = self.mlp(image_features)
+
+        voltage_features = self.voltage_layer(voltage)
+        x = torch.cat((x, voltage_features, action), dim=-1)
+
+        return self.final_layer(x)
 
 
 # =============================================================================

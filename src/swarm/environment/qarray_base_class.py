@@ -72,6 +72,8 @@ class QarrayBaseClass:
         self.barrier_alpha = None
         self.barrier_tc_base = None
         self.gate_ground_truth = None  # Set by env.py for radial noise
+        self.radial_noise_zero_radius = None  # Sampled in _load_model
+        self.radial_noise_ramp_distance = None  # Sampled in _load_model
 
         # Store peak width settings for use in _load_model
         self.vary_peak_width = vary_peak_width
@@ -366,7 +368,7 @@ class QarrayBaseClass:
         return Cds, Cgs
 
     def _generate_noise_parameters(self, config_ranges: dict, rng: np.random.Generator) -> dict:
-        """Generate white noise and telegraph noise parameters."""
+        """Generate white noise, telegraph noise, and radial noise parameters."""
         # White noise
         white_noise_amp = self._sample_from_range(config_ranges["white_noise_amplitude"], rng)
 
@@ -376,6 +378,23 @@ class QarrayBaseClass:
         p10_factor = self._sample_from_range(telegraph_config["p10_factor"], rng)
         amplitude = self._sample_from_range(telegraph_config["amplitude"], rng)
 
+        # Radial noise
+        radial_config = config_ranges.get("radial_noise", {})
+
+        # Sample zero_radius
+        radial_zero_radius_config = radial_config.get("zero_radius", {"min": 3, "max": 10})
+        if isinstance(radial_zero_radius_config, dict):
+            radial_zero_radius = self._sample_from_range(radial_zero_radius_config, rng)
+        else:
+            radial_zero_radius = radial_zero_radius_config
+
+        # Sample ramp_distance (distance over which noise ramps from 0 to max)
+        ramp_distance_config = radial_config.get("ramp_distance", {"min": 10, "max": 15})
+        if isinstance(ramp_distance_config, dict):
+            radial_ramp_distance = self._sample_from_range(ramp_distance_config, rng)
+        else:
+            radial_ramp_distance = ramp_distance_config
+
         return {
             "white_noise_amplitude": white_noise_amp,
             "telegraph_noise_parameters": {
@@ -383,6 +402,8 @@ class QarrayBaseClass:
                 "p10": p10_factor * p01,
                 "amplitude": amplitude,
             },
+            "radial_noise_zero_radius": radial_zero_radius,
+            "radial_noise_ramp_distance": radial_ramp_distance,
         }
 
     def _apply_radial_noise(self, z: np.ndarray, v1: float, v2: float, gt1: float, gt2: float) -> np.ndarray:
@@ -403,9 +424,11 @@ class QarrayBaseClass:
         if not radial_config.get("enabled", False):
             return z
 
-        zero_radius = radial_config.get("zero_radius", 5.0)
-        alpha = radial_config.get("alpha", 0.05)
+        zero_radius = self.radial_noise_zero_radius
+        ramp_distance = self.radial_noise_ramp_distance
         max_amplitude = radial_config.get("max_amplitude", 0.5)
+        # Compute alpha so that noise reaches max_amplitude after ramp_distance
+        alpha = max_amplitude / ramp_distance
 
         # Create voltage coordinate grids for the scan window
         v1_coords = np.linspace(
@@ -524,6 +547,8 @@ class QarrayBaseClass:
             "Cgs": Cgs,
             "white_noise_amplitude": noise_params["white_noise_amplitude"],
             "telegraph_noise_parameters": noise_params["telegraph_noise_parameters"],
+            "radial_noise_zero_radius": noise_params["radial_noise_zero_radius"],
+            "radial_noise_ramp_distance": noise_params["radial_noise_ramp_distance"],
             "latching_model_parameters": latching_params,
             "variable_peak_width_parameters": variable_peak_width_params,
             "T": self._sample_from_range(config_ranges["T"], rng),
@@ -605,6 +630,8 @@ class QarrayBaseClass:
             "Cbb": Cbb,
             "white_noise_amplitude": noise_params["white_noise_amplitude"],
             "telegraph_noise_parameters": noise_params["telegraph_noise_parameters"],
+            "radial_noise_zero_radius": noise_params["radial_noise_zero_radius"],
+            "radial_noise_ramp_distance": noise_params["radial_noise_ramp_distance"],
             "latching_model_parameters": latching_params,
             "barrier_model_parameters": barrier_model_params,
             "voltage_capacitance_parameters": voltage_capacitance_params,
@@ -671,6 +698,8 @@ class QarrayBaseClass:
         white_noise = WhiteNoise(amplitude=model_params["white_noise_amplitude"])
         telegraph_noise = TelegraphNoise(**model_params["telegraph_noise_parameters"])
         noise_model = white_noise + telegraph_noise
+        self.radial_noise_zero_radius = model_params["radial_noise_zero_radius"]
+        self.radial_noise_ramp_distance = model_params["radial_noise_ramp_distance"]
         latching_params = model_params["latching_model_parameters"]
         latching_model = (
             LatchingModel(**{k: v for k, v in latching_params.items() if k != "Exists"})
@@ -721,6 +750,8 @@ class QarrayBaseClass:
         white_noise = WhiteNoise(amplitude=model_params["white_noise_amplitude"])
         telegraph_noise = TelegraphNoise(**model_params["telegraph_noise_parameters"])
         noise_model = white_noise + telegraph_noise
+        self.radial_noise_zero_radius = model_params["radial_noise_zero_radius"]
+        self.radial_noise_ramp_distance = model_params["radial_noise_ramp_distance"]
 
         # Extract latching model
         latching_params = model_params["latching_model_parameters"]
