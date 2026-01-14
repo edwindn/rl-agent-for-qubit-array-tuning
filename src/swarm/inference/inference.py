@@ -307,6 +307,12 @@ def parse_arguments():
         help='Disable cleanup of temporary folders (distance_data and gif_captures) after inference'
     )
 
+    parser.add_argument(
+        '--load-configs',
+        action='store_true',
+        help='Load training_config.yaml and env_config.yaml from checkpoint directory instead of default config files'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -364,10 +370,16 @@ def create_env_to_module_connector(env, spaces, device, use):
         return []
 
 
-def load_config():
+def load_config(checkpoint_path=None):
     """Load training configuration from YAML file."""
-    # Load from training directory since we're in inference folder
-    config_path = Path(__file__).parent.parent / "training" / "training_config.yaml"
+    if checkpoint_path:
+        # Load from checkpoint directory
+        config_path = Path(checkpoint_path) / "training_config.yaml"
+        if not config_path.exists():
+            raise FileNotFoundError(f"training_config.yaml not found in checkpoint: {checkpoint_path}")
+    else:
+        # Load from training directory since we're in inference folder
+        config_path = Path(__file__).parent.parent / "training" / "training_config.yaml"
 
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -375,9 +387,15 @@ def load_config():
     return config
 
 
-def load_env_config():
+def load_env_config(checkpoint_path=None):
     """Load environment configuration from YAML file."""
-    config_path = Path(__file__).parent.parent / "environment" / "env_config.yaml"
+    if checkpoint_path:
+        # Load from checkpoint directory
+        config_path = Path(checkpoint_path) / "env_config.yaml"
+        if not config_path.exists():
+            raise FileNotFoundError(f"env_config.yaml not found in checkpoint: {checkpoint_path}")
+    else:
+        config_path = Path(__file__).parent.parent / "environment" / "env_config.yaml"
 
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -391,7 +409,10 @@ def main():
     # Parse command line arguments
     args = parse_arguments()
 
-    config = load_config()
+    # Determine checkpoint path for config loading if --load-configs is set
+    checkpoint_path = args.load_checkpoint if args.load_configs else None
+
+    config = load_config(checkpoint_path)
 
     # Override num_iterations based on command line arg
     config['defaults']['num_iterations'] = args.num_iterations
@@ -428,6 +449,8 @@ def main():
         gif_config = config["gif_config"]
         # Override gif save dir to local inference directory
         gif_config['save_dir'] = str(Path(__file__).parent / "gif_captures")
+        # Override fps to 2 frames per second for faster playback
+        gif_config['fps'] = 2
         # Clean up any previous GIF capture lock files
         cleanup_gif_files(gif_config['save_dir'])
 
@@ -438,7 +461,7 @@ def main():
         register_env("qarray_multiagent_env", create_env_fn)
 
         # Load env config directly from YAML (no GPU initialization needed on driver)
-        env_config = load_env_config()
+        env_config = load_env_config(checkpoint_path)
 
         # Optionally update the rl module config to allow log_std clamping, shared log_std vector etc.
         rl_module_config = {
