@@ -14,16 +14,18 @@ class CapacitancePredictionModel(nn.Module):
     - 3 confidence scores for uncertainty estimation
     """
     
-    def __init__(self, mobilenet="small"):
+    def __init__(self, output_size, mobilenet="small"):
         super().__init__()
         
         # Load pretrained MobileNetV3 backbone
         if mobilenet == "small":
             self.backbone = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
             feature_dim = 576
-        else:
+        elif mobilenet == "large":
             self.backbone = models.mobilenet_v3_large(weights=models.MobileNet_V3_Large_Weights.DEFAULT)
             feature_dim = 960
+
+        self.output_size = output_size
 
         # Modify first conv layer to accept 1 channels instead of 3
         # In MobileNetV3, the first conv layer is features[0][0]
@@ -55,7 +57,7 @@ class CapacitancePredictionModel(nn.Module):
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(128, 3), # 3 continuous values
+            nn.Linear(128, self.output_size),
             #nn.Sigmoid()
         )
         
@@ -67,7 +69,7 @@ class CapacitancePredictionModel(nn.Module):
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(128, 3)  # 3 log variance values
+            nn.Linear(128, self.output_size)
         )
     
     def forward(self, x):
@@ -146,9 +148,9 @@ class CapacitanceLoss(nn.Module):
         return total_loss, mse_loss, nll_loss, log_vars, squared_errors
 
 
-def create_model(mobilenet="small"):
+def create_model(output_size, mobilenet="small"):
     """Factory function to create the model"""
-    return CapacitancePredictionModel(mobilenet=mobilenet)
+    return CapacitancePredictionModel(output_size, mobilenet=mobilenet)
 
 
 def create_loss_function(mse_weight=1.0, nll_weight=0.1):

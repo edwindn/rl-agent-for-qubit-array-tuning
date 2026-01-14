@@ -333,7 +333,7 @@ def load_trained_model(model_path: str, device: torch.device):
     print(f"Loading model from: {model_path}")
     
     # Create model
-    model = create_model()
+    model = create_model(output_size=2)
     
     # Load checkpoint
     if not os.path.exists(model_path):
@@ -356,9 +356,9 @@ def load_trained_model(model_path: str, device: torch.device):
 
 def main():
     # Configuration
-    root_data_dir = '/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/'
-    data_dirs = ['dataset', '4dot_dataset']
-    model_path = '/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/weights/best_model.pth'
+    root_data_dir = '/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/qarray_dataset/'
+    data_dirs = ['barrier_dataset_1', 'barrier_dataset_2']
+    model_path = '/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/weights/best_model_barriers.pth'
     batch_size = 64
     val_split = 0.2
     num_workers = 4

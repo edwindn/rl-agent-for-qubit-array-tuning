@@ -39,11 +39,13 @@ class InterpolatedCapacitancePredictor:
     def __init__(
         self,
         n_dots: int,
+        nn: int,
         prior_config: Union[Dict[Tuple[int, int], Tuple[float, float]], Callable],
         length_scale: float = 0.5, # has dimensions of voltage, hyperparameter
         noise_level: float = 1e-4,
         max_points_to_consider: int = 20,
     ):
+        raise NotImplementedError("Refactor requires modifications to support Cgd prediction.")
         self.n_dots = n_dots
         self.max_points_to_consider = max_points_to_consider
         self.prior_config = prior_config

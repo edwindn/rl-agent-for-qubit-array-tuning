@@ -468,33 +468,50 @@ class QuantumDeviceEnv(gym.Env):
 
         # Update Bayesian predictor for each dot pair
         # Convert tensors to numpy once
-        values_np = values.cpu().numpy()  # Shape: (num_dots-1, 3)
-        log_vars_np = log_vars.cpu().numpy()  # Shape: (num_dots-1, 3)
+        values_np = values.cpu().numpy()  # Shape: (num_dots-1, num outputs)
+        log_vars_np = log_vars.cpu().numpy()  # Shape: (num_dots-1, num outputs)
 
-        for i in range(self.num_dots - 1):
-            # Get current mean estimates for this dot pair and its neighbors
-            current_mean_ij, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(
-                i, i + 1
-            )
-            current_mean_ik, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(
-                i, max(0, i - 1) if i > 0 else i + 2
-            )
-            current_mean_jk, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(
-                i + 1, min(self.num_dots - 1, i + 2) if i + 2 < self.num_dots else i
-            )
+        if self.capacitance_model["nearest_neighbour"]:
+            for i in range(self.num_dots - 1):
 
-            # Add current means to delta predictions to get absolute values
-            absolute_values = [
-                current_mean_ij + float(values_np[i, 0]),  # C_ij + delta_ij
-                current_mean_ik + float(values_np[i, 1]),  # C_ik + delta_ik
-                current_mean_jk + float(values_np[i, 2]),  # C_jk + delta_jk
-            ]
+                current_mean_RL, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(i+1, i)
+                current_mean_LR, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(i, i+1)
 
-            # Create ml_outputs format expected by update_from_scan
-            ml_outputs = [(absolute_values[j], float(log_vars_np[i, j])) for j in range(3)]
+                # Add predictions to current means (since scans are already partially virtualised)
+                absolute_values = [
+                    current_mean_RL + float(values_np[i, 0]),
+                    current_mean_LR + float(values_np[i, 1]),
+                ]
 
-            # Update the Bayesian predictor for this dot pair
-            self.capacitance_model["bayesian_predictor"].update_from_scan((i, i + 1), ml_outputs)
+                ml_outputs = [(absolute_values[j], float(log_vars_np[i, j])) for j in range(2)]
+
+                self.capacitance_model["bayesian_predictor"].update_from_scan(left_dot=i, ml_outputs=ml_outputs)
+
+        else:
+            for i in range(self.num_dots - 1):
+                # Get current mean estimates for this dot pair and its neighbors
+                current_mean_ij, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(
+                    i, i + 1
+                )
+                current_mean_ik, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(
+                    i, max(0, i - 1) if i > 0 else i + 2
+                )
+                current_mean_jk, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(
+                    i + 1, min(self.num_dots - 1, i + 2) if i + 2 < self.num_dots else i
+                )
+                
+                # Add current means to delta predictions to get absolute values
+                absolute_values = [
+                    current_mean_ij + float(values_np[i, 0]),  # C_ij + delta_ij
+                    current_mean_ik + float(values_np[i, 1]),  # C_ik + delta_ik
+                    current_mean_jk + float(values_np[i, 2]),  # C_jk + delta_jk
+                ]
+
+                # Create ml_outputs format expected by update_from_scan
+                ml_outputs = [(absolute_values[j], float(log_vars_np[i, j])) for j in range(3)]
+
+                # Update the Bayesian predictor for this dot pair
+                self.capacitance_model["bayesian_predictor"].update_from_scan(left_dot=i, ml_outputs=ml_outputs)
 
         # Get updated capacitance matrix and apply to quantum array
         cgd_estimate = self.capacitance_model["bayesian_predictor"].get_full_matrix()
@@ -579,17 +596,18 @@ class QuantumDeviceEnv(gym.Env):
                     return (0.2, 0.1)
                 else:
                     return (0.0, 0.1)
-
+            
+            nearest_neighbour = self.config["capacitance_model"]["nearest_neighbour"]
 
             if update_method == "bayesian":
                 # Initialize Bayesian predictor
                 bayesian_predictor = CapacitancePredictor(
-                    n_dots=self.num_dots, prior_config=distance_prior
+                    n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
                 )
             elif update_method == "kriging":
                 # Initialize spatially aware predictor
                 bayesian_predictor = InterpolatedCapacitancePredictor(
-                    n_dots=self.num_dots, prior_config=distance_prior
+                    n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
                 )
             else:
                 raise ValueError(f"Unknown update method: {update_method}")
@@ -599,6 +617,7 @@ class QuantumDeviceEnv(gym.Env):
                 "ml_model": ml_model,
                 "bayesian_predictor": bayesian_predictor,
                 "device": device,
+                "nearest_neighbour": nearest_neighbour
             }
 
             print("Successfully loaded capacitance model.")

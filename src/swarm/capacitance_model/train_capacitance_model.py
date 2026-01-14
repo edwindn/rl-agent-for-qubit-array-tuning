@@ -457,8 +457,8 @@ def train_epoch(model: nn.Module,
     }, global_train_step
 
 
-def validate_epoch(model: nn.Module, 
-                   val_loader: DataLoader, 
+def validate_epoch(model: nn.Module,
+                   val_loader: DataLoader,
                    loss_fn: nn.Module,
                    device: torch.device,
                    epoch: int,
@@ -466,7 +466,7 @@ def validate_epoch(model: nn.Module,
                    global_val_step: int = 0) -> Tuple[Dict[str, float], int]:
     """Validate for one epoch"""
     model.eval()
-    
+
     total_loss = 0.0
     total_mse = 0.0
     total_nll = 0.0
@@ -475,10 +475,10 @@ def validate_epoch(model: nn.Module,
         for batch_idx, (images, targets) in enumerate(val_loader):
             images = images.to(device)
             targets = targets.to(device)
-            
+
             # Forward pass
             predictions = model(images)
-            
+
             # Compute loss
             total_loss_batch, mse_loss, nll_loss, log_vars, errors = loss_fn(predictions, targets)
 
@@ -489,19 +489,24 @@ def validate_epoch(model: nn.Module,
 
             pcc = compute_pcc(log_vars, errors)
 
+            # Calculate median absolute error
+            abs_errors = torch.sqrt(errors)
+            median_ae = torch.median(abs_errors).item()
+
             # Log batch metrics to wandb
             if log_wandb and wandb.run is not None:
                 wandb.log({
                     'eval/step': global_val_step,
                     'eval/loss': total_loss_batch.item(),
                     'eval/mse': mse_loss.item(),
-                    'eval/mae': torch.sqrt(mse_loss).item(),
+                    'eval/mae': abs_errors.mean().item(),
+                    'eval/median_ae': median_ae,
                     'eval/nll': nll_loss.item(),
                     'eval/var': np.exp(log_vars.mean().item()),
                     'eval/pcc': pcc,
                     'eval/epoch': epoch,
                 })
-            
+
             global_val_step += 1
     
     num_batches = len(val_loader)
@@ -592,7 +597,7 @@ def train_func(config: dict):
         wandb.define_metric("epoch_time", step_metric="epoch")
 
     data_dirs = [os.path.join(config['root_data_dir'], dir_) for dir_ in config['data_dirs']]
-    
+
     # Create data loaders
     print("Creating data loaders...")
     transform = get_transforms(normalize=True)
@@ -602,7 +607,8 @@ def train_func(config: dict):
         val_split=config['val_split'],
         num_workers=config['num_workers'],
         load_to_memory=config['load_to_memory'],
-        transform=transform
+        transform=transform,
+        nearest_neighbours=not config['disable_nearest_neighbours']
     )
     
     # Prepare data loaders for distributed training
@@ -688,7 +694,7 @@ def train_func(config: dict):
 def main():
     parser = argparse.ArgumentParser(description='Train Capacitance Prediction Model')
     parser.add_argument('--root_data_dir', type=str, 
-                       default='/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/',
+                       default='/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/qarray_dataset/',
                        help='Path to dataset directory')
     parser.add_argument('--data_dirs', type=str, nargs='+', default=['dataset'],
                        help='List of data directories')
@@ -722,6 +728,8 @@ def main():
                        help='Disable wandb logging')
     parser.add_argument('--mobilenet', type=str, default='small', choices=['small', 'large'],
                        help='MobileNet architecture size (small or large)')
+    parser.add_argument('--disable_nearest_neighbours', action='store_true',
+                        help='Whether to only predict nearest-neighbour capacitances (disables)')
     
     args = parser.parse_args()
     args.load_to_memory = not args.disable_data_loading
@@ -833,7 +841,7 @@ def main():
             wandb.define_metric("epoch_time", step_metric="epoch")
 
         data_dirs = [os.path.join(args.root_data_dir, dir_) for dir_ in args.data_dirs]
-        
+
         # Create data loaders
         print("Creating data loaders...")
         transform = get_transforms(normalize=True)
@@ -843,12 +851,13 @@ def main():
             val_split=args.val_split,
             num_workers=args.num_workers,
             load_to_memory=args.load_to_memory,
-            transform=transform
+            transform=transform,
+            nearest_neighbours=not args.disable_nearest_neighbours
         )
         
         # Create model and loss function
         print("Creating model...")
-        model = create_model(mobilenet=args.mobilenet)
+        model = create_model(output_size = 2 if not args.disable_nearest_neighbours else 3, mobilenet=args.mobilenet)
         model = model.to(device)
         
         loss_fn = create_loss_function(

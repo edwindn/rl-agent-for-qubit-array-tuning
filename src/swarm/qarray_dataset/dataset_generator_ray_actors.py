@@ -46,8 +46,8 @@ class GenerationConfig:
     config_path: str = "qarray_config.yaml"
     resolution: int = 100
     batch_size: int = 1000
-    voltage_offset_min: float = -40.0
-    voltage_offset_max: float = 20.0
+    voltage_offset_min: float = -10.0
+    voltage_offset_max: float = 5.0
     barrier_offset_min: float = -3.0
     barrier_offset_max: float = -1.0
     seed_base: int = 42
@@ -710,7 +710,7 @@ def main():
                        help='Output directory for dataset')
     parser.add_argument('--seed', type=int, default=42,
                        help='Base random seed for reproducibility')
-    parser.add_argument('--gpu_ids', type=str, default="7",
+    parser.add_argument('--gpu_ids', type=str, default="0,1,2,3,4,5,6,7",
                        help='Comma-separated list of GPU IDs to use (e.g., "6,7" or "0")')
     parser.add_argument('--ray_config', type=str, default="ray_config.yaml",
                        help='Path to Ray configuration YAML file')

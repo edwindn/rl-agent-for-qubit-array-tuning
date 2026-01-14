@@ -8,7 +8,7 @@ class CapacitancePredictor:
     Bayesian parameter estimation for fixed capacitance values in a quantum dot array.
     
     This class maintains a symmetric N×N capacitance matrix where each element represents
-    the capacitance between two quantum dots. Each matrix element stores both the mean
+    the capacitance between a gate and a dot. Each matrix element stores both the mean
     and variance of a Gaussian posterior distribution, which is updated using conjugate
     Bayesian inference as new measurements arrive from ML model predictions.
     
@@ -23,12 +23,13 @@ class CapacitancePredictor:
         prior_config (Dict or Callable): Configuration for prior distributions
     """
     
-    def __init__(self, n_dots: int, prior_config: Union[Dict[Tuple[int, int], Tuple[float, float]], Callable]):
+    def __init__(self, n_dots: int, nn: bool, prior_config: Union[Dict[Tuple[int, int], Tuple[float, float]], Callable]):
         """
         Initialize the capacitance predictor with prior distributions.
         
         Args:
             n_dots (int): Number of quantum dots in the array
+            nn: whether we are in the nearest-neighbour regime or not
             prior_config (Dict or Callable): Either a dictionary mapping (i,j) pairs to 
                 (prior_mean, prior_variance) tuples, or a callable that takes (i,j) and 
                 returns (prior_mean, prior_variance)
@@ -49,9 +50,14 @@ class CapacitancePredictor:
             predictor = CapacitancePredictor(5, distance_prior)
         """
         self.n_dots = n_dots
+        self.nearest_neighbour = nn
         self.prior_config = prior_config
+
+        if not nn:
+            raise NotImplementedError("Capacitance Bayesian update only supports nearest-neighbour coupling for now.")
         
         # Initialize symmetric matrices for means and variances
+        # indexed as (i_gate, i_dot)
         self.means = np.zeros((n_dots, n_dots))
         self.variances = np.zeros((n_dots, n_dots))
         
@@ -63,23 +69,40 @@ class CapacitancePredictor:
     
     def _initialize_priors(self):
         """Initialize the prior distributions for all matrix elements."""
-        for i in range(self.n_dots):
-            for j in range(self.n_dots):
+        if self.nearest_neighbour:
+            # Only initialize nearest neighbor pairs: [i,i+1] and [i+1,i]
+            # note we do not require symmetry, but this is quicker to initialise and
+            # symmetry makes sense with no further priors
+            for i in range(self.n_dots - 1):
                 if callable(self.prior_config):
-                    prior_mean, prior_var = self.prior_config(i, j)
+                    prior_mean, prior_var = self.prior_config(i, i+1)
                 else:
-                    prior_mean, prior_var = self.prior_config.get((i, j), (0.25, 0.1))
-                
-                self.means[i, j] = prior_mean
-                self.variances[i, j] = prior_var
+                    prior_mean, prior_var = self.prior_config.get((i, i+1), (0.25, 0.1))
+
+                self.means[i, i+1] = prior_mean
+                self.means[i+1, i] = prior_mean
+                self.variances[i, i+1] = prior_var
+                self.variances[i+1, i] = prior_var
+        else:
+            # Initialize all matrix elements
+            for i in range(self.n_dots):
+                for j in range(self.n_dots):
+                    if callable(self.prior_config):
+                        prior_mean, prior_var = self.prior_config(i, j)
+                    else:
+                        prior_mean, prior_var = self.prior_config.get((i, j), (0.25, 0.1))
+
+                    self.means[i, j] = prior_mean
+                    self.variances[i, j] = prior_var
     
     def _validate_initialization(self):
         """Validate the initialization of the matrices."""
-        # Check symmetry
-        if not np.allclose(self.means, self.means.T):
-            raise ValueError("Mean matrix is not symmetric")
-        if not np.allclose(self.variances, self.variances.T):
-            raise ValueError("Variance matrix is not symmetric")
+        # TODO no longer needed
+        # # Check symmetry
+        # if not np.allclose(self.means, self.means.T):
+        #     raise ValueError("Mean matrix is not symmetric")
+        # if not np.allclose(self.variances, self.variances.T):
+        #     raise ValueError("Variance matrix is not symmetric")
         
         # Check positive variances
         if np.any(self.variances <= 0):
@@ -88,16 +111,16 @@ class CapacitancePredictor:
     def bayesian_update(self, i: int, j: int, ml_estimate: float, ml_variance: float):
         """
         Perform conjugate Bayesian update for a single capacitance element.
-        
+
         Uses the conjugate prior property of Gaussian distributions to update
         the posterior mean and variance given a new measurement.
-        
+
         Args:
-            i (int): First dot index
-            j (int): Second dot index
+            i (int): gate index
+            j (int): dot index
             ml_estimate (float): ML model's capacitance estimate
             ml_variance (float): Variance/uncertainty of the ML estimate
-        
+
         Raises:
             ValueError: If indices are invalid or variances are non-positive
         """
@@ -106,41 +129,47 @@ class CapacitancePredictor:
             raise ValueError(f"Invalid indices: ({i}, {j}). Must be in range [0, {self.n_dots})")
         if ml_variance <= 0:
             raise ValueError("ML variance must be positive")
-        
+
+        # In nearest neighbour mode, only allow updates to nearest neighbor pairs
+        if self.nearest_neighbour and abs(i - j) != 1:
+            raise ValueError(f"In nearest neighbour mode, can only update adjacent pairs. Got (gate {i}, dot {j})")
+
         # Get current posterior for element (i,j)
         current_mean = self.means[i, j]
         current_var = self.variances[i, j]
-        
+
         # Conjugate update formulas
         precision_prior = 1 / current_var
         precision_ml = 1 / ml_variance
         precision_post = precision_prior + precision_ml
-        
+
         new_mean = (current_mean * precision_prior + ml_estimate * precision_ml) / precision_post
         new_var = 1 / precision_post
-        
+
         # Sanity check: posterior variance should not increase
         if new_var > current_var:
             warnings.warn(f"Posterior variance increased for element ({i},{j}). "
                          f"Old: {current_var:.6f}, New: {new_var:.6f}")
-        
-        # Update both (i,j) and (j,i) to maintain symmetry
-        self.means[i, j] = new_mean
-        self.means[j, i] = new_mean
-        self.variances[i, j] = new_var
-        self.variances[j, i] = new_var
 
-    def update_from_scan(self, dot_pair: Tuple[int, int], ml_outputs: List[Tuple[float, float]]):
+        self.means[i, j] = new_mean
+        self.variances[i, j] = new_var
+
+        # TODO this assumes we update Cdd. In the refactor we update Cgd. to be removed
+        # # Update both (i,j) and (j,i) to maintain symmetry
+        # self.means[i, j] = new_mean
+        # self.means[j, i] = new_mean
+        # self.variances[i, j] = new_var
+        # self.variances[j, i] = new_var
+
+    def update_from_scan(self, left_dot: int, ml_outputs: List[Tuple[float, float]]):
         """
         Process ML model output for a dot pair scan and update relevant capacitances.
         
         Args:
-            dot_pair (Tuple[int, int]): The measured dot pair (i, j)
-            ml_outputs (List[Tuple[float, float]]): List of 3 tuples containing
-                (capacitance_estimate, log_variance) for:
-                - C_ij: Capacitance between the measured dots
-                - C_ik: Capacitance between dot i and neighboring dot k
-                - C_jk: Capacitance between dot j and neighboring dot k
+            dot_pair (Tuple[int, int]): The measured dot pair (i, j) # not yet implemented
+            left_dot: left dot in the scan - we assume pair (i, i+1)
+            ml_outputs (List[Tuple[float, float]]): List of tuples containing
+                (capacitance_estimate, log_variance) for each coupling between gate i and dot j
         
         Example:
             predictor.update_from_scan(
@@ -148,32 +177,46 @@ class CapacitancePredictor:
                 ml_outputs=[(0.23, -2.3), (0.18, -1.9), (0.31, -2.5)]
             )
         """
-        if len(ml_outputs) != 3:
-            raise ValueError("ml_outputs must contain exactly 3 measurements")
-        
-        i, j = dot_pair
-        
-        # First measurement: direct capacitance C_ij
-        estimate_ij, log_var_ij = ml_outputs[0]
-        variance_ij = np.exp(log_var_ij)
-        self.bayesian_update(i, j, estimate_ij, variance_ij)
-        
-        # Second and third measurements: neighboring capacitances
-        # We need to determine which neighboring dots these correspond to
 
-        for idx, (estimate, log_variance) in enumerate(ml_outputs[1:], 1):
-            variance = np.exp(log_variance)
+        # TODO this code currently only works with nearest neighbour prediction.
+
+        expected_len = 2 if self.nearest_neighbour else 3
+        if len(ml_outputs) != expected_len:
+            raise ValueError(f"ml_outputs must contain {expected_len} measurements, but got {len(ml_outputs)}")
+        
+        i = left_dot
+
+        estimate_RL, log_var_RL = ml_outputs[0]
+        variance_RL = np.exp(log_var_RL)
+        self.bayesian_update(i+1, i, estimate_RL, variance_RL)
+
+        estimate_LR, log_var_LR = ml_outputs[1]
+        variance_LR = np.exp(log_var_LR)
+        self.bayesian_update(i, i+1, estimate_LR, variance_LR)
+        
+        # i, j = dot_pair
+        
+        # # First measurement: direct capacitance C_ij
+        # estimate_ij, log_var_ij = ml_outputs[0]
+        # variance_ij = np.exp(log_var_ij)
+        # self.bayesian_update(i, j, estimate_ij, variance_ij)
+        
+        # # Second and third measurements: neighboring capacitances
+        # # We need to determine which neighboring dots these correspond to
+
+        # for idx, (estimate, log_variance) in enumerate(ml_outputs[1:], 1):
+        #     variance = np.exp(log_variance)
             
-            # Find appropriate neighboring dot pairs
-            # This is a heuristic - you may need to modify based on your specific setup
-            if idx == 1:  # C_ik - find neighbor of i
-                k = self._find_neighbor(i, exclude=[j])
-                if k is not None:
-                    self.bayesian_update(i, k, estimate, variance)
-            elif idx == 2:  # C_jk - find neighbor of j
-                k = self._find_neighbor(j, exclude=[i])
-                if k is not None:
-                    self.bayesian_update(j, k, estimate, variance)
+        #     # Find appropriate neighboring dot pairs
+        #     # This is a heuristic - you may need to modify based on your specific setup
+        #     if idx == 1:  # C_ik - find neighbor of i
+        #         k = self._find_neighbor(i, exclude=[j])
+        #         if k is not None:
+        #             self.bayesian_update(i, k, estimate, variance)
+        #     elif idx == 2:  # C_jk - find neighbor of j
+        #         k = self._find_neighbor(j, exclude=[i])
+        #         if k is not None:
+        #             self.bayesian_update(j, k, estimate, variance)
     
     def _find_neighbor(self, dot_idx: int, exclude: List[int] = None) -> Union[int, None]:
         """
@@ -189,6 +232,9 @@ class CapacitancePredictor:
         Returns:
             int or None: Index of a neighboring dot, or None if none found
         """
+        raise NotImplementedError
+        return
+
         if exclude is None:
             exclude = []
         
@@ -208,8 +254,8 @@ class CapacitancePredictor:
         Return current mean and variance estimates for a specific capacitance.
         
         Args:
-            i (int): First dot index
-            j (int): Second dot index
+            i (int): gate index
+            j (int): dot index
         
         Returns:
             Tuple[float, float]: (mean, variance) of the posterior distribution
@@ -234,18 +280,25 @@ class CapacitancePredictor:
                 If return_variance=False: matrix of means
                 If return_variance=True: (means_matrix, variances_matrix)
         """
+        means = self.means.copy()
+        variances = self.variances.copy()
+
+        for i in range(self.num_dots):
+            means[i, i] = 1.0
+            variances[i, i] = 0.0001 #arbitrary small number
+
         if return_variance:
-            return self.means.copy(), self.variances.copy()
+            return means, variances
         else:
-            return self.means.copy()
+            return means
     
     def get_confidence_interval(self, i: int, j: int, confidence_level: float = 0.95) -> Tuple[float, float]:
         """
         Get confidence interval for a specific capacitance estimate.
         
         Args:
-            i (int): First dot index
-            j (int): Second dot index
+            i (int): gate index
+            j (int): dot index
             confidence_level (float): Confidence level (default: 0.95 for 95% CI)
         
         Returns:
@@ -269,8 +322,8 @@ class CapacitancePredictor:
         Reset a specific matrix element to its prior distribution.
         
         Args:
-            i (int): First dot index
-            j (int): Second dot index
+            i (int): gate index
+            j (int): dot index
         """
         if callable(self.prior_config):
             prior_mean, prior_var = self.prior_config(i, j)
@@ -278,34 +331,7 @@ class CapacitancePredictor:
             prior_mean, prior_var = self.prior_config.get((i, j), (0.25, 0.1))
         
         self.means[i, j] = prior_mean
-        self.means[j, i] = prior_mean
         self.variances[i, j] = prior_var
-        self.variances[j, i] = prior_var
-    
-    def get_matrix_summary(self) -> Dict[str, float]:
-        """
-        Get summary statistics of the current capacitance matrix.
-        
-        Returns:
-            Dict[str, float]: Dictionary containing summary statistics
-        """
-        # Only consider upper triangular (excluding diagonal) to avoid double counting
-        upper_tri_indices = np.triu_indices(self.n_dots, k=1)
-        off_diagonal_means = self.means[upper_tri_indices]
-        off_diagonal_vars = self.variances[upper_tri_indices]
-        
-        # Diagonal elements (self-capacitance)
-        diagonal_means = np.diag(self.means)
-        diagonal_vars = np.diag(self.variances)
-        
-        return {
-            'off_diagonal_mean_avg': np.mean(off_diagonal_means),
-            'off_diagonal_mean_std': np.std(off_diagonal_means),
-            'off_diagonal_var_avg': np.mean(off_diagonal_vars),
-            'diagonal_mean_avg': np.mean(diagonal_means),
-            'diagonal_var_avg': np.mean(diagonal_vars),
-            'total_uncertainty': np.sum(off_diagonal_vars) + np.sum(diagonal_vars)
-        }
 
 
 # Example usage and testing
@@ -343,7 +369,3 @@ if __name__ == "__main__":
     # Get full matrix
     full_matrix = predictor.get_full_matrix()
     print(f"Full capacitance matrix:\n{full_matrix}")
-    
-    # Get summary statistics
-    summary = predictor.get_matrix_summary()
-    print(f"Matrix summary: {summary}")

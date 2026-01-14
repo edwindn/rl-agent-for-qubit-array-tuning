@@ -136,7 +136,7 @@ class TestCapacitancePredictionModel:
         else:
             state_dict = checkpoint
 
-        self.ml_model = CapacitancePredictionModel()
+        self.ml_model = CapacitancePredictionModel(output_size=2)
 
         self.ml_model.load_state_dict(state_dict)
         print(f"Loaded weights from {weights_path}")
@@ -157,7 +157,7 @@ class TestCapacitancePredictionModel:
                 else:
                     prior_dict[(i, j)] = (0., 0.1)   # Distant pairs
 
-        self.bayesian_predictor = CapacitancePredictor(n_dots, prior_dict)
+        self.bayesian_predictor = CapacitancePredictor(n_dots=n_dots, nn=True, prior_config=prior_dict)
 
         self.n_dots = n_dots
 
@@ -244,7 +244,7 @@ if __name__ == '__main__':
     np.set_printoptions(precision=10, suppress=True)
     os.environ["CUDA_VISIBLE_DEVICES"] = "7" # change as needed
     
-    weights_path = os.path.join(os.path.dirname(__file__), 'weights', 'best_model.pth')
+    weights_path = os.path.join(os.path.dirname(__file__), 'weights', 'best_model_barriers.pth')
 
     test = TestCapacitancePredictionModel(n_dots=4, weights_path=weights_path, reverse=True)
     test.run_test(type="noise")

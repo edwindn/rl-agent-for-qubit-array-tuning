@@ -35,6 +35,7 @@ reward:
 
 capacitance_model:
   update_method: "fake"  # Options: null (does not update vgm), "perfect", "fake", "bayesian", "kriging"
+  nearest_neighbour: true # set to true if the ML model outputs two values per prediction (gate-dot RL and LR couplings in this order)
   # note that the perfect method will also remove any cross-talk with and between the barriers
 
 init:
