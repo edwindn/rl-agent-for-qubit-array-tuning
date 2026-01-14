@@ -228,6 +228,21 @@ class Encoder(nj.Module):
       imgs = [obs[k] for k in sorted(self.imgkeys)]
       assert all(x.dtype == jnp.uint8 for x in imgs)
       x = nn.cast(jnp.concatenate(imgs, -1), force=True) / 255 - 0.5
+
+      # Debug logging for initial image processing
+      try:
+        from . import main
+        if main.DEBUG_LOG is not None:
+          main.log_debug('encoder_image_init', {
+            'raw_image_shape': list(imgs[0].shape),
+            'normalized_mean': float(jnp.mean(x)),
+            'normalized_std': float(jnp.std(x)),
+            'normalized_min': float(jnp.min(x)),
+            'normalized_max': float(jnp.max(x)),
+          })
+      except:
+        pass
+
       x = x.reshape((-1, *x.shape[bdims:]))
       for i, depth in enumerate(self.depths):
         if self.outer and i == 0:
@@ -238,7 +253,39 @@ class Encoder(nj.Module):
           x = self.sub(f'cnn{i}', nn.Conv2D, depth, K, **self.kw)(x)
           B, H, W, C = x.shape
           x = x.reshape((B, H // 2, 2, W // 2, 2, C)).max((2, 4))
+
+        # Debug before normalization
+        try:
+          from . import main
+          if main.DEBUG_LOG is not None:
+            main.log_debug(f'encoder_cnn_layer_{i}_pre_norm', {
+              'layer': i,
+              'shape': list(x.shape),
+              'mean': float(jnp.mean(x)),
+              'std': float(jnp.std(x)),
+              'has_nan': bool(jnp.isnan(x).any()),
+              'has_inf': bool(jnp.isinf(x).any()),
+            })
+        except:
+          pass
+
         x = nn.act(self.act)(self.sub(f'cnn{i}norm', nn.Norm, self.norm)(x))
+
+        # Debug after normalization and activation
+        try:
+          from . import main
+          if main.DEBUG_LOG is not None:
+            main.log_debug(f'encoder_cnn_layer_{i}_post_norm', {
+              'layer': i,
+              'shape': list(x.shape),
+              'mean': float(jnp.mean(x)),
+              'std': float(jnp.std(x)),
+              'has_nan': bool(jnp.isnan(x).any()),
+              'has_inf': bool(jnp.isinf(x).any()),
+            })
+        except:
+          pass
+
       assert 3 <= x.shape[-3] <= 16, x.shape
       assert 3 <= x.shape[-2] <= 16, x.shape
       x = x.reshape((x.shape[0], -1))

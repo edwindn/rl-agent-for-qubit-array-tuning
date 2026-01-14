@@ -5,7 +5,14 @@ import sys
 from functools import partial as bind
 
 # Hide GPU 0 before JAX initializes
-os.environ['CUDA_VISIBLE_DEVICES'] = '1,2'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '1,2'
+# example: python main.py --configs size50m --debug True --from_checkpoint ...
+
+import jax
+jax.config.update('jax_platform_name', 'cuda')
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.25'
+os.environ['JAX_ENABLE_X64'] = 'true'
 
 folder = pathlib.Path(__file__).parent
 sys.path.insert(0, str(folder.parent))
@@ -18,6 +25,24 @@ import embodied
 import numpy as np
 import portal
 import ruamel.yaml as yaml
+import json
+from datetime import datetime
+
+
+# Global debug logger
+DEBUG_LOG = None
+
+def log_debug(event_type, data):
+  """Log debug information to dreamer_main_log.jsonl"""
+  global DEBUG_LOG
+  if DEBUG_LOG is not None:
+    entry = {
+      "timestamp": datetime.now().isoformat(),
+      "event": event_type,
+      **data
+    }
+    DEBUG_LOG.write(json.dumps(entry) + "\n")
+    DEBUG_LOG.flush()
 
 
 def main(argv=None):
@@ -33,6 +58,32 @@ def main(argv=None):
   config = elements.Flags(config).parse(other)
   config = config.update(logdir=(
       config.logdir.format(timestamp=elements.timestamp())))
+
+  # Wipe log files at start of new run
+  main_log_path = folder / 'dreamer_main_log.jsonl'
+  env_log_path = folder / 'dreamer_env_log.jsonl'
+  encoder_log_path = folder / 'dreamer_encoder_output.jsonl'
+
+  # Clear all log files
+  if main_log_path.exists():
+    main_log_path.unlink()
+  if env_log_path.exists():
+    env_log_path.unlink()
+  if encoder_log_path.exists():
+    encoder_log_path.unlink()
+
+  # Initialize debug logging if --debug flag is present
+  global DEBUG_LOG
+  if config.get('debug', False):
+    DEBUG_LOG = open(main_log_path, 'w')
+    print(f'Debug logging enabled: {main_log_path}')
+    log_debug('init', {'config_snapshot': dict(config)})
+
+    # Create encoder output log file
+    encoder_log_path.touch()
+    print(f'Encoder output logging enabled: {encoder_log_path}')
+  else:
+    print(f'Debug logging disabled. Use --debug True to enable.')
 
   if 'JOB_COMPLETION_INDEX' in os.environ:
     config = config.update(replica=int(os.environ['JOB_COMPLETION_INDEX']))
@@ -218,7 +269,7 @@ def make_env(config, index, **overrides):
   if suite == 'memmaze':
     from embodied.envs import from_gym
     import memory_maze  # noqa
-  
+
   # Custom environment handling
   if suite == 'custom':
     from embodied.envs import from_gym
@@ -227,7 +278,7 @@ def make_env(config, index, **overrides):
 
     # Import the DreamerEnvWrapper for QuantumDeviceEnv
     from DreamerEnvWrapper import DreamerEnvWrapper
-  
+
   ctor = {
       'dummy': 'embodied.envs.dummy:Dummy',
       'gym': 'embodied.envs.from_gym:FromGym',
@@ -247,7 +298,11 @@ def make_env(config, index, **overrides):
           f'MemoryMaze-{task}-v0', **kw),
       # Custom environment integration
       'custom': lambda task, **kw: (
-          from_gym.FromGym(DreamerEnvWrapper(**kw)) if task == 'qarray'
+          from_gym.FromGym(DreamerEnvWrapper(
+              logging=config.get('debug', False),
+              log_file=str(folder / 'dreamer_env_log.jsonl'),
+              **kw
+          )) if task == 'qarray'
           else None
       ),
   }[suite]

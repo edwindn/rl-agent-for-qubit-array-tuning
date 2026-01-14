@@ -249,7 +249,149 @@ class Agent(embodied.Agent):
     acts, outs = self._take_outs(internal.fetch_async((acts, outs)))
     carry = self._split(internal.to_local(carry))
 
+    # Debug logging: Log actual output values before finite check
+    try:
+      import pathlib
+      import json
+      from datetime import datetime
+      folder = pathlib.Path(__file__).parent.parent.parent
+      encoder_log = folder / 'dreamer_encoder_output.jsonl'
+      if encoder_log.exists() or (folder / 'dreamer_main_log.jsonl').exists():
+        # Extract the actual data values from outs to inspect encoder outputs
+        log_data = {
+          "timestamp": datetime.now().isoformat(),
+          "event": "raw_output_values",
+        }
+
+        # Log carry values (contains encoder state)
+        if len(carry) > 1:
+          enc_carry = carry[0]
+          dyn_carry = carry[1]
+          log_data["enc_carry_type"] = str(type(enc_carry))
+          log_data["dyn_carry_keys"] = list(dyn_carry.keys()) if isinstance(dyn_carry, dict) else "not_dict"
+          if isinstance(dyn_carry, dict):
+            for key in ['deter', 'stoch']:
+              if key in dyn_carry:
+                val = dyn_carry[key]
+                log_data[f"dyn_carry_{key}"] = {
+                  "shape": list(val.shape),
+                  "dtype": str(val.dtype),
+                  "mean": float(np.mean(val)),
+                  "std": float(np.std(val)),
+                  "min": float(np.min(val)),
+                  "max": float(np.max(val)),
+                  "has_nan": bool(np.isnan(val).any()),
+                  "has_inf": bool(np.isinf(val).any()),
+                  "nan_count": int(np.isnan(val).sum()),
+                  "inf_count": int(np.isinf(val).sum()),
+                }
+
+        # Log action values
+        for key, val in acts.items():
+          log_data[f"act_{key}"] = {
+            "shape": list(val.shape),
+            "dtype": str(val.dtype),
+            "mean": float(np.nanmean(val)) if np.isfinite(val).any() else None,
+            "std": float(np.nanstd(val)) if np.isfinite(val).any() else None,
+            "min": float(np.nanmin(val)) if np.isfinite(val).any() else None,
+            "max": float(np.nanmax(val)) if np.isfinite(val).any() else None,
+            "has_nan": bool(np.isnan(val).any()),
+            "has_inf": bool(np.isinf(val).any()),
+            "nan_count": int(np.isnan(val).sum()),
+            "inf_count": int(np.isinf(val).sum()),
+          }
+
+        with open(encoder_log, 'a') as f:
+          f.write(json.dumps(log_data) + "\n")
+          f.flush()
+    except Exception as e:
+      # Log the error to main log
+      try:
+        debug_log = folder / 'dreamer_main_log.jsonl'
+        if debug_log.exists():
+          with open(debug_log, 'a') as f:
+            f.write(json.dumps({"event": "encoder_logging_error", "error": str(e), "error_type": type(e).__name__}) + "\n")
+            f.flush()
+      except:
+        pass
+
     finite = outs.pop('finite', {})
+
+    # Debug logging for finite check failures
+    try:
+      import sys
+      import pathlib
+      import json
+      from datetime import datetime
+      folder = pathlib.Path(__file__).parent.parent.parent
+      debug_log = folder / 'dreamer_main_log.jsonl'
+      if debug_log.exists():
+        with open(debug_log, 'a') as f:
+          log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event": "finite_check",
+            "finite_status": {k: bool(all(x.all() for x in jax.tree.leaves(v))) for k, v in finite.items()},
+          }
+
+          # Add detailed stats for each key
+          for key, fin in finite.items():
+            leaves = jax.tree.leaves(fin)
+            is_finite = all(x.all() for x in leaves)
+            log_entry[f"{key}_is_finite"] = bool(is_finite)
+
+            if not is_finite:
+              # Log which specific arrays have NaNs/Infs
+              for i, leaf in enumerate(leaves):
+                has_nan = bool(np.isnan(leaf).any())
+                has_inf = bool(np.isinf(leaf).any())
+                if has_nan or has_inf:
+                  log_entry[f"{key}_array_{i}"] = {
+                    "shape": list(leaf.shape),
+                    "has_nan": has_nan,
+                    "has_inf": has_inf,
+                    "nan_count": int(np.isnan(leaf).sum()) if has_nan else 0,
+                    "inf_count": int(np.isinf(leaf).sum()) if has_inf else 0,
+                    "finite_values_mean": float(np.nanmean(leaf[np.isfinite(leaf)])) if np.isfinite(leaf).any() else None,
+                  }
+
+          f.write(json.dumps(log_entry) + "\n")
+          f.flush()
+    except Exception as e:
+      # Log the exception
+      try:
+        with open(debug_log, 'a') as f:
+          f.write(json.dumps({"event": "logging_error", "error": str(e)}) + "\n")
+          f.flush()
+      except:
+        pass
+
+    # Before assertion, do a simple manual check and log actual NaN/Inf values
+    for key, fin in finite.items():
+      leaves = jax.tree.leaves(fin)
+      if not all(x.all() for x in leaves):
+        try:
+          import pathlib
+          import json
+          from datetime import datetime
+          folder = pathlib.Path(__file__).parent.parent.parent
+          debug_log = folder / 'dreamer_main_log.jsonl'
+          if debug_log.exists():
+            with open(debug_log, 'a') as f:
+              for i, leaf in enumerate(leaves):
+                if not leaf.all():
+                  # This leaf has False values (NaN/Inf detected)
+                  f.write(json.dumps({
+                    "event": "nan_inf_detected",
+                    "key": key,
+                    "array_index": i,
+                    "shape": list(leaf.shape),
+                    "has_any_false": bool(not leaf.all()),
+                    "false_count": int((~leaf).sum()),
+                  }) + "\n")
+              f.flush()
+        except:
+          pass
+
     for key, fin in finite.items():
       assert all(x.all() for x in jax.tree.leaves(fin)), str(finite)
     for key, space in self.act_space.items():

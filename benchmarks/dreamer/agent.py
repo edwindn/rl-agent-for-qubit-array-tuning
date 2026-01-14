@@ -117,6 +117,26 @@ class Agent(embodied.jax.Agent):
     kw = dict(training=False, single=True)
     reset = obs['is_first']
     enc_carry, enc_entry, tokens = self.enc(enc_carry, obs, reset, **kw)
+
+    # Debug logging for encoder outputs
+    try:
+      from . import main
+      if main.DEBUG_LOG is not None:
+        main.log_debug('encoder_output', {
+          'tokens_shape': list(tokens.shape),
+          'tokens_mean': float(jnp.mean(tokens)),
+          'tokens_std': float(jnp.std(tokens)),
+          'tokens_min': float(jnp.min(tokens)),
+          'tokens_max': float(jnp.max(tokens)),
+          'tokens_has_nan': bool(jnp.isnan(tokens).any()),
+          'tokens_has_inf': bool(jnp.isinf(tokens).any()),
+          'obs_image_shape': list(obs['image'].shape),
+          'obs_image_mean': float(jnp.mean(obs['image'])),
+          'obs_voltages_mean': float(jnp.mean(obs['obs_voltages'])) if 'obs_voltages' in obs else None,
+        })
+    except Exception as e:
+      pass  # Don't fail on debug logging errors
+
     dyn_carry, dyn_entry, feat = self.dyn.observe(
         dyn_carry, tokens, prevact, reset, **kw)
     dec_entry = {}
