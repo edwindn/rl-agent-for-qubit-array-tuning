@@ -309,7 +309,12 @@ class QuantumDeviceEnv(gym.Env):
 
         # Scale gate distances by CGD diagonal (physical impact scaling)
         # Higher CGD diagonal means voltage errors have larger effect on dot potential
-        cgd_diagonal = np.array([self.array.model.Cgd[i, i] for i in range(self.num_dots)])
+        # Use cgd_full for barriers model, cgd for non-barriers model
+        if self.use_barriers:
+            cgd = self.array.model.cgd_full
+        else:
+            cgd = self.array.model.cgd
+        cgd_diagonal = np.array([cgd[i, i] for i in range(self.num_dots)])
         gate_distances = gate_distances * cgd_diagonal
 
         barrier_ground_truth = self.device_state["barrier_ground_truth"]
