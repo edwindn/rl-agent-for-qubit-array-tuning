@@ -151,12 +151,15 @@ class QuantumDeviceEnv(gym.Env):
             high=window_delta_range['max']
         )
 
+        radial_noise_config = self.config['simulator']['radial_noise']
+
         self.array = QarrayBaseClass(
             num_dots=self.num_dots,
             use_barriers=self.use_barriers,
             obs_voltage_min=-self.window_delta,
             obs_voltage_max=self.window_delta,
             obs_image_size=self.resolution,
+            radial_noise_config=radial_noise_config,
         )
 
         if self.capacitance_model == "perfect":
@@ -484,7 +487,6 @@ class QuantumDeviceEnv(gym.Env):
                 ]
 
                 ml_outputs = [(absolute_values[j], float(log_vars_np[i, j])) for j in range(2)]
-
                 self.capacitance_model["bayesian_predictor"].update_from_scan(left_dot=i, ml_outputs=ml_outputs)
 
         else:
@@ -545,9 +547,12 @@ class QuantumDeviceEnv(gym.Env):
             else:
                 device = torch.device("cpu")
                 print("Warning: Failed to find available CUDA device, running on CPU")
+            
+            nearest_neighbour = self.config["capacitance_model"]["nearest_neighbour"]
 
             # Initialize the neural network model
-            ml_model = CapacitancePredictionModel()
+            output_size = 2 if nearest_neighbour else 3
+            ml_model = CapacitancePredictionModel(output_size=output_size)
 
             if "SWARM_PROJECT_ROOT" in os.environ:
                 # Ray distributed mode: use environment variable set by training script
@@ -555,8 +560,11 @@ class QuantumDeviceEnv(gym.Env):
             else:
                 # Local development mode: find Swarm directory from current file
                 swarm_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-            weights_path = os.path.join(swarm_dir, "CapacitanceModel", "outputs", "best_model.pth")
+            
+            if self.use_barriers:
+                weights_path = os.path.join(swarm_dir, "capacitance_model", "weights", "best_model_barriers.pth")
+            else:
+                weights_path = os.path.join(swarm_dir, "capacitance_model", "weights", "best_model_no_barriers.pth")
 
             if not os.path.exists(weights_path):
                 raise FileNotFoundError(f"Model weights not found at: {weights_path}")
@@ -596,8 +604,6 @@ class QuantumDeviceEnv(gym.Env):
                     return (0.2, 0.1)
                 else:
                     return (0.0, 0.1)
-            
-            nearest_neighbour = self.config["capacitance_model"]["nearest_neighbour"]
 
             if update_method == "bayesian":
                 # Initialize Bayesian predictor
@@ -623,9 +629,10 @@ class QuantumDeviceEnv(gym.Env):
             print("Successfully loaded capacitance model.")
 
         except Exception as e:
-            print(f"Warning: Failed to initialize capacitance model: {e}")
-            print("The environment will continue without capacitance prediction capabilities.")
-            self.capacitance_model = None
+            raise RuntimeError(f"Error initialising capacitance model: {e}")
+            # print(f"Warning: Failed to initialize capacitance model: {e}")
+            # print("The environment will continue without capacitance prediction capabilities.")
+            # self.capacitance_model = None
 
 
     def _init_voltage_ranges(self, plunger_ground_truths, barrier_ground_truths):
