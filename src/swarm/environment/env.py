@@ -39,6 +39,8 @@ class QuantumDeviceEnv(gym.Env):
         self,
         training=True,
         config_path="env_config.yaml",
+        num_dots=None,
+        use_barriers=None,
     ):
 
         super().__init__()
@@ -46,8 +48,8 @@ class QuantumDeviceEnv(gym.Env):
         # environment parameters
         self.config = self._load_config(config_path)
         self.training = training  # if we are training or not
-        self.num_dots = self.config['simulator']['num_dots']
-        self.use_barriers = self.config['simulator']['use_barriers']
+        self.num_dots = num_dots if num_dots is not None else self.config['simulator']['num_dots']
+        self.use_barriers = use_barriers if use_barriers is not None else self.config['simulator']['use_barriers']
         self.use_deltas = self.config['simulator']['use_deltas']
         self.max_steps = self.config["simulator"]["max_steps"]
         self.num_plunger_voltages = self.num_dots
@@ -214,7 +216,7 @@ class QuantumDeviceEnv(gym.Env):
         return observation, info
 
 
-    def step(self, action: dict):
+    def step(self, action: dict, skip_obs: bool = False):
         """
         Updates the environment state based on the agent's action.
 
@@ -224,9 +226,11 @@ class QuantumDeviceEnv(gym.Env):
 
         Args:
             action: An action provided by the agent.
+            skip_obs: If True, skip expensive observation generation (CSD images).
+                      Useful for benchmarking when only voltage dynamics are needed.
 
         Returns:
-            observation (np.ndarray): The observation of the environment's state.
+            observation (np.ndarray): The observation of the environment's state (None if skip_obs).
             reward (dict): The amount of reward returned after previous action.
             terminated (bool): Whether the episode has ended (e.g., reached a goal).
             truncated (bool): Whether the episode was cut short (e.g., time limit).
@@ -243,23 +247,15 @@ class QuantumDeviceEnv(gym.Env):
         gate_voltages = np.clip(gate_voltages, -1, 1)
         barrier_voltages = np.clip(barrier_voltages, -1, 1)
 
-        # Random actions for debugging
-        # gate_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_plunger_voltages).astype(np.float32)
-        # barrier_voltages = np.random.uniform(low=-1.0, high=1.0, size=self.num_barrier_voltages).astype(np.float32)
-        # gate_voltages = np.zeros(self.num_plunger_voltages).astype(np.float32)
-        # barrier_voltages = np.zeros(self.num_barrier_voltages).astype(np.float32)
-        
         # Rescale voltages from [-1, 1] to actual ranges
         gate_voltages = self._rescale_gate_voltages(gate_voltages)
         barrier_voltages = self._rescale_barrier_voltages(barrier_voltages)
-            
+
         self.device_state["current_gate_voltages"] = gate_voltages
         self.device_state["current_barrier_voltages"] = barrier_voltages
 
         if self.use_barriers:
             self.device_state["barrier_ground_truth"] = self.array.calculate_barrier_ground_truth(gate_voltages)
-
-
 
         reward = self._get_reward()
 
@@ -269,13 +265,16 @@ class QuantumDeviceEnv(gym.Env):
         if self.current_step >= self.max_steps:
             truncated = True
 
-        raw_observation = self.array._get_obs(gate_voltages, barrier_voltages)
-        observation = self._normalise_obs(raw_observation)
+        if skip_obs:
+            observation = None
+        else:
+            raw_observation = self.array._get_obs(gate_voltages, barrier_voltages)
+            observation = self._normalise_obs(raw_observation)
 
-        self._update_virtual_gate_matrix(observation)
-        self.device_state["virtual_gate_matrix"] = (
-            self.array.model.gate_voltage_composer.virtual_gate_matrix
-        )
+            self._update_virtual_gate_matrix(observation)
+            self.device_state["virtual_gate_matrix"] = (
+                self.array.model.gate_voltage_composer.virtual_gate_matrix
+            )
 
         info = self._get_info()
 
@@ -298,16 +297,30 @@ class QuantumDeviceEnv(gym.Env):
         - Region 3 (0 < distance <= quadratic_start): configurable curve (polynomial/exponential/linear) from 0.5 to 1.0
         - Region 4 (distance = 0): reward = 1.0
 
+        Gate distances are scaled by CGD diagonal elements to reflect physical impact.
+
         Barrier rewards use a simple linear function from 0 (at barrier_ramp_start) to 1.0 (at ground truth).
+        Barrier distances are scaled by alpha (tunnel coupling sensitivity) to reflect physical impact.
         """
 
         gate_ground_truth = self.device_state["gate_ground_truth"]
         current_gate_voltages = self.device_state["current_gate_voltages"]
         gate_distances = np.abs(gate_ground_truth - current_gate_voltages)
 
+        # Scale gate distances by CGD diagonal (physical impact scaling)
+        # Higher CGD diagonal means voltage errors have larger effect on dot potential
+        cgd_diagonal = np.array([self.array.model.Cgd[i, i] for i in range(self.num_dots)])
+        gate_distances = gate_distances * cgd_diagonal
+
         barrier_ground_truth = self.device_state["barrier_ground_truth"]
         current_barrier_voltages = self.device_state["current_barrier_voltages"]
         barrier_distances = np.abs(barrier_ground_truth - current_barrier_voltages)
+
+        # Scale barrier distances by alpha (tunnel coupling sensitivity)
+        # Higher alpha means voltage errors have larger effect on tunnel coupling
+        if self.use_barriers and self.array.barrier_alpha is not None:
+            barrier_alpha = np.array(self.array.barrier_alpha)
+            barrier_distances = barrier_distances * barrier_alpha
 
         # Calculate gate rewards using piecewise function
         gate_rewards = np.zeros_like(gate_distances)
