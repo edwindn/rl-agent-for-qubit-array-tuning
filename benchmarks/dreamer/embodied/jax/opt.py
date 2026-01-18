@@ -46,8 +46,9 @@ class Optimizer(nj.Module):
       loss *= 1 / self.grad_scale.read()
 
     counts = {k: math.prod(v.shape) for k, v in params.items()}
-    if nj.creating():
-      print(self._summarize_params(counts, self.summary_depth))
+    # Disabled verbose param summary
+    # if nj.creating():
+    #   print(self._summarize_params(counts, self.summary_depth))
 
     axes = internal.get_data_axes()
     if axes:
