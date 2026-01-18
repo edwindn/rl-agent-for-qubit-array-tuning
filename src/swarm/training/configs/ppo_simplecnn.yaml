@@ -45,7 +45,7 @@ rl_config:
   algorithm: "PPO"
 
   env_runners:
-    num_env_runners: 21
+    num_env_runners: 16
     rollout_fragment_length: 50
     sample_timeout_s: 600.0
     num_gpus_per_env_runner: 0.25
@@ -81,7 +81,7 @@ rl_config:
       - "barrier_policy"
     count_steps_by: "agent_steps"
     free_log_std: false
-    log_std_bounds: [-10, 2]
+    log_std_bounds: [-5, 2]
 
 # Checkpoint configuration
 checkpoints:

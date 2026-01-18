@@ -41,6 +41,7 @@ class QarrayBaseClass:
         param_overrides: dict = None,
         vary_peak_width: bool = False,
         peak_width_alpha: float = 0.01,
+        radial_noise_config: dict = None,
         **kwargs,
     ):
 
@@ -74,6 +75,8 @@ class QarrayBaseClass:
         self.gate_ground_truth = None  # Set by env.py for radial noise
         self.radial_noise_zero_radius = None  # Sampled in _load_model
         self.radial_noise_ramp_distance = None  # Sampled in _load_model
+        self.radial_noise_full_noise_distance = None  # Sampled in _load_model
+        self.radial_noise_config = radial_noise_config  # Passed from env.py
 
         # Store peak width settings for use in _load_model
         self.vary_peak_width = vary_peak_width
@@ -378,22 +381,34 @@ class QarrayBaseClass:
         p10_factor = self._sample_from_range(telegraph_config["p10_factor"], rng)
         amplitude = self._sample_from_range(telegraph_config["amplitude"], rng)
 
-        # Radial noise
-        radial_config = config_ranges.get("radial_noise", {})
+        # Radial noise - use config passed from env.py if available
+        if self.radial_noise_config is not None and self.radial_noise_config["enabled"]:
+            # Sample zero_radius from lower range
+            lower_config = self.radial_noise_config["lower"]
+            if isinstance(lower_config, dict):
+                radial_zero_radius = self._sample_from_range(lower_config, rng)
+            else:
+                radial_zero_radius = lower_config
 
-        # Sample zero_radius
-        radial_zero_radius_config = radial_config.get("zero_radius", {"min": 3, "max": 10})
-        if isinstance(radial_zero_radius_config, dict):
-            radial_zero_radius = self._sample_from_range(radial_zero_radius_config, rng)
-        else:
-            radial_zero_radius = radial_zero_radius_config
+            # Sample delta from ramp_range, then set ramp_distance = zero_radius + delta
+            ramp_range_config = self.radial_noise_config["ramp_range"]
+            if isinstance(ramp_range_config, dict):
+                delta = self._sample_from_range(ramp_range_config, rng)
+            else:
+                delta = ramp_range_config
 
-        # Sample ramp_distance (distance over which noise ramps from 0 to max)
-        ramp_distance_config = radial_config.get("ramp_distance", {"min": 10, "max": 15})
-        if isinstance(ramp_distance_config, dict):
-            radial_ramp_distance = self._sample_from_range(ramp_distance_config, rng)
+            radial_ramp_distance = radial_zero_radius + delta
+
+            # Sample full_noise_distance from total_noise_range
+            total_noise_range_config = self.radial_noise_config.get("total_noise_range")
+            if total_noise_range_config and isinstance(total_noise_range_config, dict):
+                full_noise_distance = self._sample_from_range(total_noise_range_config, rng)
+            else:
+                full_noise_distance = None
         else:
-            radial_ramp_distance = ramp_distance_config
+            radial_zero_radius = None
+            radial_ramp_distance = None
+            full_noise_distance = None
 
         return {
             "white_noise_amplitude": white_noise_amp,
@@ -404,6 +419,7 @@ class QarrayBaseClass:
             },
             "radial_noise_zero_radius": radial_zero_radius,
             "radial_noise_ramp_distance": radial_ramp_distance,
+            "radial_noise_full_noise_distance": full_noise_distance,
         }
 
     def _apply_radial_noise(self, z: np.ndarray, v1: float, v2: float, gt1: float, gt2: float) -> np.ndarray:
@@ -411,6 +427,7 @@ class QarrayBaseClass:
         Apply radial noise that increases with distance from ground truth.
 
         Noise is zero within zero_radius of ground truth, then increases linearly.
+        If either voltage exceeds full_noise_distance from ground truth, return pure white noise.
 
         Args:
             z: CSD image array (obs_image_size, obs_image_size)
@@ -418,15 +435,22 @@ class QarrayBaseClass:
             gt1, gt2: Ground truth voltages for the two gates
 
         Returns:
-            Image with radial noise applied
+            Image with radial noise applied, or pure white noise if beyond full_noise_distance
         """
-        radial_config = self.config["simulator"]["model"].get("radial_noise", {})
-        if not radial_config.get("enabled", False):
+        if self.radial_noise_config is None or not self.radial_noise_config["enabled"]:
             return z
+
+        # Check if either voltage is beyond full_noise_distance
+        if self.radial_noise_full_noise_distance is not None:
+            dist_v1 = abs(v1 - gt1)
+            dist_v2 = abs(v2 - gt2)
+            if dist_v1 > self.radial_noise_full_noise_distance or dist_v2 > self.radial_noise_full_noise_distance:
+                # Return pure white noise (normalization happens later in env.py)
+                return np.random.randn(*z.shape)
 
         zero_radius = self.radial_noise_zero_radius
         ramp_distance = self.radial_noise_ramp_distance
-        max_amplitude = radial_config.get("max_amplitude", 0.5)
+        max_amplitude = self.radial_noise_config["max_amplitude"]
         # Compute alpha so that noise reaches max_amplitude after ramp_distance
         alpha = max_amplitude / ramp_distance
 
@@ -549,6 +573,7 @@ class QarrayBaseClass:
             "telegraph_noise_parameters": noise_params["telegraph_noise_parameters"],
             "radial_noise_zero_radius": noise_params["radial_noise_zero_radius"],
             "radial_noise_ramp_distance": noise_params["radial_noise_ramp_distance"],
+            "radial_noise_full_noise_distance": noise_params["radial_noise_full_noise_distance"],
             "latching_model_parameters": latching_params,
             "variable_peak_width_parameters": variable_peak_width_params,
             "T": self._sample_from_range(config_ranges["T"], rng),
@@ -632,6 +657,7 @@ class QarrayBaseClass:
             "telegraph_noise_parameters": noise_params["telegraph_noise_parameters"],
             "radial_noise_zero_radius": noise_params["radial_noise_zero_radius"],
             "radial_noise_ramp_distance": noise_params["radial_noise_ramp_distance"],
+            "radial_noise_full_noise_distance": noise_params["radial_noise_full_noise_distance"],
             "latching_model_parameters": latching_params,
             "barrier_model_parameters": barrier_model_params,
             "voltage_capacitance_parameters": voltage_capacitance_params,
@@ -700,6 +726,7 @@ class QarrayBaseClass:
         noise_model = white_noise + telegraph_noise
         self.radial_noise_zero_radius = model_params["radial_noise_zero_radius"]
         self.radial_noise_ramp_distance = model_params["radial_noise_ramp_distance"]
+        self.radial_noise_full_noise_distance = model_params["radial_noise_full_noise_distance"]
         latching_params = model_params["latching_model_parameters"]
         latching_model = (
             LatchingModel(**{k: v for k, v in latching_params.items() if k != "Exists"})
@@ -752,6 +779,7 @@ class QarrayBaseClass:
         noise_model = white_noise + telegraph_noise
         self.radial_noise_zero_radius = model_params["radial_noise_zero_radius"]
         self.radial_noise_ramp_distance = model_params["radial_noise_ramp_distance"]
+        self.radial_noise_full_noise_distance = model_params["radial_noise_full_noise_distance"]
 
         # Extract latching model
         latching_params = model_params["latching_model_parameters"]

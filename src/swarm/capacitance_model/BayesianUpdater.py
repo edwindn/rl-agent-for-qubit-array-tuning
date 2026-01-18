@@ -103,10 +103,17 @@ class CapacitancePredictor:
         #     raise ValueError("Mean matrix is not symmetric")
         # if not np.allclose(self.variances, self.variances.T):
         #     raise ValueError("Variance matrix is not symmetric")
-        
-        # Check positive variances
-        if np.any(self.variances <= 0):
-            raise ValueError("All variances must be positive")
+
+        # Check positive variances for initialized elements only
+        if self.nearest_neighbour:
+            # Only check nearest neighbor pairs
+            for i in range(self.n_dots - 1):
+                if self.variances[i, i+1] <= 0 or self.variances[i+1, i] <= 0:
+                    raise ValueError("All variances must be positive")
+        else:
+            # Check all elements
+            if np.any(self.variances <= 0):
+                raise ValueError("All variances must be positive")
     
     def bayesian_update(self, i: int, j: int, ml_estimate: float, ml_variance: float):
         """
@@ -283,7 +290,7 @@ class CapacitancePredictor:
         means = self.means.copy()
         variances = self.variances.copy()
 
-        for i in range(self.num_dots):
+        for i in range(self.n_dots):
             means[i, i] = 1.0
             variances[i, i] = 0.0001 #arbitrary small number
 

@@ -62,6 +62,18 @@ class PolicyHead(TorchModel):
 
         self._output_dims = (config.output_layer_dim,)
 
+        # Store log_std bounds for clamping (replicate Ray's TorchMLPHead implementation)
+        # Ray uses symmetric clamping but we support asymmetric bounds
+        if config.log_std_bounds is not None:
+            self.log_std_min = torch.Tensor([config.log_std_bounds[0]])
+            self.log_std_max = torch.Tensor([config.log_std_bounds[1]])
+            # Register buffers to handle device mapping (same as Ray does)
+            self.register_buffer("log_std_min_const", self.log_std_min)
+            self.register_buffer("log_std_max_const", self.log_std_max)
+            self.clip_log_std = True
+        else:
+            self.clip_log_std = False
+
     @property
     def output_dims(self) -> Tuple[int, ...]:
         return self._output_dims
@@ -78,9 +90,27 @@ class PolicyHead(TorchModel):
         x = self.mlp(inputs)
 
         voltage_features = self.voltage_layer(voltage)
-        x = torch.cat((x, voltage_features), dim=1)
 
-        return self.final_layer(x)
+        # Handle both 2D (B, features) and 3D (B, T, features) inputs
+        # For 2D: concat on dim=1, for 3D: concat on dim=2 (feature dimension)
+        concat_dim = -1  # Use -1 to always concat on last dimension (features)
+        x = torch.cat((x, voltage_features), dim=concat_dim)
+
+        # Apply log_std clipping if enabled (replicate Ray's TorchMLPHead behavior)
+        # See: ray/rllib/core/models/torch/heads.py TorchMLPHead._forward()
+        if self.clip_log_std:
+            # Forward pass
+            output = self.final_layer(x)
+            # Split into means and log_stds (output_dim is 2*action_dim)
+            means, log_stds = torch.chunk(output, chunks=2, dim=-1)
+            # Clip the log standard deviations
+            log_stds = torch.clamp(
+                log_stds, self.log_std_min_const, self.log_std_max_const
+            )
+            return torch.cat((means, log_stds), dim=-1)
+        else:
+            # No clipping - just return raw output
+            return self.final_layer(x)
 
 
 # =============================================================================
@@ -138,7 +168,11 @@ class ValueHead(TorchModel):
         x = self.mlp(inputs)
 
         voltage_features = self.voltage_layer(voltage)
-        x = torch.cat((x, voltage_features), dim=1)
+
+        # Handle both 2D (B, features) and 3D (B, T, features) inputs
+        # For 2D: concat on dim=1, for 3D: concat on dim=2 (feature dimension)
+        concat_dim = -1  # Use -1 to always concat on last dimension (features)
+        x = torch.cat((x, voltage_features), dim=concat_dim)
 
         return self.final_layer(x)
 

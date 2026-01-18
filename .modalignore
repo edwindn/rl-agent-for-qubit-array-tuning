@@ -44,6 +44,9 @@ runs/
 wandb/
 tensorboard_logs/
 
+# Ray session data
+/tmp/ray/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -60,8 +63,7 @@ Thumbs.db
 *.png
 *.gif
 
-# Lock files (dependencies installed from requirements.txt)
-uv.lock
+# Lock files
 poetry.lock
 Pipfile.lock
 
@@ -71,6 +73,20 @@ checkpoints/
 *.pth
 *.pt
 *.ckpt
+
+# Large data directories
+src/swarm/qarray_dataset
+src/swarm/artifacts
+src/swarm/wandb
+src/swarm/training/wandb
+src/swarm/training/data
+src/swarm/training/checkpoints
+src/swarm/capacitance_model/wandb
+src/swarm/capacitance_model/weights
+src/swarm/environment/gui
+benchmarks
+checkpoints
+wandb
 
 # Claude Code
 CLAUDE.md

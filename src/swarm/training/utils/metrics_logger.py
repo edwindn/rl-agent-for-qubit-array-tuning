@@ -410,10 +410,7 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
         except Exception as e:
             print(f"Error logging scans to wandb: {e}")
 
-    # Log to wandb (don't specify step since we're logging iteration explicitly)
-    wandb.log(log_dict)
-
-    # Plot distance data if available (logged separately under agent_vision)
+    # Process distance data if available
     if distance_data_dir is not None:
         try:
             from pathlib import Path
@@ -425,7 +422,8 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
             plunger_folders = sorted([f for f in distance_data_path.iterdir() if f.is_dir() and f.name.startswith("plunger_")])
             barrier_folders = sorted([f for f in distance_data_path.iterdir() if f.is_dir() and f.name.startswith("barrier_")])
 
-            # Plot plunger distances
+            # Calculate mean distance magnitude for plunger agents
+            plunger_distances_all = []
             if plunger_folders:
                 fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -447,6 +445,9 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
                         if latest_file is not None:
                             # Load and plot the data
                             distances = np.load(latest_file)
+                            # Validate that the loaded data is not empty
+                            assert distances.size > 0, f"Loaded empty distance data from {latest_file}"
+                            plunger_distances_all.extend(distances)
                             steps = np.arange(1, len(distances) + 1)
                             ax.plot(steps, distances, label=agent_folder.name, alpha=0.7)
 
@@ -458,6 +459,11 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
 
                 wandb.log({"agent_vision/plunger_distances": wandb.Image(fig)})
                 plt.close(fig)
+
+            # Calculate and log mean distance magnitude for plungers
+            if plunger_distances_all:
+                mean_distance_magnitude = np.mean(np.abs(plunger_distances_all))
+                log_dict["plunger_mean_distance_magnitude"] = float(mean_distance_magnitude)
 
             # Plot barrier distances
             if barrier_folders:
@@ -481,6 +487,8 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
                         if latest_file is not None:
                             # Load and plot the data
                             distances = np.load(latest_file)
+                            # Validate that the loaded data is not empty
+                            assert distances.size > 0, f"Loaded empty distance data from {latest_file}"
                             steps = np.arange(1, len(distances) + 1)
                             ax.plot(steps, distances, label=agent_folder.name, alpha=0.7)
 
@@ -495,6 +503,9 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
 
         except Exception as e:
             print(f"Error plotting distance data: {e}")
+
+    # Log to wandb (don't specify step since we're logging iteration explicitly)
+    wandb.log(log_dict)
 
     # Update summary metrics for best performance tracking
     if metrics["episode_return_mean"] is not None:

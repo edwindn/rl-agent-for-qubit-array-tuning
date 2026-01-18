@@ -314,7 +314,7 @@ class QuantumDeviceEnv(gym.Env):
             cgd = self.array.model.cgd_full
         else:
             cgd = self.array.model.cgd
-        cgd_diagonal = np.array([cgd[i, i] for i in range(self.num_dots)])
+        cgd_diagonal = np.abs([cgd[i, i] for i in range(self.num_dots)])
         gate_distances = gate_distances * cgd_diagonal
 
         barrier_ground_truth = self.device_state["barrier_ground_truth"]
@@ -487,10 +487,26 @@ class QuantumDeviceEnv(gym.Env):
         with torch.no_grad():
             values, log_vars = self.capacitance_model["ml_model"](batch_tensor)
 
-        # Update Bayesian predictor for each dot pair
-        # Convert tensors to numpy once
         values_np = values.cpu().numpy()  # Shape: (num_dots-1, num outputs)
         log_vars_np = log_vars.cpu().numpy()  # Shape: (num_dots-1, num outputs)
+
+        # cgd = self.array.model.cgd
+        # true_values = np.zeros_like(values_np)
+        # for scan_idx in range(true_values.shape[0]):
+        #     # outputs are RL, LR couplings
+        #     true_values[scan_idx, 0] = cgd[scan_idx, scan_idx + 1] # rows are the dots, columns are the gates
+        #     true_values[scan_idx, 1] = cgd[scan_idx + 1, scan_idx]
+
+        # errors = values_np - np.absolute(true_values)
+
+        # # Log values and logvars to capacitance_values.log
+        # # Use absolute path to avoid Ray working directory issues
+        # log_file_path = Path("/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/inference/capacitance_values.log")
+
+        # with open(log_file_path, "a") as f:
+        #     f.write(f"values: {values_np.tolist()}\t\t\t")
+        #     f.write(f"errors: {errors.tolist()}\t\t\t")
+        #     f.write(f"log_vars: {log_vars_np.tolist()}\n")
 
         if self.capacitance_model["nearest_neighbour"]:
             for i in range(self.num_dots - 1):

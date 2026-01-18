@@ -45,6 +45,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         return_voltage: bool = False,
         gif_config: dict = None,
         distance_data_dir: str = None,
+        env_config_path: str = None,
     ):
         """
         Initialize multi-agent wrapper.
@@ -56,6 +57,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             return_voltage: If True, returns dict observation with image and voltage.
                           If False, returns only the image array.
             distance_data_dir: Path to directory for saving distance data (if enabled)
+            env_config_path: Optional path to custom env config file (defaults to env_config.yaml)
         """
         super().__init__()
 
@@ -68,7 +70,11 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         if self.gif_config is not None:
             self._init_gif_capture()
 
-        self.base_env = QuantumDeviceEnv(training=training)
+        # Pass custom config path if provided
+        if env_config_path:
+            self.base_env = QuantumDeviceEnv(training=training, config_path=env_config_path)
+        else:
+            self.base_env = QuantumDeviceEnv(training=training)
 
         self.num_gates = self.base_env.num_dots
         self.use_barriers = self.base_env.use_barriers
@@ -449,6 +455,12 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         agent_truncated = dict.fromkeys(self.all_agent_ids, truncated)
         agent_truncated["__all__"] = truncated  # Required by MultiAgentEnv
 
+        # Save distance history when episode ends
+        if (terminated or truncated) and self.distance_history is not None:
+            self._save_agent_histories(self.distance_history)
+            # Clear history after saving
+            self.distance_history = {_id: [] for _id in self.all_agent_ids}
+
         # Create per-agent info dict (MultiAgentEnv requirement)
 
         if not device_state_info:
@@ -486,6 +498,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                         self.distance_history[agent_id].append(distance_val)
 
             except Exception as e:
+                raise RuntimeError(f"Error creating multi-agent info: {e}")
                 agent_infos = dict.fromkeys(self.all_agent_ids, {
                     "error": f"Error creating multi-agent info: {e}"
                 })

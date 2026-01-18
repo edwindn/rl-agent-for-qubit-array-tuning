@@ -27,7 +27,7 @@ simulator:
       # Cross-coupling based on distance between gate and non-primary dots
       cross_coupling:
         # Distance 1: adjacent gate-dot pairs
-        1: {"min": 0., "max": 0.6}
+        1: {"min": 0.6, "max": 0.6}
         # Distance 2: next-adjacent gate-dot pairs
         2: {"min": 0., "max": 0.2}
         # Distance 3+: long-range gate-dot coupling
@@ -47,13 +47,6 @@ simulator:
     # White noise amplitude for charge stability diagram
     white_noise_amplitude: {"min": 0.0, "max": 0.0005}
 
-    # Radial noise: zero within zero_radius of ground truth, then linearly increasing
-    radial_noise:
-      enabled: true
-      zero_radius: {"min": 5, "max": 10}      # No noise within this distance (V) from ground truth
-      ramp_distance: {"min": 7.5, "max": 15}    # Distance (V) over which noise ramps from 0 to max_amplitude
-      max_amplitude: 0.05   # Cap on noise amplitude
-    
     # Telegraph noise parameters (random telegraph noise)
     telegraph_noise_parameters:
       p01: {"min": 0.0, "max": 0.01}  # Probability of transition from 0 to 1

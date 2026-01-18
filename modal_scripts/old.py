@@ -17,17 +17,6 @@ from pathlib import Path
 script_dir = Path(__file__).parent
 project_root = script_dir.parent
 
-# Read ignore patterns from .modalignore file
-modalignore_path = project_root / ".modalignore"
-ignore_patterns = []
-if modalignore_path.exists():
-    with open(modalignore_path, "r") as f:
-        for line in f:
-            line = line.strip()
-            # Skip empty lines and comments
-            if line and not line.startswith("#"):
-                ignore_patterns.append(line)
-
 # Create image with project dependencies
 # Modal automatically caches this based on requirements.txt hash
 # Only rebuilds if requirements.txt changes
@@ -40,24 +29,15 @@ image = (
         git_user="rahul-marchand",  # Your GitHub username
         secrets=[modal.Secret.from_name("github-private")],
     )
-    .pip_install("uv")
-    .add_local_dir(
-        str(project_root),
-        remote_path="/root/quantum-rl-project",
-        ignore=ignore_patterns,
-        copy=True
-    )
-    .run_commands(
-        "cd /root/quantum-rl-project && uv sync --frozen",
-        "cp -r /usr/local/lib/python3.11/site-packages/qarray_latched* /root/quantum-rl-project/.venv/lib/python3.11/site-packages/"
-    )
+    .pip_install_from_requirements(str(project_root / "requirements.txt"))
+    .add_local_dir(str(project_root), remote_path="/root/quantum-rl-project")
 )
 
 app = modal.App("quantum-rl-training")
 
 
 @app.function(
-    gpu="A100:5",  # Single GPU - Change to "A100:2", "A100:4", or "A100:8" for multiple GPUs
+    gpu="H100:8",  # Single GPU - Change to "A100:2", "A100:4", or "A100:8" for multiple GPUs
     # Options: "A100", "H100", "L40S", "L4", "T4", etc.
     # Multi-GPU: "A100:2" (2 GPUs), "H100:8" (8 GPUs), etc.
     # Note: H100, A100, L40S, L4, T4 support up to 8 GPUs; A10 supports up to 4
@@ -75,10 +55,10 @@ def train():
     # Change to project directory
     os.chdir("/root/quantum-rl-project")
 
-    # Run the training script using uv to use the virtual environment
+    # Run the training script
     # You can add any command-line arguments here
     subprocess.run(
-        ["uv", "run", "python", "src/swarm/training/train.py", "--config", "configs/ppo_impala.yaml"],
+        ["python", "src/swarm/training/train.py"],
         check=True
     )
 

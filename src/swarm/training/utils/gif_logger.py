@@ -99,8 +99,11 @@ def cleanup_gif_files(gif_save_dir=None):
             if gif_dir.exists():
                 shutil.rmtree(gif_dir, ignore_errors=True)
                 print(f"Cleaned up previous GIF images from {gif_dir}")
+            # Recreate the directory after cleanup so workers can save to it
+            gif_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Created GIF capture directory: {gif_dir}")
         except Exception as e:
-            print(f"Warning: Could not remove previous GIF images: {e}")
+            print(f"Warning: Could not setup GIF directory: {e}")
 
 
 def process_and_log_gifs(iteration_num, config, use_wandb=True):

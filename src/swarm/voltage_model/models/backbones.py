@@ -107,23 +107,33 @@ class SimpleCNN(TorchModel, Encoder):
 # =============================================================================
 
 class ResNetBlock(nn.Module):
-    """ResNet block for IMPALA CNN."""
+    """
+    Canonical IMPALA residual block:
+      y = x + Conv3x3(ReLU(Conv3x3(ReLU(x))))
+    This matches the common reproduction of the IMPALA-CNN residual unit.
+    """
 
     def __init__(self, channels: int, activation: str = "relu"):
         super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.activation = nn.ReLU() if activation == "relu" else nn.Tanh()
+        self.relu = nn.ReLU(inplace=True) if activation == "relu" else nn.Tanh()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
 
     def forward(self, x):
-        residual = x
-        x = self.activation(self.conv1(x))
-        x = self.conv2(x)
-        return x + residual
+        y = self.relu(x)
+        y = self.conv1(y)
+        y = self.relu(y)
+        y = self.conv2(y)
+        return x + y
 
 
 class IMPALA(TorchModel, Encoder):
-    """IMPALA CNN encoder with ResNet blocks."""
+    """
+    IMPALA CNN encoder with canonical conv sequences.
+
+    Each sequence: Conv3x3 -> MaxPool(stride) -> ResidualBlocks -> ReLU
+    This follows the canonical IMPALA-CNN architecture while maintaining Ray RLlib compatibility.
+    """
 
     def __init__(self, config: "IMPALAConfig"):
         TorchModel.__init__(self, config)
@@ -135,14 +145,16 @@ class IMPALA(TorchModel, Encoder):
         in_channels = config.input_dims[-1]
 
         for i, (out_channels, kernel_size, stride) in enumerate(config.cnn_filter_specifiers):
-            cnn_layers.extend([
-                nn.Conv2d(in_channels, out_channels, kernel_size, padding=1),
-                nn.MaxPool2d(stride, stride) if stride > 1 else nn.Identity(),
-                nn.ReLU()
-            ])
+            # Canonical IMPALA conv sequence: Conv -> MaxPool -> ResBlocks -> ReLU
+            cnn_layers.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1))
+
+            if stride > 1:
+                cnn_layers.append(nn.MaxPool2d(kernel_size=3, stride=stride, padding=1))
 
             for _ in range(config.num_res_blocks):
                 cnn_layers.append(ResNetBlock(out_channels, config.cnn_activation))
+
+            cnn_layers.append(nn.ReLU(inplace=True))
 
             in_channels = out_channels
 

@@ -13,6 +13,7 @@ class PolicyHeadConfig(MLPHeadConfig):
     hidden_layers: Optional[List[int]] = None
     activation: str = "relu"
     use_attention: bool = False
+    log_std_bounds: Optional[List[float]] = None  # [min, max] for log_std clamping
 
     def __post_init__(self):
         if self.hidden_layers:

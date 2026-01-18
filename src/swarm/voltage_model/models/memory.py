@@ -166,9 +166,39 @@ class LSTM(TorchModel, Encoder):
     def _forward(self, inputs, **kwargs):
         obs = inputs[Columns.OBS]
 
-        # Embed image through CNN
-        image_for_tokenizer = {Columns.OBS: obs["image"]}
-        image_out = tokenize(self.tokenizer, image_for_tokenizer, framework="torch")
+        # Extract image and voltage from obs dict
+        # obs is expected to be a dict with 'image' and 'voltage' keys
+        # image shape: (B, T, H, W, C)
+        images = obs["image"]
+        voltages = obs["voltage"]
+
+        # Get batch and sequence dimensions
+        if images.dim() == 5:  # (B, T, H, W, C)
+            batch_size, seq_len, h, w, c = images.shape
+        elif images.dim() == 4:  # (T, H, W, C) - add batch dim
+            seq_len, h, w, c = images.shape
+            batch_size = 1
+            images = images.unsqueeze(0)
+            voltages = voltages.unsqueeze(0)
+        else:
+            raise ValueError(f"Unexpected image tensor shape: {images.shape}")
+
+        # Process each timestep through the CNN tokenizer
+        image_feature_list = []
+        for t in range(seq_len):
+            frame_t = images[:, t, :, :, :]  # (B, H, W, C)
+            voltage_t = voltages[:, t:t+1]   # (B, 1)
+
+            tokenizer_input = {
+                "image": frame_t,
+                "voltage": voltage_t,
+            }
+            tokenizer_out = self.tokenizer._forward(tokenizer_input)
+            image_feat_t = tokenizer_out[ENCODER_OUT]["image_features"]
+            image_feature_list.append(image_feat_t)
+
+        # Stack features: (B, T, feature_dim)
+        image_out = torch.stack(image_feature_list, dim=1)
 
         if isinstance(obs, dict) and "voltage" in obs:
             if self.config.store_voltages:
@@ -196,7 +226,7 @@ class LSTM(TorchModel, Encoder):
         h = prev_hidden_states["h"].transpose(0, 1)
         c = prev_hidden_states["c"].transpose(0, 1)
 
-        out, next_hidden_states = self.lstm(out, (h, c))
+        lstm_out, next_hidden_states = self.lstm(out, (h, c))
 
         # Swap dimensions back for RLlib
         next_hidden_states = {
@@ -204,8 +234,15 @@ class LSTM(TorchModel, Encoder):
             "c": next_hidden_states[1].transpose(0, 1)
         }
 
+        # Return dict structure matching SimpleCNN output format
+        # Policy/value heads expect {"image_features": ..., "voltage": ...}
+        encoder_out = {
+            "image_features": lstm_out,
+            "voltage": voltages,  # Pass through original voltages for heads
+        }
+
         outputs = {}
-        outputs[ENCODER_OUT] = out
+        outputs[ENCODER_OUT] = encoder_out
         outputs[Columns.STATE_OUT] = next_hidden_states
 
         return outputs

@@ -2,6 +2,8 @@
 """
 Simplified multi-agent RL training for quantum device tuning using Ray RLlib 2.49.0.
 Enhanced with comprehensive memory usage logging.
+
+example: python inference.py --load-checkpoint ../training/checkpoints/run_361 --load-configs
 """
 import os
 import sys
@@ -45,243 +47,24 @@ from swarm.training.utils import (  # noqa: E402
     cleanup_gif_files,
 )
 
+from swarm.training.train_utils import (  # noqa: E402
+    parse_config_overrides,
+    map_sweep_parameters,
+    apply_config_overrides,
+    fix_optimizer_betas_after_checkpoint_load,
+    find_latest_checkpoint,
+    clean_checkpoint_folder,
+    delete_old_checkpoint_if_needed,
+    create_env_to_module_connector,
+)
+
 from swarm.voltage_model import create_rl_module_spec
 from swarm.training.utils.custom_ppo_learner import PPOLearnerWithValueStats # for logging
 
 # Import local inference utilities - need to add inference dir to path
 inference_dir = Path(__file__).parent
 sys.path.insert(0, str(inference_dir))
-from utils import save_gifs_locally, save_distance_plots  # noqa: E402
-
-def parse_config_overrides(unknown_args):
-    """Parse config override arguments in the format --key.subkey value or --key=value (allows dynamically overriding settings when calling train.py)"""
-    overrides = {}
-    i = 0
-    while i < len(unknown_args):
-        arg = unknown_args[i]
-        if arg.startswith('--'):
-            # Handle both --key=value and --key value formats
-            if '=' in arg:
-                # Format: --key=value
-                key_value = arg[2:]  # Remove '--' prefix
-                key, value = key_value.split('=', 1)
-                i += 1
-            elif i + 1 < len(unknown_args) and not unknown_args[i + 1].startswith('--'):
-                # Format: --key value
-                key = arg[2:]  # Remove '--' prefix
-                value = unknown_args[i + 1]
-                i += 2
-            else:
-                # Standalone flag or no value
-                i += 1
-                continue
-            
-            # Type conversion
-            try:
-                # Handle None as string
-                if value.lower() == 'none':
-                    value = None
-                elif value.lower() in ('true', 'false'):
-                    # Handle boolean
-                    value = value.lower() == 'true'
-                else:
-                    # Try to convert to number (handles both int, float, and scientific notation)
-                    try:
-                        # First try float (handles scientific notation like 1e-05)
-                        float_val = float(value)
-                        # If it's a whole number, convert to int
-                        if float_val.is_integer() and 'e' not in value.lower() and '.' not in value:
-                            value = int(float_val)
-                        else:
-                            value = float_val
-                    except ValueError:
-                        # Keep as string if not a number
-                        pass
-            except (ValueError, AttributeError):
-                pass  # Keep as string
-                
-            overrides[key] = value
-        else:
-            i += 1
-    return overrides
-
-
-def map_sweep_parameters(overrides):
-    """Map sweep parameter names to config paths for wandb sweep compatibility."""
-    # Mapping from sweep parameter names to config paths
-    sweep_param_mapping = {
-        # Core training parameters
-        'minibatch_size': 'rl_config.training.minibatch_size',
-        'num_epochs': 'rl_config.training.num_epochs',
-        'lr': 'rl_config.training.lr',
-        'gamma': 'rl_config.training.gamma',
-        'lambda_': 'rl_config.training.lambda_',
-        'clip_param': 'rl_config.training.clip_param',
-        'entropy_coeff': 'rl_config.training.entropy_coeff',
-        'vf_loss_coeff': 'rl_config.training.vf_loss_coeff',
-        'kl_target': 'rl_config.training.kl_target',
-        'grad_clip': 'rl_config.training.grad_clip',
-        'grad_clip_by': 'rl_config.training.grad_clip_by',
-        'train_batch_size': 'rl_config.training.train_batch_size',
-        
-        # Algorithm choice
-        'algorithm': 'rl_config.algorithm',
-        
-        # Training control
-        'num_iterations': 'defaults.num_iterations',
-    }
-    
-    mapped_overrides = {}
-    
-    for key, value in overrides.items():
-        if key in sweep_param_mapping:
-            # Map sweep parameter to config path
-            config_path = sweep_param_mapping[key]
-            mapped_overrides[config_path] = value
-            print(f"Mapped sweep parameter: {key} -> {config_path} = {value}")
-        else:
-            # Keep original key (might be a nested config path already)
-            mapped_overrides[key] = value
-            print(f"Direct config override: {key} = {value}")
-    
-    return mapped_overrides
-
-
-def apply_config_overrides(config, overrides):
-    """Apply config overrides using dot notation to nested dictionary."""
-    # First map sweep parameters to config paths
-    mapped_overrides = map_sweep_parameters(overrides)
-    
-    for key, value in mapped_overrides.items():
-        keys = key.split('.')
-        current = config
-        
-        # Navigate to the parent of the target key
-        for k in keys[:-1]:
-            if k not in current:
-                current[k] = {}
-            current = current[k]
-        
-        # Set the final value
-        current[keys[-1]] = value
-        print(f"Config override applied: {key} = {value}")
-    
-    return config
-
-
-def fix_optimizer_betas_after_checkpoint_load(algo):
-    """Fix optimizer beta parameters that may have been saved as tensors.
-
-    When checkpoints are saved with LR schedules, optimizer parameters like betas
-    can be stored as tensors. This causes errors when loading with certain optimizer
-    configurations. This function converts any tensor betas back to scalar values.
-
-    Args:
-        algo: The RLlib Algorithm instance after restore_from_path() has been called
-    """
-    def fix_betas(learner):
-        for name, optimizer in learner._named_optimizers.items():
-            for param_group in optimizer.param_groups:
-                if 'betas' in param_group:
-                    betas = param_group['betas']
-                    param_group['betas'] = (
-                        float(betas[0]) if torch.is_tensor(betas[0]) else betas[0],
-                        float(betas[1]) if torch.is_tensor(betas[1]) else betas[1]
-                    )
-
-    algo.learner_group.foreach_learner(fix_betas)
-
-
-def find_latest_checkpoint(checkpoint_dir):
-    """Find the most recent checkpoint in the given directory.
-    
-    Args:
-        checkpoint_dir (str or Path): Directory containing checkpoint folders
-        
-    Returns:
-        tuple: (checkpoint_path, iteration_number) or (None, None) if no checkpoints found
-    """
-    checkpoint_dir = Path(checkpoint_dir)
-    
-    if not checkpoint_dir.exists():
-        return None, None
-    
-    # Find all iteration directories
-    iteration_pattern = checkpoint_dir / "iteration_*"
-    iteration_dirs = glob.glob(str(iteration_pattern))
-    
-    if not iteration_dirs:
-        return None, None
-    
-    # Extract iteration numbers and find the maximum
-    max_iteration = 0
-    latest_checkpoint = None
-    
-    for iteration_dir in iteration_dirs:
-        # Extract iteration number from directory name
-        match = re.search(r'iteration_(\d+)', iteration_dir)
-        if match:
-            iteration_num = int(match.group(1))
-            if iteration_num > max_iteration:
-                max_iteration = iteration_num
-                latest_checkpoint = iteration_dir
-    
-    return latest_checkpoint, max_iteration
-
-
-def clean_checkpoint_folder(checkpoint_dir):
-    """Clean checkpoint folder at start of training, keeping yaml files."""
-    import shutil
-    
-    checkpoint_dir = Path(checkpoint_dir)
-    if not checkpoint_dir.exists():
-        return
-    
-    # Remove all iteration_* directories
-    iteration_pattern = checkpoint_dir / "iteration_*"
-    iteration_dirs = glob.glob(str(iteration_pattern))
-    
-    for iteration_dir in iteration_dirs:
-        try:
-            shutil.rmtree(iteration_dir)
-        except Exception as e:
-            print(f"Warning: Could not delete {iteration_dir}: {e}")
-
-
-def delete_old_checkpoint_if_needed(checkpoint_dir):
-    """Keep only the latest checkpoint, delete all older ones."""
-    import shutil
-    
-    checkpoint_dir = Path(checkpoint_dir)
-    if not checkpoint_dir.exists():
-        return
-    
-    # Find all iteration directories
-    iteration_pattern = checkpoint_dir / "iteration_*"
-    iteration_dirs = glob.glob(str(iteration_pattern))
-    
-    if len(iteration_dirs) <= 1:
-        return  # Keep at least 1 checkpoint
-    
-    # Extract iteration numbers and sort
-    iteration_info = []
-    for iteration_dir in iteration_dirs:
-        match = re.search(r'iteration_(\d+)', iteration_dir)
-        if match:
-            iteration_num = int(match.group(1))
-            iteration_info.append((iteration_num, iteration_dir))
-    
-    # Sort by iteration number (oldest first)
-    iteration_info.sort(key=lambda x: x[0])
-    
-    # Delete all but the latest checkpoint
-    for iteration_num, iteration_dir in iteration_info[:-1]:
-        try:
-            shutil.rmtree(iteration_dir)
-        except Exception as e:
-            print(f"Warning: Could not delete old checkpoint {iteration_dir}: {e}")
-
-
+from utils import save_scans_to_iteration_folder, save_distance_plots  # noqa: E402
 
 
 def parse_arguments():
@@ -297,8 +80,8 @@ def parse_arguments():
     parser.add_argument(
         '--num-iterations',
         type=int,
-        default=1,
-        help='Number of inference iterations to run (default: 1)'
+        default=4,
+        help='Number of inference iterations to run'
     )
 
     parser.add_argument(
@@ -313,6 +96,18 @@ def parse_arguments():
         help='Load training_config.yaml and env_config.yaml from checkpoint directory instead of default config files'
     )
 
+    parser.add_argument(
+        '--sample',
+        action='store_true',
+        help='Sample from action distribution instead of using deterministic (mean) actions'
+    )
+
+    parser.add_argument(
+        '--collect-data',
+        action='store_true',
+        help='Collect distance data by preserving the distance_data folder after inference and running 100 rollouts by default'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -323,13 +118,13 @@ def parse_arguments():
     return args
 
 
-
-def create_env(config=None, gif_config=None, distance_data_dir=None):
+def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None):
     """Create multi-agent quantum environment with JAX safety."""
     import os
     import jax
 
     # Ensure JAX settings are applied in worker processes
+    os.environ.setdefault("JAX_PLATFORMS", "cuda")
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.1")
     os.environ.setdefault("JAX_ENABLE_X64", "true")
@@ -348,26 +143,13 @@ def create_env(config=None, gif_config=None, distance_data_dir=None):
     # Wrap in multi-agent wrapper (config unused but required by RLlib)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
     # store_history=True when using transformer to maintain observation history
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, distance_data_dir=distance_data_dir)
-
-
-def create_env_to_module_connector(env, spaces, device, use):
-    """
-    Creates module connector for action to memory handling.
-    Note: do not modify the signature, ray expects arguments 0-2
-    
-    Args:
-        env: The (vectorized) gym environment
-        spaces: Dict with space info like {'__env__': ([obs_space, act_space]), '__env_single__': ([obs_space, act_space])}
-        device: Torch device (can be None)
-        use: Whether to use the custom connector or not
-    """
-    if use:
-        from swarm.voltage_model.prev_action_handling import CustomPrevActionHandling
-        return [CustomPrevActionHandling()]
-    else:
-        # Return empty list - let Ray handle everything with defaults
-        return []
+    # env_config_path is passed to MultiAgentEnvWrapper which passes it to QuantumDeviceEnv
+    return MultiAgentEnvWrapper(
+        return_voltage=True,
+        gif_config=gif_config,
+        distance_data_dir=distance_data_dir,
+        env_config_path=env_config_path
+    )
 
 
 def load_config(checkpoint_path=None):
@@ -376,7 +158,7 @@ def load_config(checkpoint_path=None):
         # Load from checkpoint directory
         config_path = Path(checkpoint_path) / "training_config.yaml"
         if not config_path.exists():
-            raise FileNotFoundError(f"training_config.yaml not found in checkpoint: {checkpoint_path}")
+            raise FileNotFoundError(f"Must provide config files within checkpoint: training_config.yaml not found in {checkpoint_path}")
     else:
         # Load from training directory since we're in inference folder
         config_path = Path(__file__).parent.parent / "training" / "training_config.yaml"
@@ -393,7 +175,7 @@ def load_env_config(checkpoint_path=None):
         # Load from checkpoint directory
         config_path = Path(checkpoint_path) / "env_config.yaml"
         if not config_path.exists():
-            raise FileNotFoundError(f"env_config.yaml not found in checkpoint: {checkpoint_path}")
+            raise FileNotFoundError(f"Must provide config files within checkpoint: env_config.yaml not found in {checkpoint_path}")
     else:
         config_path = Path(__file__).parent.parent / "environment" / "env_config.yaml"
 
@@ -401,6 +183,74 @@ def load_env_config(checkpoint_path=None):
         config = yaml.safe_load(f)
 
     return config
+
+
+def validate_dict_keys_recursively(override_dict, reference_dict, path=""):
+    """
+    Recursively validate that all keys in override_dict exist in reference_dict.
+
+    Args:
+        override_dict: Dictionary with override values
+        reference_dict: Dictionary with reference structure
+        path: Current path in nested structure (for error messages)
+
+    Raises:
+        ValueError: If any key in override_dict doesn't exist in reference_dict
+    """
+    for key, value in override_dict.items():
+        current_path = f"{path}.{key}" if path else key
+
+        if key not in reference_dict:
+            raise ValueError(f"Invalid override key: '{current_path}' not found in reference config")
+
+        # If both are dicts, recurse
+        if isinstance(value, dict) and isinstance(reference_dict[key], dict):
+            validate_dict_keys_recursively(value, reference_dict[key], current_path)
+
+
+def validate_config_overrides(overrides, env_config, train_config):
+    """
+    Validate that config_overrides.yaml has valid structure matching original configs.
+
+    Args:
+        overrides: Dictionary loaded from config_overrides.yaml
+        env_config: Dictionary loaded from env_config.yaml
+        train_config: Dictionary loaded from training_config.yaml
+
+    Raises:
+        ValueError: If structure doesn't match
+    """
+    if not isinstance(overrides, dict):
+        raise ValueError("config_overrides.yaml must contain a dictionary at root level")
+
+    # Validate env overrides
+    if 'env' in overrides and overrides['env'] is not None:
+        if not isinstance(overrides['env'], dict):
+            raise ValueError("'env' section in config_overrides.yaml must be a dictionary")
+        validate_dict_keys_recursively(overrides['env'], env_config, path="env")
+
+    # Validate train overrides
+    if 'train' in overrides and overrides['train'] is not None:
+        if not isinstance(overrides['train'], dict):
+            raise ValueError("'train' section in config_overrides.yaml must be a dictionary")
+        validate_dict_keys_recursively(overrides['train'], train_config, path="train")
+
+
+def apply_overrides_recursively(base_dict, override_dict):
+    """
+    Recursively apply override values to base dictionary (modifies in-place).
+
+    Args:
+        base_dict: Dictionary to modify
+        override_dict: Dictionary with override values
+    """
+    for key, value in override_dict.items():
+        if isinstance(value, dict) and key in base_dict and isinstance(base_dict[key], dict):
+            # Recurse into nested dicts
+            apply_overrides_recursively(base_dict[key], value)
+        else:
+            # Override the value
+            base_dict[key] = value
 
 
 def main():
@@ -415,11 +265,57 @@ def main():
     config = load_config(checkpoint_path)
 
     # Override num_iterations based on command line arg
-    config['defaults']['num_iterations'] = args.num_iterations
+    # If --collect-data is set, use 100 rollouts unless explicitly overridden
+    if args.collect_data and args.num_iterations == 4:  # 4 is the default
+        config['defaults']['num_iterations'] = 100
+    else:
+        config['defaults']['num_iterations'] = args.num_iterations
 
     # Apply command line overrides to config
     if hasattr(args, 'config_overrides') and args.config_overrides:
         config = apply_config_overrides(config, args.config_overrides)
+
+    # Load config_overrides.yaml if it exists
+    config_overrides_path = Path(__file__).parent / "config_overrides.yaml"
+    temp_env_config_path = None
+
+    if config_overrides_path.exists():
+        print(f"\nLoading config overrides from: {config_overrides_path}")
+        with open(config_overrides_path, 'r') as f:
+            config_overrides = yaml.safe_load(f)
+
+        # Load env_config for validation (will be loaded again later)
+        env_config = load_env_config(checkpoint_path)
+
+        # Validate overrides
+        try:
+            validate_config_overrides(config_overrides, env_config, config)
+            print("Config overrides validated successfully")
+        except ValueError as e:
+            raise ValueError(f"Invalid config_overrides.yaml: {e}") from e
+
+        # Apply env overrides to env_config
+        if 'env' in config_overrides and config_overrides['env'] is not None:
+            print("\nApplying environment config overrides...")
+            apply_overrides_recursively(env_config, config_overrides['env'])
+
+            # Write the overridden env_config to a temporary file
+            import tempfile
+            temp_env_config_file = tempfile.NamedTemporaryFile(
+                mode='w', suffix='.yaml', delete=False, dir='/tmp'
+            )
+            yaml.dump(env_config, temp_env_config_file, default_flow_style=False)
+            temp_env_config_path = temp_env_config_file.name
+            temp_env_config_file.close()
+            print(f"Written overridden env config to: {temp_env_config_path}")
+
+        # Apply train overrides
+        if 'train' in config_overrides and config_overrides['train'] is not None:
+            print("\nApplying training config overrides...")
+            apply_overrides_recursively(config, config_overrides['train'])
+            print("Training config overrides applied")
+    else:
+        config_overrides = None
 
     # Save distance data to current directory
     distance_data_dir = Path(__file__).parent / "distance_data"
@@ -437,7 +333,9 @@ def main():
             "excludes": config['ray']['runtime_env']['excludes'],
             "env_vars": {
                 **config['ray']['runtime_env']['env_vars'],
-                "SWARM_PROJECT_ROOT": str(project_root),
+                "SWARM_PROJECT_ROOT": str(swarm_package_dir),
+                "JAX_PLATFORMS": "cuda",
+                "JAX_PLATFORM_NAME": "cuda",
             },
         },
     }
@@ -451,17 +349,26 @@ def main():
         gif_config['save_dir'] = str(Path(__file__).parent / "gif_captures")
         # Override fps to 2 frames per second for faster playback
         gif_config['fps'] = 2
-        # Clean up any previous GIF capture lock files
-        cleanup_gif_files(gif_config['save_dir'])
 
         # Check if plunger policy uses transformer memory layer
         use_transformer = config['neural_networks']['plunger_policy']['backbone']['memory_layer'] == 'transformer'
 
-        create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir)
+        create_env_fn = partial(
+            create_env,
+            gif_config=gif_config,
+            distance_data_dir=distance_data_dir,
+            env_config_path=temp_env_config_path
+        )
         register_env("qarray_multiagent_env", create_env_fn)
 
-        # Load env config directly from YAML (no GPU initialization needed on driver)
-        env_config = load_env_config(checkpoint_path)
+        # Load env config for driver process (workers will load from temp file if it exists)
+        if temp_env_config_path:
+            # Load the overridden config that was written to temp file
+            with open(temp_env_config_path, 'r') as f:
+                env_config = yaml.safe_load(f)
+        else:
+            # No overrides, load default
+            env_config = load_env_config(checkpoint_path)
 
         # Optionally update the rl module config to allow log_std clamping, shared log_std vector etc.
         rl_module_config = {
@@ -481,44 +388,28 @@ def main():
 
         rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
 
-        # Configure custom callbacks for logging to Wandb
-        # log_images = config['wandb']['log_images']
-        # custom_callbacks = partial(CustomCallbacks, log_images=log_images)
+        # Filter training parameters based on algorithm
+        # PPO-specific parameters that should NOT be passed to SAC
+        ppo_only_params = {'lr', 'lambda_', 'clip_param', 'entropy_coeff', 'vf_loss_coeff', 'kl_target', 'num_epochs', 'minibatch_size', 'train_batch_size'}
+        # SAC-specific parameters that should NOT be passed to PPO
+        sac_only_params = {'actor_lr', 'critic_lr', 'alpha_lr', 'twin_q', 'tau', 'initial_alpha', 'target_entropy', 'n_step',
+                          'clip_actions', 'target_network_update_freq', 'num_steps_sampled_before_learning_starts', 'replay_buffer_config',
+                          'reward_scale'}
 
-        # Specify algorithm-specific training parameters
-        ppo_train_config = {
-            "lr": config['rl_config']['training']['lr'],
-            "gamma": config['rl_config']['training']['gamma'],
-            "lambda_": config['rl_config']['training']['lambda_'],
-            "clip_param": config['rl_config']['training']['clip_param'],
-            "entropy_coeff": config['rl_config']['training']['entropy_coeff'],
-            "vf_loss_coeff": config['rl_config']['training']['vf_loss_coeff'],
-            "kl_target": config['rl_config']['training']['kl_target'],
-        }
+        training_params = config['rl_config']['training'].copy()
 
-        sac_train_config = {
-            "actor_lr": config['rl_config']['training']['actor_lr'],
-            "critic_lr": config['rl_config']['training']['critic_lr'],
-            "alpha_lr": config['rl_config']['training']['alpha_lr'],
-            "twin_q": config['rl_config']['training']['twin_q'],
-            "tau": config['rl_config']['training']['tau'],
-            "initial_alpha": config['rl_config']['training']['initial_alpha'],
-            "target_entropy": config['rl_config']['training']['target_entropy'],
-            "n_step": config['rl_config']['training']['n_step'],
-            "clip_actions": config['rl_config']['training']['clip_actions'],
-            "target_network_update_freq": config['rl_config']['training']['target_network_update_freq'],
-            "num_steps_sampled_before_learning_starts": config['rl_config']['training']['num_steps_sampled_before_learning_starts'],
-            "replay_buffer_config": config['rl_config']['training']['replay_buffer_config'],
-        }
-
-        if algo == "ppo":
-            algo_config_builder = PPOConfig
-            train_config = ppo_train_config
-        elif algo == "sac":
+        if algo == 'sac':
+            # Remove PPO-only parameters when using SAC
+            for param in ppo_only_params:
+                training_params.pop(param, None)
             algo_config_builder = SACConfig
-            train_config = sac_train_config
+        elif algo == 'ppo':
+            # Remove SAC-only parameters when using PPO
+            for param in sac_only_params:
+                training_params.pop(param, None)
+            algo_config_builder = PPOConfig
         else:
-            raise ValueError(f"Unsupported algorithm: {algo}")
+            raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, sac")
 
         # Handle voltage parsing to memory manually
         use_deltas = env_config['simulator']['use_deltas']
@@ -541,27 +432,30 @@ def main():
                 rl_module_spec=rl_module_spec,
             )
             .env_runners(
-                num_env_runners=config['rl_config']['env_runners']['num_env_runners'],
+                num_env_runners=1,  # Use single worker for inference
                 rollout_fragment_length=config['rl_config']['env_runners']['rollout_fragment_length'],
                 sample_timeout_s=config['rl_config']['env_runners']['sample_timeout_s'],
-                num_gpus_per_env_runner=config['rl_config']['env_runners']['num_gpus_per_env_runner'],
+                num_gpus_per_env_runner=0.75,  # Use 0.75 GPU to force separate physical device from learner
                 env_to_module_connector=env_to_module_connector,
                 add_default_connectors_to_env_to_module_pipeline=True,  # Let Ray handle defaults
             )
             .learners(
-                num_learners=config['rl_config']['learners']['num_learners'], 
-                num_gpus_per_learner=config['rl_config']['learners']['num_gpus_per_learner']
+                num_learners=1,
+                num_gpus_per_learner=0.75  # Use 0.75 GPU to force separate physical device from env runner
             )
             .training(
-                train_batch_size=config['rl_config']['training']['train_batch_size'],
-                minibatch_size=config['rl_config']['training']['minibatch_size'],
-                num_epochs=config['rl_config']['training']['num_epochs'],
-                grad_clip=config['rl_config']['training']['grad_clip'],
-                grad_clip_by=config['rl_config']['training']['grad_clip_by'],
+                # Pass filtered training params based on algorithm
+                **training_params,
                 learner_class=PPOLearnerWithValueStats if algo == "ppo" else None,
-                **train_config,
             )
-            .resources(num_gpus=config['resources']['num_gpus'])
+            .evaluation(
+                evaluation_num_env_runners=1,
+                evaluation_duration=1,  # Run 1 episode per evaluation
+                evaluation_duration_unit="episodes",
+                evaluation_config={
+                    "explore": args.sample,  # Use --sample flag to control exploration
+                },
+            )
             # .callbacks([custom_callbacks] if use_wandb else [])
         )
 
@@ -578,30 +472,28 @@ def main():
         if args.load_checkpoint:
             # Load specific checkpoint
             checkpoint_path = Path(args.load_checkpoint)
-            if checkpoint_path.exists():
-                print(f"\nLoading checkpoint from: {checkpoint_path}")
-                try:
-                    algo.restore_from_path(str(checkpoint_path.absolute()))
-                    fix_optimizer_betas_after_checkpoint_load(algo)
+            if not checkpoint_path.exists():
+                raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
 
-                    # Extract iteration number from path
-                    match = re.search(r'iteration_(\d+)', str(checkpoint_path))
-                    if match:
-                        start_iteration = int(match.group(1))
-                        checkpoint_loaded = True
-                        print(f"Checkpoint loaded successfully. Resuming from iteration {start_iteration + 1}")
-                    else:
-                        print("Warning: Could not determine iteration number from checkpoint path")
-                        start_iteration = 0
-                        checkpoint_loaded = True
-                        print(f"Checkpoint loaded successfully. Starting from iteration 1")
-                        
-                except Exception as e:
-                    print(f"Error loading checkpoint: {e}")
-                    print("Continuing with fresh training...")
-            else:
-                print(f"Error: Checkpoint path does not exist: {checkpoint_path}")
-                print("Continuing with fresh training...")
+            print(f"\nLoading checkpoint from: {checkpoint_path}")
+            try:
+                algo.restore_from_path(str(checkpoint_path.absolute()))
+                fix_optimizer_betas_after_checkpoint_load(algo)
+
+                # Extract iteration number from path
+                match = re.search(r'iteration_(\d+)', str(checkpoint_path))
+                if match:
+                    start_iteration = int(match.group(1))
+                    checkpoint_loaded = True
+                    print(f"Checkpoint loaded successfully. Resuming from iteration {start_iteration + 1}")
+                else:
+                    print("Warning: Could not determine iteration number from checkpoint path")
+                    start_iteration = 0
+                    checkpoint_loaded = True
+                    print(f"Checkpoint loaded successfully. Starting from iteration 1")
+
+            except Exception as e:
+                raise RuntimeError(f"Error loading checkpoint: {e}") from e
         
         if not checkpoint_loaded:
             print("\nNo checkpoint loaded - starting fresh...\n")
@@ -611,33 +503,53 @@ def main():
 
         inference_start_time = time.time()
 
-        for i in range(config['defaults']['num_iterations']):
-            result = algo.train()
+        for i in range(args.num_iterations):
+            print(f"\nRunning inference rollout {i+1}/{args.num_iterations}...")
 
-            # Clean console output
-            print_training_progress(result, i, inference_start_time)
+            # Use Ray's evaluate method which runs 1 episode without training
+            result = algo.evaluate()
 
-            # Process and save GIFs if enabled
-            if config['gif_config']['enabled']:
-                save_gifs_locally(i + 1, config, disable_cleanup=args.disable_cleanup)
+            # Extract metrics from evaluation result
+            eval_metrics = result.get('evaluation', {})
+            avg_reward = eval_metrics.get('env_runners', {}).get('episode_reward_mean', 0)
 
-            # Save distance plots
-            save_distance_plots(distance_data_dir, iteration=i + 1)
+            print(f"Rollout {i+1} reward: {avg_reward:.2f}")
 
-            print(f"\nIteration {i+1}/{config['defaults']['num_iterations']} completed.\n")
+            # Wait briefly for async worker processes to finish writing data to disk
+            time.sleep(0.5)
+
+            # Save scans to iteration folder if enabled (skip when collecting data)
+            if config['gif_config']['enabled'] and not args.collect_data:
+                save_scans_to_iteration_folder(i + 1, config)
+
+            # Save distance plots (skip when collecting data)
+            if not args.collect_data:
+                save_distance_plots(distance_data_dir, iteration=i + 1)
+
+            print(f"\nRollout {i+1}/{args.num_iterations} completed.\n")
 
         print(f"\nInference completed. All outputs saved to {Path(__file__).parent}\n")
 
-        # Clean up temporary data directories
-        if not args.disable_cleanup:
+        # Clean up temporary distance data directory
+        # Skip cleanup if --collect-data or --disable-cleanup is set
+        if not args.disable_cleanup and not args.collect_data:
             import shutil
             if distance_data_dir.exists():
                 print(f"Cleaning up temporary distance data directory: {distance_data_dir}")
                 shutil.rmtree(distance_data_dir, ignore_errors=True)
         else:
-            print(f"Cleanup disabled - temporary folders preserved:\n  - {distance_data_dir}\n  - {Path(config['gif_config']['save_dir'])}")
+            print(f"Cleanup disabled - distance data preserved at: {distance_data_dir}")
 
     finally:
+        # Clean up temporary env config file
+        if 'temp_env_config_path' in locals() and temp_env_config_path:
+            try:
+                import os
+                os.remove(temp_env_config_path)
+                print(f"Cleaned up temporary config file: {temp_env_config_path}")
+            except Exception as e:
+                print(f"Warning: Could not remove temporary config file: {e}")
+
         # Clean up algorithm before shutting down Ray
         try:
             if 'algo' in locals():

@@ -44,6 +44,7 @@ class CustomPPOCatalog(PPOCatalog):
             activation=policy_config["activation"],
             use_attention=policy_config["use_attention"],
             output_layer_dim=self.action_space.shape[0] * 2,  # mean and log std
+            log_std_bounds=self._model_config_dict["log_std_bounds"],
         )
 
         return config.build(framework=framework)

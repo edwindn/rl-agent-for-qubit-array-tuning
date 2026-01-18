@@ -21,6 +21,20 @@ simulator:
 
   resolution: 100
 
+  # Radial noise: zero within zero_radius of ground truth, then linearly increasing
+  radial_noise:
+    enabled: true
+    lower: {"min": 10, "max": 40}
+    ramp_range: {"min": 2, "max": 6}
+    total_noise_range: {"min": 60, "max": 80}
+    # zero_radius: {"min": 10, "max": 10}      # No noise within this distance (V) from ground truth
+    # ramp_distance: {"min": 20, "max": 20}    # Distance (V) over which noise ramps from 0 to max_amplitude
+    # full_noise_distance: {"min": 30, "max": 40} # Distance beyond which we replace scans with white noise
+    max_amplitude: 0.05   # Cap on noise amplitude
+
+    # low: 35-40
+    # medium: 20-25
+    # high: 10-20
 
 reward:
   # Gate/Plunger reward configuration

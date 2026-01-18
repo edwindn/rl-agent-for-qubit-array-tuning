@@ -75,21 +75,21 @@ class CapacitancePredictionModel(nn.Module):
     def forward(self, x):
         """
         Forward pass
-        
+
         Args:
             x: Input tensor of shape (batch_size, 2, height, width)
-            
+
         Returns:
-            values: Predicted continuous values (batch_size, 3)
-            log_vars: Log variance for uncertainty (batch_size, 3)
+            values: Predicted continuous values (batch_size, output_size)
+            log_vars: Log variance for uncertainty (batch_size, output_size)
         """
         # Extract features using ResNet backbone
         features = self.backbone(x)
-        
+
         # Predict values and log variances
         values = self.value_head(features)
         log_vars = self.confidence_head(features)
-        
+
         return values, log_vars
 
 
@@ -161,13 +161,13 @@ def create_loss_function(mse_weight=1.0, nll_weight=0.1):
 # Example usage
 if __name__ == "__main__":
     # Create model
-    model = create_model()
+    model = create_model(output_size=2)
     loss_fn = create_loss_function()
     
     # Example input (batch_size=4, channels=2, height=224, width=224)
     batch_size = 4
-    x = torch.randn(batch_size, 1, 224, 224)
-    targets = torch.randn(batch_size, 3)  # Ground truth values
+    x = torch.randn(batch_size, 1, 100, 100)
+    targets = torch.randn(batch_size, 2)  # Ground truth values
     
     # Forward pass
     values, log_vars = model(x)
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     print(f"Predicted log variances shape: {log_vars.shape}")
     
     # Compute loss
-    total_loss, mse_loss, nll_loss = loss_fn((values, log_vars), targets)
+    total_loss, mse_loss, nll_loss, log_vars_out, squared_errors = loss_fn((values, log_vars), targets)
     
     print(f"Total loss: {total_loss.item():.4f}")
     print(f"MSE loss: {mse_loss.item():.4f}")

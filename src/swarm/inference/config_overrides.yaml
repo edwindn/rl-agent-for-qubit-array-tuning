@@ -1,0 +1,18 @@
+env:
+  simulator:
+    num_dots: 4
+
+    radial_noise:
+      enabled: true
+      lower: 20
+      ramp_range: 10
+      #zero_radius: 20
+      #ramp_distance: 30
+
+  capacitance_model:
+    update_method: 'bayesian'
+
+train:
+  rl_config:
+    env_runners:
+      rollout_fragment_length: 50
