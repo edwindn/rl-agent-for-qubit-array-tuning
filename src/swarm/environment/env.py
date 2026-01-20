@@ -279,6 +279,7 @@ class QuantumDeviceEnv(gym.Env):
             self.device_state["virtual_gate_matrix"] = (
                 self.array.model.gate_voltage_composer.virtual_gate_matrix
             )
+            self._recalculate_ground_truth()
 
         info = self._get_info()
 
@@ -289,6 +290,26 @@ class QuantumDeviceEnv(gym.Env):
             truncated,
             info,
         )
+
+
+    def _recalculate_ground_truth(self):
+        """
+        Recalculate ground truth based on current VGM.
+
+        This should be called after any VGM update to ensure the reward target
+        reflects the current virtualization state. The optimal physical voltages
+        (true target) remain constant, but their representation in virtual space
+        changes as the VGM is updated.
+        """
+        plunger_ground_truth, barrier_ground_truth, _ = self.array.calculate_ground_truth()
+        plunger_ground_truth = np.array(plunger_ground_truth).flatten().astype(np.float32)
+
+        self.device_state["gate_ground_truth"] = plunger_ground_truth
+        self.array.gate_ground_truth = plunger_ground_truth
+
+        if self.use_barriers and barrier_ground_truth is not None:
+            barrier_ground_truth = np.array(barrier_ground_truth).flatten().astype(np.float32)
+            self.device_state["barrier_ground_truth"] = barrier_ground_truth
 
 
     def _get_reward(self):

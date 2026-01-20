@@ -1111,15 +1111,25 @@ class QarrayBaseClass:
     def calculate_ground_truth(self, debug=False):
         """
         Get the ground truth for the quantum dot array.
+
+        Ground truth is calculated based on the CURRENT virtual gate matrix (VGM),
+        not the perfect/ideal VGM. This ensures the reward target reflects
+        what virtual voltages are needed given the current virtualization state.
+
+        The optimal physical voltages (the true target in physical space) remain
+        constant, but their representation in virtual space changes as the VGM
+        is updated.
         """
         if not self.use_barriers:
             # calculates virtualised optimal gate voltages
-                
+
             vg_optimal_physical = self.model.optimal_Vg(self.optimal_VG_center)
-            perfect_virtual_matrix = self.model.compute_optimal_virtual_gate_matrix()
+
+            # Use current VGM instead of perfect VGM
+            current_vgm = self.model.gate_voltage_composer.virtual_gate_matrix
 
             # removed - self.model.virtual_gate_origin
-            vg_optimal_virtual = np.linalg.inv(perfect_virtual_matrix) @ (vg_optimal_physical)
+            vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical)
 
             vg_optimal_virtual = vg_optimal_virtual[:-1]
 
@@ -1158,10 +1168,10 @@ class QarrayBaseClass:
         sensor_optimal_physical = vg_optimal_physical[-numsensor:]
         plunger_optimal_physical = vg_optimal_physical[:-numsensor]
 
-        # note ignoring virtual gate origins here
-        plunger_optimal_virtual = (
-            -cdd_inv[:ndot, :ndot] @ cgd[:ndot, :ndot] @ plunger_optimal_physical
-        )
+        # Use current VGM instead of perfect VGM for plunger transformation
+        current_vgm = self.model.gate_voltage_composer.virtual_gate_matrix
+        plunger_vgm = current_vgm[:ndot, :ndot]
+        plunger_optimal_virtual = np.linalg.inv(plunger_vgm) @ plunger_optimal_physical
 
         if debug:
             print(f"Original Optimal VG: {self.model.optimal_Vg(self.optimal_VG_center)}")
