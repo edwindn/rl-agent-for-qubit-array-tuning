@@ -14,6 +14,7 @@ class PolicyHeadConfig(MLPHeadConfig):
     activation: str = "relu"
     use_attention: bool = False
     log_std_bounds: Optional[List[float]] = None  # [min, max] for log_std clamping
+    voltage_dim: int = 1  # Number of voltage inputs (1 for multi-agent, N for single-agent)
 
     def __post_init__(self):
         if self.hidden_layers:
@@ -38,6 +39,7 @@ class ValueHeadConfig(MLPHeadConfig):
     hidden_layers: Optional[List[int]] = None
     activation: str = "relu"
     use_attention: bool = False
+    voltage_dim: int = 1  # Number of voltage inputs (1 for multi-agent, N for single-agent)
 
     def __post_init__(self):
         if self.hidden_layers:

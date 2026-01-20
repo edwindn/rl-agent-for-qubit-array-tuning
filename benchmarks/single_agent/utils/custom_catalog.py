@@ -1,7 +1,7 @@
 """
 Custom catalog for single-agent RL training with quantum device networks.
 
-Reuses swarm's encoder and head configurations for consistency.
+Reuses swarm's encoder and head configurations with voltage_dim set to num_gates.
 """
 
 import gymnasium as gym
@@ -16,7 +16,7 @@ from swarm.voltage_model.configs import PolicyHeadConfig, ValueHeadConfig
 class CustomSingleAgentCatalog(PPOCatalog):
     """Custom catalog for single-agent quantum device neural network components.
 
-    Reuses swarm's encoder and head building logic for consistency.
+    Uses voltage_dim=num_gates so heads accept all gate voltages at once.
     """
 
     def __init__(
@@ -30,6 +30,11 @@ class CustomSingleAgentCatalog(PPOCatalog):
             action_space=action_space,
             model_config_dict=model_config_dict,
         )
+        # Get voltage dimension from observation space
+        if isinstance(observation_space, gym.spaces.Dict):
+            self.voltage_dim = observation_space["voltage"].shape[0]
+        else:
+            self.voltage_dim = 1
 
     @override(PPOCatalog)
     def _get_encoder_config(
@@ -42,7 +47,6 @@ class CustomSingleAgentCatalog(PPOCatalog):
         # Get the image observation space shape for encoder
         if isinstance(observation_space, gym.spaces.Dict):
             image_space = observation_space["image"]
-            # Create a Box space for the encoder (it expects just the image)
             encoder_obs_space = image_space
         else:
             encoder_obs_space = observation_space
@@ -51,7 +55,7 @@ class CustomSingleAgentCatalog(PPOCatalog):
 
     @override(PPOCatalog)
     def build_pi_head(self, framework: str = "torch"):
-        """Build policy head for single-agent."""
+        """Build policy head for single-agent with voltage_dim=num_gates."""
         policy_config = self._model_config_dict["policy_head"]
         input_dim = get_head_input_dim(self._model_config_dict)
 
@@ -60,15 +64,16 @@ class CustomSingleAgentCatalog(PPOCatalog):
             hidden_layers=policy_config["hidden_layers"],
             activation=policy_config["activation"],
             use_attention=policy_config["use_attention"],
-            output_layer_dim=self.action_space.shape[0] * 2,  # mean and log std
+            output_layer_dim=self.action_space.shape[0] * 2,  # mean and log std for all gates
             log_std_bounds=self._model_config_dict.get("log_std_bounds", [-10, 2]),
+            voltage_dim=self.voltage_dim,  # Accept all gate voltages
         )
 
         return config.build(framework=framework)
 
     @override(PPOCatalog)
     def build_vf_head(self, framework: str = "torch"):
-        """Build value head for single-agent."""
+        """Build value head for single-agent with voltage_dim=num_gates."""
         value_config = self._model_config_dict["value_head"]
         input_dim = get_head_input_dim(self._model_config_dict)
 
@@ -77,6 +82,7 @@ class CustomSingleAgentCatalog(PPOCatalog):
             hidden_layers=value_config["hidden_layers"],
             activation=value_config["activation"],
             use_attention=value_config["use_attention"],
+            voltage_dim=self.voltage_dim,  # Accept all gate voltages
         )
 
         return config.build(framework=framework)

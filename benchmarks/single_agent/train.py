@@ -313,6 +313,20 @@ def parse_arguments():
         help='Keep optimizer state when loading checkpoint (default: remove optimizer to avoid parameter group mismatches)'
     )
 
+    parser.add_argument(
+        '--num-iterations',
+        type=int,
+        default=None,
+        help='Number of training iterations (overrides config file)'
+    )
+
+    parser.add_argument(
+        '--gpu',
+        type=int,
+        default=None,
+        help='GPU device ID to use for training (e.g., 0, 1, 2)'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -421,6 +435,16 @@ def main():
     # Apply command line overrides to config
     if hasattr(args, 'config_overrides') and args.config_overrides:
         config = apply_config_overrides(config, args.config_overrides)
+
+    # Apply --num-iterations override
+    if args.num_iterations is not None:
+        config['defaults']['num_iterations'] = args.num_iterations
+        print(f"Overriding num_iterations to: {args.num_iterations}")
+
+    # Apply --gpu override
+    if args.gpu is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+        print(f"Using GPU {args.gpu}")
 
     # Distance data disabled for single-agent benchmark
     distance_data_dir = None

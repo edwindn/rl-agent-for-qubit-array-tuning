@@ -35,7 +35,8 @@ class PolicyHead(TorchModel):
 
         self.config = config
 
-        voltage_embedding_dim = 16  # VOLTAGE DIM HARDCODED FOR NOW
+        voltage_embedding_dim = 16  # Embedding dim per voltage input
+        voltage_dim = getattr(config, 'voltage_dim', 1)  # Number of voltage inputs
 
         layers = []
         in_dim = config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims
@@ -49,7 +50,7 @@ class PolicyHead(TorchModel):
 
         self.mlp = nn.Sequential(*layers)
 
-        self.voltage_layer = nn.Linear(1, voltage_embedding_dim)
+        self.voltage_layer = nn.Linear(voltage_dim, voltage_embedding_dim)
 
         self.final_layer = nn.Linear(in_dim + voltage_embedding_dim, config.output_layer_dim)
 
@@ -125,7 +126,8 @@ class ValueHead(TorchModel):
 
         self.config = config
 
-        voltage_embedding_dim = 16  # VOLTAGE DIM HARDCODED FOR NOW
+        voltage_embedding_dim = 16  # Embedding dim per voltage input
+        voltage_dim = getattr(config, 'voltage_dim', 1)  # Number of voltage inputs
 
         layers = []
         in_dim = config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims
@@ -139,7 +141,7 @@ class ValueHead(TorchModel):
 
         self.mlp = nn.Sequential(*layers)
 
-        self.voltage_layer = nn.Linear(1, voltage_embedding_dim)
+        self.voltage_layer = nn.Linear(voltage_dim, voltage_embedding_dim)
 
         self.final_layer = nn.Linear(in_dim + voltage_embedding_dim, 1)
 
