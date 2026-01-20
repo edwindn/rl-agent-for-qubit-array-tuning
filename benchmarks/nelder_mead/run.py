@@ -91,7 +91,7 @@ def run_sliding_window_optimization(
     cap_per_barrier: float = 4.0,
     threshold_per_plunger: float = 0.5,
     threshold_per_barrier: float = 1.0,
-    simplex_step_plunger: float = 20.0,
+    simplex_step_plunger: float = 35.0,
     simplex_step_barrier: float = 4.0,
     xatol: float = 0.1,
     fatol: float = 0.1,
@@ -289,7 +289,7 @@ def run_single_trial(
     cap_per_barrier: float = 4.0,
     threshold_per_plunger: float = 0.5,
     threshold_per_barrier: float = 1.0,
-    simplex_step_plunger: float = 20.0,
+    simplex_step_plunger: float = 35.0,
     simplex_step_barrier: float = 4.0,
     xatol: float = 0.1,
     fatol: float = 0.1,
@@ -362,7 +362,7 @@ def main():
     parser.add_argument("--cap_per_barrier", type=float, default=10.0, help="Cap in V^2 per barrier (pairwise mode)")
     parser.add_argument("--threshold_per_plunger", type=float, default=0.5, help="Convergence threshold in V (L1) per plunger (pairwise mode)")
     parser.add_argument("--threshold_per_barrier", type=float, default=1.0, help="Convergence threshold in V (L1) per barrier (pairwise mode)")
-    parser.add_argument("--simplex_step_plunger", type=float, default=20.0, help="Initial simplex step size for plungers in V (pairwise mode)")
+    parser.add_argument("--simplex_step_plunger", type=float, default=35.0, help="Initial simplex step size for plungers in V (pairwise mode)")
     parser.add_argument("--simplex_step_barrier", type=float, default=4.0, help="Initial simplex step size for barriers in V (pairwise mode)")
     parser.add_argument("--xatol", type=float, default=0.1, help="Nelder-Mead convergence tolerance on x (pairwise mode)")
     parser.add_argument("--fatol", type=float, default=0.1, help="Nelder-Mead convergence tolerance on f (pairwise mode)")

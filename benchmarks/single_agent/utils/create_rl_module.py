@@ -3,6 +3,8 @@
 from ray.rllib.algorithms.ppo.torch.default_ppo_torch_rl_module import DefaultPPOTorchRLModule
 from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 
+from .custom_catalog import CustomSingleAgentCatalog
+
 
 def create_single_agent_rl_module_spec(env_instance, algo: str = "ppo", config: dict = None) -> RLModuleSpec:
     """
@@ -16,14 +18,10 @@ def create_single_agent_rl_module_spec(env_instance, algo: str = "ppo", config: 
     Returns:
         RLModuleSpec object for single-agent training
     """
-    # Import here to avoid circular dependencies
-    from utils.custom_catalog import CustomSingleAgentCatalog
-
     if algo == "ppo":
         module_class = DefaultPPOTorchRLModule
         catalog_class = CustomSingleAgentCatalog
     elif algo == "sac":
-        # TODO: Implement SAC support if needed
         raise NotImplementedError("SAC not yet implemented for single-agent benchmark")
     else:
         raise ValueError(f"Unsupported algorithm: {algo}")

@@ -50,10 +50,10 @@ rl_config:
 
   # Environment runners configuration
   env_runners:
-    num_env_runners: 14              # Number of parallel environment runners
+    num_env_runners: 2              # Number of parallel environment runners
     rollout_fragment_length: 50     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling
-    num_gpus_per_env_runner: 0.45     # GPU allocation per runner
+    num_gpus_per_env_runner: 0.4     # GPU allocation per runner
 
   # Learner configuration
   learners:
@@ -111,19 +111,21 @@ checkpoints:
   upload_best_only: true           # Only upload checkpoints with improved performance
 
 # Neural Network Architecture Configuration
+# Follows swarm config structure for encoder compatibility
 neural_networks:
   single_agent_policy:
-    num_dots: 4  # Number of quantum dots in the array
-
-    # Encoder configuration (InputEncoder)
-    encoder:
-      num_input_scans: 3  # num_dots - 1 = 3 charge stability diagrams
-      feature_size: 256
-      cnn_activation: "relu"
-
-    # Optional memory layer configuration
+    # Backbone configuration (IMPALA/SimpleCNN)
     backbone:
-      memory_layer: null  # null, 'lstm'
+      type: "IMPALA"  # IMPALA or SimpleCNN
+      feature_size: 256
+      adaptive_pooling: true
+      num_res_blocks: 2  # For IMPALA only
+      memory_layer: null  # null, 'lstm', or 'transformer'
+      # Optional: custom conv layers (applies to SimpleCNN and IMPALA)
+      # conv_layers:
+      #   - {channels: 16, kernel: 3, stride: 1}
+      #   - {channels: 32, kernel: 3, stride: 1}
+      #   - {channels: 32, kernel: 3, stride: 1}
       lstm:
         hidden_dim: 256
         num_layers: 1
@@ -136,11 +138,12 @@ neural_networks:
       hidden_layers: [128, 128]
       activation: "relu"
       use_attention: false
-      num_outputs: 4  # num_dots gates
 
     # Value head configuration
     value_head:
       hidden_layers: [128, 64]
       activation: "relu"
       use_attention: false
-      num_outputs: 4  # num_dots gates
+
+    # Policy std bounds
+    log_std_bounds: [-10, 2]

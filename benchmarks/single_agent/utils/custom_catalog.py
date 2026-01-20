@@ -1,24 +1,23 @@
 """
 Custom catalog for single-agent RL training with quantum device networks.
+
+Reuses swarm's encoder and head configurations for consistency.
 """
 
-import sys
-from pathlib import Path
 import gymnasium as gym
 from ray.rllib.algorithms.ppo.ppo_catalog import PPOCatalog
 from ray.rllib.core.models.configs import ModelConfig
 from ray.rllib.utils.annotations import override
 
-# Add parent directory to path to import networks
-current_dir = Path(__file__).parent
-parent_dir = current_dir.parent
-sys.path.insert(0, str(parent_dir))
-
-from networks import InputEncoderConfig, PolicyHeadConfig, ValueHeadConfig
+from swarm.voltage_model.algorithms.common import build_encoder_config, get_head_input_dim
+from swarm.voltage_model.configs import PolicyHeadConfig, ValueHeadConfig
 
 
 class CustomSingleAgentCatalog(PPOCatalog):
-    """Custom catalog for single-agent quantum device neural network components."""
+    """Custom catalog for single-agent quantum device neural network components.
+
+    Reuses swarm's encoder and head building logic for consistency.
+    """
 
     def __init__(
         self,
@@ -39,43 +38,30 @@ class CustomSingleAgentCatalog(PPOCatalog):
         model_config_dict: dict,
         action_space: gym.Space = None,
     ) -> ModelConfig:
-        """
-        Build encoder configuration for single-agent training.
-
-        For now, uses simple InputEncoder from networks.py.
-        Future: Add support for memory layers (LSTM/Transformer).
-        """
-        encoder_config = model_config_dict.get("encoder", {})
-
-        # Get the image observation space shape
-        # observation_space is Dict with {"image": Box(...), "obs_gate_voltages": ..., "obs_barrier_voltages": ...}
+        """Build encoder configuration using swarm's common encoder builder."""
+        # Get the image observation space shape for encoder
         if isinstance(observation_space, gym.spaces.Dict):
             image_space = observation_space["image"]
-            input_dims = image_space.shape
+            # Create a Box space for the encoder (it expects just the image)
+            encoder_obs_space = image_space
         else:
-            input_dims = observation_space.shape
+            encoder_obs_space = observation_space
 
-        # Create InputEncoder config
-        config = InputEncoderConfig(
-            input_dims=input_dims,
-            # num_input_scans, feature_size, cnn_activation loaded from config.yaml
-        )
-
-        return config
+        return build_encoder_config(encoder_obs_space, model_config_dict)
 
     @override(PPOCatalog)
     def build_pi_head(self, framework: str = "torch"):
         """Build policy head for single-agent."""
-        encoder_config = self._model_config_dict.get("encoder", {})
+        policy_config = self._model_config_dict["policy_head"]
+        input_dim = get_head_input_dim(self._model_config_dict)
 
-        # Input dimension is the encoder output size
-        input_dim = encoder_config.get("feature_size", 256)
-
-        # PolicyHead config loaded from config.yaml
-        # output_layer_dim set to action_space.shape[0] * 2 for mean and log_std
         config = PolicyHeadConfig(
             input_dims=(input_dim,),
+            hidden_layers=policy_config["hidden_layers"],
+            activation=policy_config["activation"],
+            use_attention=policy_config["use_attention"],
             output_layer_dim=self.action_space.shape[0] * 2,  # mean and log std
+            log_std_bounds=self._model_config_dict.get("log_std_bounds", [-10, 2]),
         )
 
         return config.build(framework=framework)
@@ -83,14 +69,14 @@ class CustomSingleAgentCatalog(PPOCatalog):
     @override(PPOCatalog)
     def build_vf_head(self, framework: str = "torch"):
         """Build value head for single-agent."""
-        encoder_config = self._model_config_dict.get("encoder", {})
+        value_config = self._model_config_dict["value_head"]
+        input_dim = get_head_input_dim(self._model_config_dict)
 
-        # Input dimension is the encoder output size
-        input_dim = encoder_config.get("feature_size", 256)
-
-        # ValueHead config loaded from config.yaml
         config = ValueHeadConfig(
             input_dims=(input_dim,),
+            hidden_layers=value_config["hidden_layers"],
+            activation=value_config["activation"],
+            use_attention=value_config["use_attention"],
         )
 
         return config.build(framework=framework)

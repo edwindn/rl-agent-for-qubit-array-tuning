@@ -39,7 +39,7 @@ class DreamerEnvWrapper(gym.Env):
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 30}
 
-    def __init__(self, num_dots=2, use_barriers=True, max_steps=50, seed=None, **kwargs):
+    def __init__(self, num_dots=2, use_barriers=True, max_steps=50, seed=None, resolution=96, **kwargs):
         """
         Initialize DreamerV3 wrapper.
 
@@ -48,6 +48,7 @@ class DreamerEnvWrapper(gym.Env):
             use_barriers: Whether to include barrier voltage control
             max_steps: Maximum steps per episode
             seed: Random seed
+            resolution: Image resolution (must be divisible by 16 for encoder pooling)
             **kwargs: Additional kwargs passed to base environment
         """
         super().__init__()
@@ -66,6 +67,7 @@ class DreamerEnvWrapper(gym.Env):
         self._env.max_steps = max_steps
         self._env.num_plunger_voltages = num_dots
         self._env.num_barrier_voltages = num_dots - 1
+        self._env.resolution = resolution  # Override for DreamerV3 encoder compatibility
 
         # Calculate dimensions
         self.n_plungers = num_dots
@@ -186,7 +188,7 @@ class DreamerEnvWrapper(gym.Env):
         return self._env.device_state
 
 
-def make_dreamer_env(num_dots=2, use_barriers=True, max_steps=50, seed=None):
+def make_dreamer_env(num_dots=2, use_barriers=True, max_steps=50, seed=None, resolution=96):
     """
     Factory function to create DreamerV3-compatible environment.
 
@@ -195,6 +197,7 @@ def make_dreamer_env(num_dots=2, use_barriers=True, max_steps=50, seed=None):
         use_barriers: Whether to control barriers
         max_steps: Maximum steps per episode
         seed: Random seed
+        resolution: Image resolution (must be divisible by 16 for encoder pooling)
 
     Returns:
         DreamerEnvWrapper instance
@@ -203,7 +206,8 @@ def make_dreamer_env(num_dots=2, use_barriers=True, max_steps=50, seed=None):
         num_dots=num_dots,
         use_barriers=use_barriers,
         max_steps=max_steps,
-        seed=seed
+        seed=seed,
+        resolution=resolution
     )
 
 
