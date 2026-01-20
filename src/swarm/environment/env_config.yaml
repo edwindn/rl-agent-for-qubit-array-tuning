@@ -13,7 +13,7 @@ simulator:
   
   delta_max: 5.0 #only used if use_deltas is true
   
-  full_plunger_range_width: {"min": 80, "max": 100} #range in V of plungers
+  full_plunger_range_width: {"min": 70, "max": 80} #range in V of plungers
 
   window_delta_range: {"min": 1.5, "max": 2.0} #half range in V for a single scan/sweep (goes from -range to +range)
 
@@ -23,10 +23,10 @@ simulator:
 
   # Radial noise: zero within zero_radius of ground truth, then linearly increasing
   radial_noise:
-    enabled: false
-    lower: {"min": 40, "max": 40}
+    enabled: true
+    lower: {"min": 30, "max": 50}
     ramp_range: {"min": 5, "max": 10}
-    total_noise_range: {"min": 60, "max": 80}
+    total_noise_range: {"min": 50, "max": 60}
     # zero_radius: {"min": 10, "max": 10}      # No noise within this distance (V) from ground truth
     # ramp_distance: {"min": 20, "max": 20}    # Distance (V) over which noise ramps from 0 to max_amplitude
     # full_noise_distance: {"min": 30, "max": 40} # Distance beyond which we replace scans with white noise
@@ -38,7 +38,7 @@ simulator:
 
 reward:
   # Gate/Plunger reward configuration
-  gate_ramp_start: 50.0 # Distance from ground truth where reward = 0
+  gate_ramp_start: 40.0 # Distance from ground truth where reward = 0
   gate_quadratic_start: 1.0 # Distance where curved region begins (reward = 0.5)
   gate_curve_type: "constant" # Type of curve for final approach: "polynomial", "exponential", "linear", "constant"
   gate_curve_exponent: 2.0 # Exponent for polynomial/exponential curves
@@ -48,7 +48,7 @@ reward:
 
 
 capacitance_model:
-  update_method: "ema"  # Options: null (does not update vgm), "perfect", "fake", "ema", "bayesian", "kriging"
+  update_method: null  # Options: null (does not update vgm), "perfect", "fake", "ema", "bayesian", "kriging"
   nearest_neighbour: true # set to true if the ML model outputs two values per prediction (gate-dot RL and LR couplings in this order)
   # note that the perfect method will also remove any cross-talk with and between the barriers
 

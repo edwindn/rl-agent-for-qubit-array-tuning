@@ -50,11 +50,26 @@ def map_device_range(step_size=10, output_path="device_range_map.png",
     print(f"\nUsing voltage ranges:")
     print(f"  Gate 0: [{plunger_min[0]:.2f}, {plunger_max[0]:.2f}] V")
     print(f"  Gate 1: [{plunger_min[1]:.2f}, {plunger_max[1]:.2f}] V")
-    print(f"  Ground truth: {info['current_device_state']['gate_ground_truth'][:2]}")
 
-    # Create voltage grids
-    v0_points = np.arange(plunger_min[0], plunger_max[0] + step_size, step_size)
-    v1_points = np.arange(plunger_min[1], plunger_max[1] + step_size, step_size)
+    # Get ground truth
+    gt_v0 = info['current_device_state']['gate_ground_truth'][0]
+    gt_v1 = info['current_device_state']['gate_ground_truth'][1]
+    print(f"  Ground truth: [{gt_v0:.2f}, {gt_v1:.2f}]")
+
+    # Calculate voltage grids centered on ground truth
+    # For 13 scans, we want 6 steps on each side of center: [-6, -5, ..., 0, ..., 5, 6]
+    n_scans_per_side = 6  # Number of scans on each side of center (13 total = 6 + 1 + 6)
+
+    # Create voltage points centered exactly on ground truth
+    v0_offsets = np.arange(-n_scans_per_side, n_scans_per_side + 1) * step_size
+    v1_offsets = np.arange(-n_scans_per_side, n_scans_per_side + 1) * step_size
+
+    v0_points = gt_v0 + v0_offsets
+    v1_points = gt_v1 + v1_offsets
+
+    print(f"\nVoltage grid centered on ground truth:")
+    print(f"  Gate 0: [{v0_points[0]:.2f}, {v0_points[-1]:.2f}] V (center: {gt_v0:.2f})")
+    print(f"  Gate 1: [{v1_points[0]:.2f}, {v1_points[-1]:.2f}] V (center: {gt_v1:.2f})")
 
     n_cols = len(v0_points)  # Gate 0 increases as we move right
     n_rows = len(v1_points)  # Gate 1 increases as we move up
@@ -102,20 +117,41 @@ def map_device_range(step_size=10, output_path="device_range_map.png",
     elif n_cols == 1:
         axes = axes.reshape(-1, 1)
 
+    # Get observation voltage range for each scan window
+    obs_v_min = env.array.obs_voltage_min
+    obs_v_max = env.array.obs_voltage_max
+
     # Plot scans (flip vertically so bottom row has min v1)
     for row_idx in range(n_rows):
         for col_idx in range(n_cols):
             ax = axes[n_rows - 1 - row_idx, col_idx]  # Flip vertically
             scan = scans[row_idx][col_idx]
 
-            ax.imshow(scan, cmap='viridis', origin='lower', aspect='auto')
+            # Center voltages of this scan
+            v0_center = v0_points[col_idx]
+            v1_center = v1_points[row_idx]
+
+            # Calculate scan window bounds
+            v0_scan_min = v0_center + obs_v_min
+            v0_scan_max = v0_center + obs_v_max
+            v1_scan_min = v1_center + obs_v_min
+            v1_scan_max = v1_center + obs_v_max
+
+            ax.imshow(scan, cmap='viridis', origin='lower', aspect='auto',
+                     extent=[v0_scan_min, v0_scan_max, v1_scan_min, v1_scan_max])
+
+            # Check if ground truth is within this scan window
+            if (v0_scan_min <= gt_v0 <= v0_scan_max and
+                v1_scan_min <= gt_v1 <= v1_scan_max):
+                # Plot ground truth as red dot
+                ax.plot(gt_v0, gt_v1, 'ro', markersize=4, markeredgewidth=0.5,
+                       markeredgecolor='white', zorder=10)
+
             ax.set_xticks([])
             ax.set_yticks([])
 
-            # Add voltage labels
-            v0 = v0_points[col_idx]
-            v1 = v1_points[row_idx]
-            ax.set_title(f"({v0:.0f}, {v1:.0f})", fontsize=8)
+            # Add voltage labels (center voltages)
+            ax.set_title(f"({v0_center:.0f}, {v1_center:.0f})", fontsize=8)
 
     # Add overall labels
     fig.text(0.5, 0.02, f'Gate 0 Voltage (V) →', ha='center', fontsize=12)
