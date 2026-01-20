@@ -2,11 +2,17 @@ import torch
 import torch.utils.data as data
 import numpy as np
 import os
+import sys
 import glob
 from typing import Tuple, List, Optional, Union
 from sklearn.model_selection import train_test_split
 
-from capacitance_utils import get_channel_targets, get_nearest_targets
+# Add project root to path for imports
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from swarm.capacitance_model.capacitance_utils import get_channel_targets, get_nearest_targets
 
 
 class CapacitanceDataset(data.Dataset):

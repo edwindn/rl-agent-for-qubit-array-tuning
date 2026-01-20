@@ -3,7 +3,7 @@ from typing import Dict, Tuple, List, Union, Callable
 import warnings
 
 
-class CapacitancePredictor:
+class BayesianCapacitancePredictor:
     """
     Bayesian parameter estimation for fixed capacitance values in a quantum dot array.
     
@@ -37,7 +37,7 @@ class CapacitancePredictor:
         Example:
             # Dictionary-based prior
             priors = {(i,j): (0.25, 0.1) for i in range(5) for j in range(5)}
-            predictor = CapacitancePredictor(5, priors)
+            predictor = BayesianCapacitancePredictor(5, priors)
             
             # Function-based prior (distance-dependent)
             def distance_prior(i, j):
@@ -47,7 +47,7 @@ class CapacitancePredictor:
                     return (0.25, 0.1)  # Nearest neighbors
                 else:
                     return (0.1, 0.2)   # Distant pairs
-            predictor = CapacitancePredictor(5, distance_prior)
+            predictor = BayesianCapacitancePredictor(5, distance_prior)
         """
         self.n_dots = n_dots
         self.nearest_neighbour = nn
@@ -358,7 +358,7 @@ if __name__ == "__main__":
             else:
                 prior_dict[(i, j)] = (0., 0.1)   # Distant pairs
     
-    predictor = CapacitancePredictor(n_dots, prior_dict)
+    predictor = BayesianCapacitancePredictor(n_dots, prior_dict)
     
     # Simulating ML model outputs: [Cgd[1,2], Cgd[1,3], Cgd[0,2]]
     ml_estimates = [0.23, 0.18, 0.31]  # Capacitance predictions

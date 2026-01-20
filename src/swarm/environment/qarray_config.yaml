@@ -8,16 +8,16 @@ simulator:
     # Dot-to-dot capacitance matrix (Cdd) - symmetric coupling between quantum dots
     # Coupling strength depends on physical distance between dots
     Cdd:
-      # Self-capacitance (diagonal elements) - normalized to 0
+      # Self-capacitance (diagonal elements)
       diagonal: 0
       # Distance-based coupling rules (exponentially decaying with distance)
       distance_coupling:
         # Distance 1: adjacent dots (strongest coupling)
-        1: {"min": 0.25, "max": 0.35}
+        1: {"min": 0., "max": 0.2} # 0.2
         # Distance 2: next-nearest neighbors  
-        2: {"min": 0.03, "max": 0.2}
+        2: {"min": 0., "max": 0.1} # 0.1
         # Distance 3+: long-range coupling (weakest)
-        3_plus: {"min": 0.005, "max": 0.02}
+        3_plus: {"min": 0., "max": 0.}
     
     # Gate-to-dot capacitance matrix (Cgd) - coupling between gates and quantum dots
     # Uses distance-based rules for scalability
@@ -27,11 +27,11 @@ simulator:
       # Cross-coupling based on distance between gate and non-primary dots
       cross_coupling:
         # Distance 1: adjacent gate-dot pairs
-        1: {"min": 0.6, "max": 0.6}
+        1: {"min": 0., "max": 0.6} # 0.6
         # Distance 2: next-adjacent gate-dot pairs
-        2: {"min": 0., "max": 0.2}
+        2: {"min": 0., "max": 0.1} # 0.1
         # Distance 3+: long-range gate-dot coupling
-        3_plus: {"min": 0., "max": 0.01}
+        3_plus: {"min": 0., "max": 0.01} # 0.01
     
     # Dot-to-sensor capacitance (Cds) - how quantum dots couple to charge sensor
     Cds:
@@ -128,4 +128,5 @@ simulator:
     charge_state_batch_size: 1000
 
   voltage_capacitance_model:
-    type: "linear" #  null, 'linear', 'quadratic', etc.
+    # Voltage-dependent capacitance matrices
+    type: null #  null, 'linear', 'quadratic', etc.

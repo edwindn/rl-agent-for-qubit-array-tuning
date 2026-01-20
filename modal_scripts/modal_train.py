@@ -51,6 +51,10 @@ image = (
         "cd /root/quantum-rl-project && uv sync --frozen",
         "cp -r /usr/local/lib/python3.11/site-packages/qarray_latched* /root/quantum-rl-project/.venv/lib/python3.11/site-packages/"
     )
+    .add_local_file(
+        str(project_root / "src/swarm/capacitance_model/weights/best_model_barriers.pth"),
+        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/weights/best_model_barriers.pth"
+    )
 )
 
 app = modal.App("quantum-rl-training")

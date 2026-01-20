@@ -23,7 +23,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from swarm.capacitance_model import CapacitancePredictionModel, CapacitancePredictor, InterpolatedCapacitancePredictor
+from swarm.capacitance_model import CapacitancePredictionModel, BayesianCapacitancePredictor, KrigingCapacitancePredictor, EmaCapacitancePredictor
 
 
 class QuantumDeviceEnv(gym.Env):
@@ -163,6 +163,10 @@ class QuantumDeviceEnv(gym.Env):
             obs_image_size=self.resolution,
             radial_noise_config=radial_noise_config,
         )
+
+        # Reset virtual gate matrix to identity (no virtualization knowledge)
+        # This simulates starting without knowledge of crosstalk
+        self.array._reset_virtual_gate_matrix_to_identity()
 
         if self.capacitance_model == "perfect":
             self.array._apply_perfect_virtualisation()
@@ -508,11 +512,37 @@ class QuantumDeviceEnv(gym.Env):
         #     f.write(f"errors: {errors.tolist()}\t\t\t")
         #     f.write(f"log_vars: {log_vars_np.tolist()}\n")
 
+        update_method = self.config["capacitance_model"]["update_method"]
+
+        if update_method == "ema":
+            # EMA method: use ML predictions directly (not deltas)
+            if self.capacitance_model["nearest_neighbour"]:
+                for i in range(self.num_dots - 1):
+                    # For EMA, use absolute ML predictions directly
+                    # The ML model predicts absolute capacitance values, not deltas
+                    absolute_values = [
+                        float(values_np[i, 0]),  # RL coupling
+                        float(values_np[i, 1]),  # LR coupling
+                    ]
+
+                    # Update the EMA predictor with absolute values and log variances
+                    ml_outputs = [(absolute_values[j], float(log_vars_np[i, j])) for j in range(2)]
+                    self.capacitance_model["capacitance_predictor"].update_from_scan(left_dot=i, ml_outputs=ml_outputs)
+            else:
+                raise NotImplementedError("Capacitance update only supports nearest-neighbour mode for now")
+
+            # Get updated capacitance matrix from EMA predictor (diagonal already set to 1)
+            cgd_estimate = self.capacitance_model["capacitance_predictor"].get_full_matrix()
+
+            self.array._update_virtual_gate_matrix(cgd_estimate)
+            return
+
+        # Bayesian and Kriging methods
         if self.capacitance_model["nearest_neighbour"]:
             for i in range(self.num_dots - 1):
 
-                current_mean_RL, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(i+1, i)
-                current_mean_LR, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(i, i+1)
+                current_mean_RL, _ = self.capacitance_model["capacitance_predictor"].get_capacitance_stats(i+1, i)
+                current_mean_LR, _ = self.capacitance_model["capacitance_predictor"].get_capacitance_stats(i, i+1)
 
                 # Add predictions to current means (since scans are already partially virtualised)
                 absolute_values = [
@@ -521,36 +551,13 @@ class QuantumDeviceEnv(gym.Env):
                 ]
 
                 ml_outputs = [(absolute_values[j], float(log_vars_np[i, j])) for j in range(2)]
-                self.capacitance_model["bayesian_predictor"].update_from_scan(left_dot=i, ml_outputs=ml_outputs)
+                self.capacitance_model["capacitance_predictor"].update_from_scan(left_dot=i, ml_outputs=ml_outputs)
 
         else:
-            for i in range(self.num_dots - 1):
-                # Get current mean estimates for this dot pair and its neighbors
-                current_mean_ij, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(
-                    i, i + 1
-                )
-                current_mean_ik, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(
-                    i, max(0, i - 1) if i > 0 else i + 2
-                )
-                current_mean_jk, _ = self.capacitance_model["bayesian_predictor"].get_capacitance_stats(
-                    i + 1, min(self.num_dots - 1, i + 2) if i + 2 < self.num_dots else i
-                )
-                
-                # Add current means to delta predictions to get absolute values
-                absolute_values = [
-                    current_mean_ij + float(values_np[i, 0]),  # C_ij + delta_ij
-                    current_mean_ik + float(values_np[i, 1]),  # C_ik + delta_ik
-                    current_mean_jk + float(values_np[i, 2]),  # C_jk + delta_jk
-                ]
-
-                # Create ml_outputs format expected by update_from_scan
-                ml_outputs = [(absolute_values[j], float(log_vars_np[i, j])) for j in range(3)]
-
-                # Update the Bayesian predictor for this dot pair
-                self.capacitance_model["bayesian_predictor"].update_from_scan(left_dot=i, ml_outputs=ml_outputs)
+            raise NotImplementedError("Capacitance update only supports nearest-neighbour mode for now")
 
         # Get updated capacitance matrix and apply to quantum array
-        cgd_estimate = self.capacitance_model["bayesian_predictor"].get_full_matrix()
+        cgd_estimate = self.capacitance_model["capacitance_predictor"].get_full_matrix()
 
         self.array._update_virtual_gate_matrix(cgd_estimate)
 
@@ -641,12 +648,17 @@ class QuantumDeviceEnv(gym.Env):
 
             if update_method == "bayesian":
                 # Initialize Bayesian predictor
-                bayesian_predictor = CapacitancePredictor(
+                capacitance_predictor = BayesianCapacitancePredictor(
                     n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
                 )
             elif update_method == "kriging":
                 # Initialize spatially aware predictor
-                bayesian_predictor = InterpolatedCapacitancePredictor(
+                capacitance_predictor = KrigingCapacitancePredictor(
+                    n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
+                )
+            elif update_method == "ema":
+                # Initialize EMA predictor
+                capacitance_predictor = EmaCapacitancePredictor(
                     n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
                 )
             else:
@@ -655,7 +667,7 @@ class QuantumDeviceEnv(gym.Env):
             # Store both components in the capacitance model
             self.capacitance_model = {
                 "ml_model": ml_model,
-                "bayesian_predictor": bayesian_predictor,
+                "capacitance_predictor": capacitance_predictor,
                 "device": device,
                 "nearest_neighbour": nearest_neighbour
             }
@@ -761,9 +773,35 @@ class QuantumDeviceEnv(gym.Env):
 
 
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+
     #os.environ['CUDA_VISIBLE_DEVICES'] = '7'
     env = QuantumDeviceEnv()
-    env.reset()
+    obs, info = env.reset()
     print(env.observation_space)
     print(env.action_space)
     print(env.device_state)
+
+    # Get the image observation (scans)
+    scans = obs["image"]  # Shape: (resolution, resolution, num_channels)
+    num_channels = scans.shape[2]
+
+    # Create a figure with subplots side by side
+    fig, axes = plt.subplots(1, num_channels, figsize=(5 * num_channels, 5))
+
+    # Handle single channel case
+    if num_channels == 1:
+        axes = [axes]
+
+    # Plot each scan side by side
+    for i in range(num_channels):
+        axes[i].imshow(scans[:, :, i], cmap='viridis', origin='lower')
+        axes[i].set_title(f'Scan {i+1} (Dots {i}-{i+1})')
+        axes[i].set_xlabel('Gate Voltage')
+        axes[i].set_ylabel('Gate Voltage')
+        axes[i].axis('on')
+
+    plt.tight_layout()
+    plt.savefig('scans.png', dpi=150, bbox_inches='tight')
+    print(f"\nSaved scans to scans.png")
+    plt.close()

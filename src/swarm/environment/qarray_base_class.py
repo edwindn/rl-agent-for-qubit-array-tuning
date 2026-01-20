@@ -42,6 +42,7 @@ class QarrayBaseClass:
         vary_peak_width: bool = False,
         peak_width_alpha: float = 0.01,
         radial_noise_config: dict = None,
+        add_full_crosstalk: bool = True,
         **kwargs,
     ):
 
@@ -53,6 +54,7 @@ class QarrayBaseClass:
         self.num_dots = num_dots
         self.num_gate_voltages = num_dots
         self.num_barrier_voltages = num_dots - 1
+        self.add_full_crosstalk = add_full_crosstalk
 
         self.obs_image_size = obs_image_size
         self.obs_channels = self.num_dots - 1
@@ -90,20 +92,60 @@ class QarrayBaseClass:
 
 
 
-    def _get_charge_sensor_data(self, voltage1, voltage2, gate1, gate2, barrier_voltages=None):
+    def _get_charge_sensor_data(self, gate1, gate2, gate_voltages, barrier_voltages=None):
         """
         Get charge sensor data for given voltages using TunnelCoupledChargeSensed interface.
 
         Args:
-            voltage1 (float): Center voltage for first gate
-            voltage2 (float): Center voltage for second gate
             gate1 (int): First gate index (1-indexed for qarray)
             gate2 (int): Second gate index (1-indexed for qarray)
+            gate_voltages (np.ndarray): Plunger voltage array
             barrier_voltages (np.ndarray): Barrier voltage array
 
         Returns:
             np.ndarray: Charge sensor data of shape (height, width)
         """
+
+        assert gate2 == gate1 + 1, "Only adjacent dot scanning supported"
+
+        dot1_idx = gate1 - 1
+        dot2_idx = gate2 - 1
+
+        voltage1 = gate_voltages[dot1_idx]
+        voltage2 = gate_voltages[dot2_idx]
+
+        # No barriers: cgd has shape (num_dots, num_gates) where there is 1 gate per dot plus a sensor gate
+        # Barriers: cgd has shape (num_dots + 1, num_gates + num_barriers) where num_gates = num_dots + 1
+
+        # Apply crosstalk to the central voltage values
+        # TODO remove this code later
+
+        # if not self.use_barriers:
+        #     cgd = self.array.model.cgd
+        # else:
+        #     cgd = self.array.model.cgd_full
+
+        # if gate1 == 1:
+        #     dot1_crosstalks = [None, float(cgd[dot1_idx, dot1_idx + 1])] # L, R
+        #     dot2_crosstalks = [float(cgd[dot2_idx, dot2_idx - 1]), float(cgd[dot2_idx, dot2_idx + 1])]
+
+        #     voltage1 += dot1_crosstalks[1] * gate_voltages[dot1_idx + 1]
+        #     voltage2 += (dot2_crosstalks[0] * gate_voltages[dot2_idx - 1] + dot2_crosstalks[1] * gate_voltages[dot2_idx + 1])
+
+        # elif gate1 == self.num_dots - 1:
+        #     dot1_crosstalks = [float(cgd[dot1_idx, dot1_idx - 1]), float(cgd[dot1_idx, dot1_idx + 1])]
+        #     dot2_crosstalks = [float(cgd[dot2_idx, dot2_idx - 1]), None]
+
+        #     voltage1 += (dot1_crosstalks[0] * gate_voltages[dot1_idx - 1] + dot1_crosstalks[1] * gate_voltages[dot1_idx + 1])
+        #     voltage2 += dot2_crosstalks[0] * gate_voltages[dot2_idx - 1]
+
+        # else:
+        #     dot1_crosstalks = [float(cgd[dot1_idx, dot1_idx - 1]), float(cgd[dot1_idx, dot1_idx + 1])]
+        #     dot2_crosstalks = [float(cgd[dot2_idx, dot2_idx - 1]), float(cgd[dot2_idx, dot2_idx + 1])]
+
+        #     voltage1 += (dot1_crosstalks[0] * gate_voltages[dot1_idx - 1] + dot1_crosstalks[1] * gate_voltages[dot1_idx + 1])
+        #     voltage2 += (dot2_crosstalks[0] * gate_voltages[dot2_idx - 1] + dot2_crosstalks[1] * gate_voltages[dot2_idx + 1])
+
 
         if not self.use_barriers:
             # assert barrier_voltages is None, "Barrier voltages provided but model is not configured for barriers"
@@ -124,11 +166,11 @@ class QarrayBaseClass:
         # Generate 2D virtual gate grid using gate_voltage_composer
         assert barrier_voltages is not None, "Barrier voltages must be provided for models with barriers"
         vg = self.model.gate_voltage_composer.do2d(
-            f"P{gate1}",
+            f"vP{gate1}",
             voltage1 + self.obs_voltage_min,
             voltage1 + self.obs_voltage_max,
             self.obs_image_size,
-            f"P{gate2}",
+            f"vP{gate2}",
             voltage2 + self.obs_voltage_min,
             voltage2 + self.obs_voltage_max,
             self.obs_image_size,
@@ -136,6 +178,14 @@ class QarrayBaseClass:
 
         # Flatten the voltage grid to shape (obs_image_size^2, n_gates)
         vg_flat = vg.reshape(-1, vg.shape[-1])
+
+        # Add back the correct voltages for proper crosstalk effects
+        if self.add_full_crosstalk:
+            mask = np.ones(self.num_dots, dtype=bool)
+            mask[dot1_idx] = False
+            mask[dot2_idx] = False
+            gate_voltages_array = np.array(gate_voltages)
+            vg_flat[:, :self.num_dots][:, mask] += gate_voltages_array[mask]
 
         # Create barrier voltage array (same shape as flattened gate voltage array)
         vb = jnp.full((vg_flat.shape[0], self.num_barrier_voltages), jnp.array(barrier_voltages))
@@ -178,7 +228,7 @@ class QarrayBaseClass:
 
             voltage1 = float(gate_voltages[i])  # Use 0-based indexing for gate_voltages array
             voltage2 = float(gate_voltages[i + 1])  # Use 0-based indexing for gate_voltages array
-            z = self._get_charge_sensor_data(voltage1, voltage2, gate1, gate2, barrier_voltages)
+            z = self._get_charge_sensor_data(gate1, gate2, gate_voltages, barrier_voltages)
 
             # Apply radial noise if enabled and ground truth is set
             if self.gate_ground_truth is not None:
@@ -862,9 +912,57 @@ class QarrayBaseClass:
         return model
 
 
-    def _update_virtual_gate_matrix(self, cgd_estimate):
-        vgm = -np.linalg.pinv(np.linalg.inv(self.model.Cdd) @ cgd_estimate)
+    def _reset_virtual_gate_matrix_to_identity(self):
+        # Both with and without barriers vgm has shape (num_dot + 1, num_dot + 1)
+        identity_vgm = np.eye(self.num_dots + 1, self.num_dots + 1)
 
+        self.model.gate_voltage_composer.virtual_gate_matrix = identity_vgm
+        # print(f"Reset virtual gate matrix to identity:\n{identity_vgm}")
+
+    def _reset_virtual_gate_matrix_to_perfect(self):
+        """
+        Reset the virtual gate matrix to perfect virtualization using internal Cgd.
+        This replicates the default behavior of qarray-latched where the virtual
+        gate matrix is computed from the exact (ground truth) capacitance matrices.
+
+        This is what qarray-latched does automatically in __post_init__.
+        """
+        if self.use_barriers:
+            # For barrier models, extract gate-only submatrix (exclude barrier columns)
+            # From TunnelCoupledChargeSensed.py:178-179
+            cgd_gates_only = self.model.cgd_full[:, :self.model.n_gate]
+            perfect_vgm = -np.linalg.pinv(self.model.cdd_inv_full @ cgd_gates_only)
+        else:
+            # For non-barrier models, use full cgd_full matrix
+            # From ChargeSensedDotArray.py:123
+            perfect_vgm = -np.linalg.pinv(self.model.cdd_inv_full @ self.model.cgd_full)
+
+        self.model.gate_voltage_composer.virtual_gate_matrix = perfect_vgm
+        # print(f"Reset virtual gate matrix to perfect (from exact Cgd):\n{perfect_vgm}")
+
+    def _update_virtual_gate_matrix(self, cgd_estimate):
+        # cgd_estimate is (n_dots, n_dots) for plunger gate-to-dot capacitances only
+        if self.use_barriers:
+            # Add sensor gate column of zeros to cgd_estimate: (4, 4) -> (4, 5)
+            sensor_gate_column = np.zeros((self.num_dots, 1))
+            cgd_estimate_with_sensor_gate = np.hstack([cgd_estimate, sensor_gate_column])  # (4, 5)
+
+            # Add sensor row of zeros: (4, 5) -> (5, 5)
+            sensor_row = np.zeros((1, self.num_dots + 1))
+            cgd_estimate_full = np.vstack([cgd_estimate_with_sensor_gate, sensor_row])  # (5, 5)
+
+            # Set sensor coupling to one
+            cgd_estimate_full[-1, -1] = 1.0
+
+            # Qarray uses negative matrix convention - we pass in a positive matrix
+            cgd_estimate_full = -cgd_estimate_full
+
+            vgm = -np.linalg.pinv(self.model.cdd_inv_full @ cgd_estimate_full)
+        else:
+            vgm = -np.linalg.pinv(np.linalg.inv(self.model.Cdd) @ cgd_estimate)
+
+        #print(cgd_estimate_full)
+        #print(vgm)
         self.model.gate_voltage_composer.virtual_gate_matrix = vgm
 
 
@@ -1088,6 +1186,19 @@ if __name__ == "__main__":
         vary_peak_width=False,
         obs_image_size=256,
     )
+
+    fake_cgd = np.array([[1.0, 0.3, 0.0, 0.0],
+                         [0.3, 1.0, 0.3, 0.0],
+                         [0.0, 0.3, 1.0, 0.3],
+                         [0.0, 0.0, 0.3, 1.0]])
+    experiment._update_virtual_gate_matrix(fake_cgd)
+
+    # experiment._reset_virtual_gate_matrix_to_perfect()
+
+    # experiment._get_obs([1, 2, 3, 4], [0] * (num_dots - 1))["image"][:, :, 0]
+    import sys
+    sys.exit(0)
+
     import time
 
     #experiment._apply_perfect_virtualisation()

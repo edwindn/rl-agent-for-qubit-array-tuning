@@ -526,7 +526,9 @@ def main():
                     best_reward = current_reward
                     upload_checkpoint_artifact(checkpoint_path, i + 1, current_reward)
             else:
-                upload_checkpoint_artifact(checkpoint_path, i + 1, 0.0)
+                # Upload only at every 25 iterations (25, 50, 75, etc.)
+                if (i + 1) % 25 == 0:
+                    upload_checkpoint_artifact(checkpoint_path, i + 1, 0.0)
 
             print(f"\nIteration {i+1} completed. Checkpoint saved to: {checkpoint_path}\n")
 

@@ -11,7 +11,7 @@ from swarm.capacitance_model.capacitance_utils import get_channel_targets
 get_channel_targets = partial(get_channel_targets, has_sensor=False)
 
 
-class InterpolatedCapacitancePredictor:
+class KrigingCapacitancePredictor:
     """
     Spatially aware parameter estimation for varying capacitance values in a quantum dot array.
     

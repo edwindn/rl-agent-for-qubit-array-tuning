@@ -23,9 +23,9 @@ simulator:
 
   # Radial noise: zero within zero_radius of ground truth, then linearly increasing
   radial_noise:
-    enabled: true
-    lower: {"min": 10, "max": 40}
-    ramp_range: {"min": 2, "max": 6}
+    enabled: false
+    lower: {"min": 40, "max": 40}
+    ramp_range: {"min": 5, "max": 10}
     total_noise_range: {"min": 60, "max": 80}
     # zero_radius: {"min": 10, "max": 10}      # No noise within this distance (V) from ground truth
     # ramp_distance: {"min": 20, "max": 20}    # Distance (V) over which noise ramps from 0 to max_amplitude
@@ -48,7 +48,7 @@ reward:
 
 
 capacitance_model:
-  update_method: "fake"  # Options: null (does not update vgm), "perfect", "fake", "bayesian", "kriging"
+  update_method: "ema"  # Options: null (does not update vgm), "perfect", "fake", "ema", "bayesian", "kriging"
   nearest_neighbour: true # set to true if the ML model outputs two values per prediction (gate-dot RL and LR couplings in this order)
   # note that the perfect method will also remove any cross-talk with and between the barriers
 

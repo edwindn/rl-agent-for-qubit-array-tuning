@@ -6,13 +6,15 @@ estimation and Bayesian inference for plunger gate virtualization.
 """
 
 from .CapacitancePrediction import CapacitancePredictionModel, create_model, create_loss_function
-from .BayesianUpdater import CapacitancePredictor
-from .KrigingUpdater import InterpolatedCapacitancePredictor
+from .BayesianUpdater import BayesianCapacitancePredictor
+from .KrigingUpdater import KrigingCapacitancePredictor
+from .EmaUpdater import EmaCapacitancePredictor
 
 __all__ = [
     'CapacitancePredictionModel',
-    'create_model', 
+    'create_model',
     'create_loss_function',
-    'CapacitancePredictor',
-    'InterpolatedCapacitancePredictor'
+    'BayesianCapacitancePredictor',
+    'KrigingCapacitancePredictor',
+    'EmaCapacitancePredictor'
 ]
