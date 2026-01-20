@@ -1,0 +1,208 @@
+"""
+Shared environment initialization for benchmarks.
+
+Provides a consistent interface for creating quantum device environments
+across all benchmark methods (Nelder-Mead, Bayesian, RL, etc.)
+"""
+
+import sys
+from pathlib import Path
+import numpy as np
+
+# Add src directory to path for imports
+project_root = Path(__file__).parent.parent
+src_dir = project_root / "src"
+sys.path.insert(0, str(src_dir))
+
+from swarm.environment.env import QuantumDeviceEnv
+
+
+def create_benchmark_env(
+    num_dots: int = 2,
+    use_barriers: bool = True,
+    seed: int = None,
+    capacitance_model: str = None,
+) -> QuantumDeviceEnv:
+    """
+    Create a quantum device environment for benchmarking.
+
+    Args:
+        num_dots: Number of quantum dots in the array
+        use_barriers: Whether to include barrier voltage optimization
+        seed: Random seed for reproducibility
+        capacitance_model: Capacitance update method ("perfect", "fake", None)
+
+    Returns:
+        QuantumDeviceEnv instance with ground truth accessible via device_state
+    """
+    # Create env - it reads num_dots and use_barriers from config
+    # We need to temporarily modify the config
+    env = QuantumDeviceEnv(training=True)
+
+    # Override the config-loaded values
+    env.num_dots = num_dots
+    env.use_barriers = use_barriers
+    env.num_plunger_voltages = num_dots
+    env.num_barrier_voltages = num_dots - 1
+
+    # Update capacitance model setting
+    if capacitance_model is not None:
+        env.capacitance_model = capacitance_model
+    else:
+        env.capacitance_model = None  # No updates, use initial
+
+    # Reset with seed (this will create the array with correct num_dots)
+    obs, info = env.reset(seed=int(seed) if seed is not None else None)
+
+    # Initialize voltage ranges with seeded rng for reproducibility
+    # Use different seed than trial rng to avoid correlation between
+    # bound positioning and initial voltage sampling
+    bounds_seed = seed + 1_000_000 if seed is not None else None
+    bounds_rng = np.random.default_rng(bounds_seed)
+    get_voltage_ranges(env, bounds_rng)  # This caches the result on env
+
+    return env
+
+
+def get_ground_truth(env: QuantumDeviceEnv) -> tuple:
+    """
+    Extract ground truth voltages from environment.
+
+    Args:
+        env: QuantumDeviceEnv instance
+
+    Returns:
+        (plunger_gt, barrier_gt): Ground truth voltage arrays
+    """
+    plunger_gt = env.device_state["gate_ground_truth"]
+    barrier_gt = env.device_state["barrier_ground_truth"]
+    return plunger_gt, barrier_gt
+
+
+def get_voltage_ranges(env: QuantumDeviceEnv, rng: np.random.Generator = None) -> dict:
+    """
+    Get voltage ranges with physical optimal randomly placed within window.
+
+    Creates bounds of the same size as env's original bounds, but positioned
+    such that the physical optimal is at a random location within the window.
+    Results are cached on the env to ensure consistency across multiple calls.
+
+    Args:
+        env: QuantumDeviceEnv instance
+        rng: Random generator for positioning (only used on first call)
+
+    Returns:
+        dict with plunger_min, plunger_max, barrier_min, barrier_max
+    """
+    # Return cached bounds if already computed
+    if hasattr(env, '_benchmark_voltage_ranges'):
+        return env._benchmark_voltage_ranges
+
+    # Import here to avoid circular dependency
+    from objective import PhysicalObjective
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    # Get window sizes from env's original bounds
+    plunger_window = env.plunger_max - env.plunger_min
+    barrier_window = env.barrier_max - env.barrier_min
+
+    # Compute physical optimal using env's GT as reference point
+    env_gt_plungers = env.device_state["gate_ground_truth"]
+    env_gt_barriers = env.device_state["barrier_ground_truth"]
+    ref_voltages = np.concatenate([env_gt_plungers, env_gt_barriers])
+
+    obj = PhysicalObjective(env)
+    phys_opt_plungers, phys_opt_barriers = obj.get_optimal_voltages(ref_voltages)
+
+    # Random position of optimal within window (0 = at min edge, 1 = at max edge)
+    plunger_pos = rng.uniform(0.1, 0.9, size=len(phys_opt_plungers))  # Keep away from edges
+    barrier_pos = rng.uniform(0.1, 0.9, size=len(phys_opt_barriers))
+
+    # Position window so optimal is at random location within it
+    plunger_min = phys_opt_plungers - plunger_pos * plunger_window
+    plunger_max = plunger_min + plunger_window
+    barrier_min = phys_opt_barriers - barrier_pos * barrier_window
+    barrier_max = barrier_min + barrier_window
+
+    # Cache on env for consistency
+    env._benchmark_voltage_ranges = {
+        "plunger_min": plunger_min,
+        "plunger_max": plunger_max,
+        "barrier_min": barrier_min,
+        "barrier_max": barrier_max,
+    }
+
+    return env._benchmark_voltage_ranges
+
+
+def get_current_voltages(env: QuantumDeviceEnv) -> tuple:
+    """
+    Get current voltages from environment state.
+
+    Args:
+        env: QuantumDeviceEnv instance
+
+    Returns:
+        (plunger_v, barrier_v): Current voltage arrays
+    """
+    plunger_v = env.device_state["current_gate_voltages"]
+    barrier_v = env.device_state["current_barrier_voltages"]
+    return plunger_v, barrier_v
+
+
+def random_initial_voltages(env: QuantumDeviceEnv, rng: np.random.Generator = None) -> np.ndarray:
+    """
+    Generate random initial voltages within the environment's voltage ranges.
+
+    Args:
+        env: QuantumDeviceEnv instance
+        rng: Random number generator (optional)
+
+    Returns:
+        Concatenated array of [plunger_voltages, barrier_voltages]
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    ranges = get_voltage_ranges(env)
+
+    plunger_v = rng.uniform(
+        low=ranges["plunger_min"],
+        high=ranges["plunger_max"],
+        size=env.num_plunger_voltages
+    )
+
+    barrier_v = rng.uniform(
+        low=ranges["barrier_min"],
+        high=ranges["barrier_max"],
+        size=env.num_barrier_voltages
+    )
+
+    return np.concatenate([plunger_v, barrier_v])
+
+
+def split_voltages(voltages: np.ndarray, num_plungers: int) -> tuple:
+    """
+    Split concatenated voltage array into plunger and barrier components.
+
+    Args:
+        voltages: Concatenated [plunger, barrier] array
+        num_plungers: Number of plunger voltages
+
+    Returns:
+        (plunger_v, barrier_v): Split voltage arrays
+    """
+    plunger_v = voltages[:num_plungers]
+    barrier_v = voltages[num_plungers:]
+    return plunger_v, barrier_v
+
+
+if __name__ == "__main__":
+    # Quick test
+    env = create_benchmark_env(num_dots=2, use_barriers=True, seed=42)
+    plunger_gt, barrier_gt = get_ground_truth(env)
+    print(f"Plunger ground truth: {plunger_gt}")
+    print(f"Barrier ground truth: {barrier_gt}")
+    print(f"Voltage ranges: {get_voltage_ranges(env)}")

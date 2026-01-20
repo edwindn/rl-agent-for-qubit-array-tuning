@@ -1,0 +1,47 @@
+[project]
+name = "swarm-benchmarks"
+version = "0.1.0"
+description = "Benchmarks for swarm-rl (classical optimizers)"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # QArray (same versions as main project)
+    "qarray==1.6.0",
+    "qarray-latched @ git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@fcc472276f27e7633bb3aafc6f0d6c92966875d7",
+    # Core ML (same versions as main project)
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    "ray[rllib]==2.49.0",
+    "wandb[media]",
+    "jax[cuda12]==0.7.2",
+    "jaxlib==0.7.2",
+    "gymnasium==1.1.1",
+    # Data and visualization (same versions as main project)
+    "numpy==2.2.4",
+    "matplotlib==3.10.3",
+    "pyyaml==6.0.2",
+    "scipy==1.16.2",
+    "scikit-learn==1.7.1",
+    "scienceplots",
+    # Bayesian optimization
+    "scikit-optimize",
+    # DreamerV3 dependencies
+    "ninjax>=3.5.1",
+    "elements>=3.19.1",
+    "chex",
+    "optax",
+    "ruamel.yaml",
+    "portal>=3.5.0",
+    "einops",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
+
+[tool.uv]
+extra-index-url = [
+    "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
+]
