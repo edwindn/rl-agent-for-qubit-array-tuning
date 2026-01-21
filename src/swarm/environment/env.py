@@ -169,7 +169,17 @@ class QuantumDeviceEnv(gym.Env):
         self.array._reset_virtual_gate_matrix_to_identity()
 
         if self.capacitance_model == "perfect":
-            self.array._apply_perfect_virtualisation()
+            self.array._reset_virtual_gate_matrix_to_perfect()
+
+        voltage_offset_range = self.config['simulator']['constant_voltage_offset']
+        self.constant_voltage_offset = np.random.uniform(
+            low=voltage_offset_range['min'],
+            high=voltage_offset_range['max'],
+            size=(self.num_dots,)
+        )
+
+        # Add the random offset to shift the voltage space
+        self.array._update_virtual_gate_origin(np.concatenate([self.constant_voltage_offset, [0]]))
 
         plunger_ground_truth, barrier_ground_truth, _ = self.array.calculate_ground_truth()
 
@@ -203,6 +213,7 @@ class QuantumDeviceEnv(gym.Env):
             "current_gate_voltages": plungers,
             "current_barrier_voltages": barriers,
             "virtual_gate_matrix": self.array.model.gate_voltage_composer.virtual_gate_matrix,
+            "virtual_gate_origin": self.array.model.gate_voltage_composer.virtual_gate_origin,
         }
 
         # --- Return the initial observation ---
@@ -797,7 +808,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     #os.environ['CUDA_VISIBLE_DEVICES'] = '7'
-    env = QuantumDeviceEnv()
+    env = QuantumDeviceEnv(num_dots=6)
     obs, info = env.reset()
     print(env.observation_space)
     print(env.action_space)
