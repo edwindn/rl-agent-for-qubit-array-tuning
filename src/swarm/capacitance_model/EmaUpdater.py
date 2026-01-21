@@ -18,7 +18,7 @@ class EmaCapacitancePredictor:
         prior_config (Dict or Callable): Configuration for initial values
     """
 
-    def __init__(self, n_dots: int, nn: bool, prior_config: Union[Dict[Tuple[int, int], Tuple[float, float]], Callable]):
+    def __init__(self, n_dots: int, nn: bool, prior_config: Union[Dict[Tuple[int, int], Tuple[float, float]], Callable], ema_length: int | None = None):
         """
         Initialize the EMA capacitance predictor with initial values.
 
@@ -28,6 +28,8 @@ class EmaCapacitancePredictor:
             prior_config (Dict or Callable): Either a dictionary mapping (i,j) pairs to
                 (prior_mean, prior_variance) tuples, or a callable that takes (i,j) and
                 returns (prior_mean, prior_variance). Only the mean is used for initialization.
+            ema_length (int | None): If specified, use exponential moving average with this lengthscale.
+                If None, use the last value directly without EMA.
 
         Example:
             # Function-based prior (distance-dependent)
@@ -38,13 +40,20 @@ class EmaCapacitancePredictor:
                     return (0.40, 0.2)  # Nearest neighbors
                 else:
                     return (0.2, 0.1)   # Distant pairs
-            predictor = EmaCapacitancePredictor(5, True, distance_prior)
+            predictor = EmaCapacitancePredictor(5, True, distance_prior, ema_length=10)
         """
+        if ema_length is not None:
+            raise NotImplementedError("EMA updates not yet done")
+            # NOTE will need to handle priors being initialised to the mean and thus initial updates will be unstable,
+            # use variance updates with an initially very high variance, or low confidence
+
         self.n_dots = n_dots
         self.nearest_neighbour = nn
         self.prior_config = prior_config
+        self.ema_length = ema_length
 
-        # TODO prior config not being used for now, just setting all nearest neighbour couplings to reasonable mean values (0.3)
+        # TODO prior config not being used for now
+        print("WARNING: EMA prior not being used, prior means set to mean value of distribution (0.3)")
 
         if not nn:
             raise NotImplementedError("EMA capacitance update only supports nearest-neighbour coupling for now.")
@@ -68,6 +77,7 @@ class EmaCapacitancePredictor:
     def direct_update(self, i: int, j: int, ml_estimate: float, ml_variance: float):
         """
         Directly update a capacitance element with ML model output.
+        Uses exponential moving average if ema_length is specified, otherwise uses last value.
 
         Args:
             i (int): gate index
@@ -86,8 +96,22 @@ class EmaCapacitancePredictor:
         if self.nearest_neighbour and abs(i - j) != 1:
             raise ValueError(f"In nearest neighbour mode, can only update adjacent pairs. Got (gate {i}, dot {j})")
 
-        # Directly set the values
-        self.means[i, j] = ml_estimate
+        # Update the mean using EMA if ema_length is specified, otherwise use last value
+        if self.ema_length is not None:
+            # Exponential moving average: new_mean = alpha * new_value + (1 - alpha) * old_mean
+            # where alpha = 1 / ema_length, scaled by confidence (inverse variance)
+            # Lower variance -> higher confidence -> stronger update
+            base_alpha = 1.0 / self.ema_length
+            confidence_scale = 1.0 / (0.5 + ml_variance)
+            alpha = base_alpha * confidence_scale
+            # Clip alpha to [0, 1] to maintain stability
+            alpha = np.clip(alpha, 0.0, 1.0)
+            self.means[i, j] = alpha * ml_estimate + (1 - alpha) * self.means[i, j]
+        else:
+            # Just use the last value
+            self.means[i, j] = ml_estimate
+
+        # Always directly set the variance
         self.variances[i, j] = ml_variance
 
 

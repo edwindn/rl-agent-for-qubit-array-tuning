@@ -2,17 +2,25 @@ env:
   simulator:
     num_dots: 4
     max_steps: 100
+    full_plunger_range_width: {"min": 80, "max": 100}
+    constant_voltage_offset: {"min": -20, "max": 20}
 
     radial_noise:
       enabled: true
-      lower: 30
-      ramp_range: 5
-      total_noise_range: 70
+      lower: 20
+      ramp_range: 10
+      total_noise_range: 30
 
   capacitance_model:
     update_method: null
 
 train:
+  ray:
+    runtime_env:
+      env_vars:
+        XLA_PYTHON_CLIENT_MEM_FRACTION: "0.9" # needed to perform inference on more than 4 dots
+
   rl_config:
     env_runners:
       rollout_fragment_length: 100
+      sample_timeout_s: 6000

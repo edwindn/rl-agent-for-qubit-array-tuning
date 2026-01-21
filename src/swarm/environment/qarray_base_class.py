@@ -729,25 +729,6 @@ class QarrayBaseClass:
         return model_params
 
     
-    def _apply_perfect_virtualisation(self):
-        Cdd = np.zeros((self.num_dots, self.num_dots))
-        Cgd = np.eye(self.num_dots + 1)[:-1, :]
-        Cds = self.model.Cds.copy()
-        Cgs = self.model.Cgs.copy()
-
-        if self.use_barriers:
-            raise NotImplementedError("Updating matrices in qarray-latched not yet implemented.")
-            Cbd = np.zeros((self.num_dots, self.num_dots - 1))
-            Cbg = np.zeros((self.num_dots - 1, self.num_dots + 1))
-            Cbb = np.eye(self.num_dots - 1)
-            Cbs = self.model.Cbs
-
-            self.model.update_capacitance_matrices(Cdd, Cgd, Cds, Cgs, Cbd, Cbg, Cbs, Cbb)
-
-        else:
-            self.model.update_capacitance_matrices(Cdd, Cgd, Cds, Cgs)
-
-    
     def _load_model(self, param_overrides: dict = None):
 
         if param_overrides is None:
@@ -940,16 +921,29 @@ class QarrayBaseClass:
         self.model.gate_voltage_composer.virtual_gate_matrix = perfect_vgm
         # print(f"Reset virtual gate matrix to perfect (from exact Cgd):\n{perfect_vgm}")
 
-    def _update_virtual_gate_matrix(self, cgd_estimate):
+    def _update_virtual_gate_matrix(self, cgd_estimate, virtualise_barriers=False):
         # cgd_estimate is (n_dots, n_dots) for plunger gate-to-dot capacitances only
         if self.use_barriers:
-            # Add sensor gate column of zeros to cgd_estimate: (4, 4) -> (4, 5)
-            sensor_gate_column = np.zeros((self.num_dots, 1))
-            cgd_estimate_with_sensor_gate = np.hstack([cgd_estimate, sensor_gate_column])  # (4, 5)
+            # Extract barrier capacitances from cgd_full to include in extended matrix
+            # cgd_full has shape (n_dots + n_sensor, n_gates + n_barriers)
+            # We need the barrier columns: (n_dots, n_barriers)
 
-            # Add sensor row of zeros: (4, 5) -> (5, 5)
-            sensor_row = np.zeros((1, self.num_dots + 1))
-            cgd_estimate_full = np.vstack([cgd_estimate_with_sensor_gate, sensor_row])  # (5, 5)
+            cbd_from_model = self.model.cgd_full[:self.num_dots, self.model.n_gate:]  # (n_dots, n_barriers)
+            if virtualise_barriers:
+                cbd_values = cbd_from_model
+            else:
+                cbd_values = np.zeros_like(cbd_from_model)
+
+            # Extend cgd_estimate to include barrier capacitances: (n_dots, n_dots) -> (n_dots, n_dots + n_barriers)
+            cgd_estimate_with_barriers = np.hstack([cgd_estimate, cbd_values])
+
+            # Add sensor gate column of zeros: (n_dots, n_dots + n_barriers) -> (n_dots, n_dots + n_barriers + 1)
+            sensor_gate_column = np.zeros((self.num_dots, 1))
+            cgd_estimate_with_sensor_gate = np.hstack([cgd_estimate_with_barriers, sensor_gate_column])
+
+            # Add sensor row of zeros: (n_dots, n_dots + n_barriers + 1) -> (n_dots + 1, n_dots + n_barriers + 1)
+            sensor_row = np.zeros((1, self.num_dots + self.num_barrier_voltages + 1))
+            cgd_estimate_full = np.vstack([cgd_estimate_with_sensor_gate, sensor_row])
 
             # Set sensor coupling to one
             cgd_estimate_full[-1, -1] = 1.0
@@ -957,13 +951,19 @@ class QarrayBaseClass:
             # Qarray uses negative matrix convention - we pass in a positive matrix
             cgd_estimate_full = -cgd_estimate_full
 
-            vgm = -np.linalg.pinv(self.model.cdd_inv_full @ cgd_estimate_full)
+            # Extract only the gate columns (not barriers) for VGM computation
+            # This matches how qarray-latched does it in TunnelCoupledChargeSensed.py:178-179
+            cgd_estimate_gates_only = cgd_estimate_full[:, :self.model.n_gate]
+            vgm = -np.linalg.pinv(self.model.cdd_inv_full @ cgd_estimate_gates_only)
         else:
             vgm = -np.linalg.pinv(np.linalg.inv(self.model.Cdd) @ cgd_estimate)
 
-        #print(cgd_estimate_full)
         #print(vgm)
         self.model.gate_voltage_composer.virtual_gate_matrix = vgm
+
+    def _update_virtual_gate_origin(self, v0):
+        assert isinstance(v0, np.ndarray) and len(v0) == self.num_dots + 1, f"Expected virtual gate origin to be array of length num_dots + 1"
+        self.model.gate_voltage_composer.virtual_gate_origin = v0
 
 
     def _render_frame(self, image, path="quantum_dot_plot_pv"):
@@ -1127,9 +1127,10 @@ class QarrayBaseClass:
 
             # Use current VGM instead of perfect VGM
             current_vgm = self.model.gate_voltage_composer.virtual_gate_matrix
+            
+            plunger_offset = self.model.gate_voltage_composer.virtual_gate_origin
 
-            # removed - self.model.virtual_gate_origin
-            vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical)
+            vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical - plunger_offset)
 
             vg_optimal_virtual = vg_optimal_virtual[:-1]
 
@@ -1170,8 +1171,9 @@ class QarrayBaseClass:
 
         # Use current VGM instead of perfect VGM for plunger transformation
         current_vgm = self.model.gate_voltage_composer.virtual_gate_matrix
+        plunger_offset = self.model.gate_voltage_composer.virtual_gate_origin[:ndot]
         plunger_vgm = current_vgm[:ndot, :ndot]
-        plunger_optimal_virtual = np.linalg.inv(plunger_vgm) @ plunger_optimal_physical
+        plunger_optimal_virtual = np.linalg.inv(plunger_vgm) @ (plunger_optimal_physical - plunger_offset)
 
         if debug:
             print(f"Original Optimal VG: {self.model.optimal_Vg(self.optimal_VG_center)}")
@@ -1210,8 +1212,6 @@ if __name__ == "__main__":
     sys.exit(0)
 
     import time
-
-    #experiment._apply_perfect_virtualisation()
 
     start = time.time()
 

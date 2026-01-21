@@ -12,8 +12,10 @@ simulator:
   use_deltas: false # Whether the plunger agents' output is a ΔV or V
   
   delta_max: 5.0 #only used if use_deltas is true
+
+  constant_voltage_offset: {"min": -30, "max": 30}
   
-  full_plunger_range_width: {"min": 70, "max": 80} #range in V of plungers
+  full_plunger_range_width: {"min": 80, "max": 100} #range in V of plungers
 
   window_delta_range: {"min": 1.5, "max": 2.0} #half range in V for a single scan/sweep (goes from -range to +range)
 
@@ -24,9 +26,9 @@ simulator:
   # Radial noise: zero within zero_radius of ground truth, then linearly increasing
   radial_noise:
     enabled: true
-    lower: {"min": 30, "max": 50}
+    lower: {"min": 20, "max": 30}
     ramp_range: {"min": 5, "max": 10}
-    total_noise_range: {"min": 50, "max": 60}
+    total_noise_range: {"min": 30, "max": 40}
     # zero_radius: {"min": 10, "max": 10}      # No noise within this distance (V) from ground truth
     # ramp_distance: {"min": 20, "max": 20}    # Distance (V) over which noise ramps from 0 to max_amplitude
     # full_noise_distance: {"min": 30, "max": 40} # Distance beyond which we replace scans with white noise

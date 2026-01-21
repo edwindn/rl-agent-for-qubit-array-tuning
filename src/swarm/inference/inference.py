@@ -118,7 +118,7 @@ def parse_arguments():
     return args
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None):
+def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None, scan_save_dir="inference_scans"):
     """Create multi-agent quantum environment with JAX safety."""
     import os
     import jax
@@ -138,17 +138,19 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     except:
         pass
 
-    from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
+    from swarm.environment.scan_saving_wrapper import ScanSavingWrapper
 
-    # Wrap in multi-agent wrapper (config unused but required by RLlib)
+    # Wrap in scan-saving wrapper (which inherits from MultiAgentEnvWrapper)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
     # store_history=True when using transformer to maintain observation history
     # env_config_path is passed to MultiAgentEnvWrapper which passes it to QuantumDeviceEnv
-    return MultiAgentEnvWrapper(
+    return ScanSavingWrapper(
         return_voltage=True,
         gif_config=gif_config,
         distance_data_dir=distance_data_dir,
-        env_config_path=env_config_path
+        env_config_path=env_config_path,
+        scan_save_dir=scan_save_dir,
+        scan_save_enabled=scan_save_dir is not None,
     )
 
 
@@ -317,10 +319,15 @@ def main():
     else:
         config_overrides = None
 
-    # Save distance data to current directory
-    distance_data_dir = Path(__file__).parent / "distance_data"
+    # Save distance data to current directory (use absolute path for Ray workers)
+    distance_data_dir = Path(__file__).parent.resolve() / "distance_data"
     distance_data_dir.mkdir(parents=True, exist_ok=True)
     print(f"\nDistance data will be saved to: {distance_data_dir}\n")
+
+    # Create scan save directory (use absolute path for Ray workers)
+    scan_save_dir = Path(__file__).parent.resolve() / "scan_captures"
+    scan_save_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Scan images will be saved to: {scan_save_dir}\n")
 
     
     # Initialize Ray with runtime environment from config
@@ -357,7 +364,8 @@ def main():
             create_env,
             gif_config=gif_config,
             distance_data_dir=distance_data_dir,
-            env_config_path=temp_env_config_path
+            env_config_path=temp_env_config_path,
+            scan_save_dir=str(scan_save_dir)
         )
         register_env("qarray_multiagent_env", create_env_fn)
 
@@ -435,13 +443,13 @@ def main():
                 num_env_runners=1,  # Use single worker for inference
                 rollout_fragment_length=config['rl_config']['env_runners']['rollout_fragment_length'],
                 sample_timeout_s=config['rl_config']['env_runners']['sample_timeout_s'],
-                num_gpus_per_env_runner=0.75,  # Use 0.75 GPU to force separate physical device from learner
+                num_gpus_per_env_runner=0.95,  # Use 0.95 GPU to force separate physical device from learner
                 env_to_module_connector=env_to_module_connector,
                 add_default_connectors_to_env_to_module_pipeline=True,  # Let Ray handle defaults
             )
             .learners(
                 num_learners=1,
-                num_gpus_per_learner=0.75  # Use 0.75 GPU to force separate physical device from env runner
+                num_gpus_per_learner=0.95  # Use 0.95 GPU to force separate physical device from env runner
             )
             .training(
                 # Pass filtered training params based on algorithm
@@ -452,6 +460,7 @@ def main():
                 evaluation_num_env_runners=1,
                 evaluation_duration=1,  # Run 1 episode per evaluation
                 evaluation_duration_unit="episodes",
+                evaluation_sample_timeout_s=config['rl_config']['env_runners']['sample_timeout_s'],  # Use same timeout as env_runners
                 evaluation_config={
                     "explore": args.sample,  # Use --sample flag to control exploration
                 },
@@ -541,15 +550,6 @@ def main():
             print(f"Cleanup disabled - distance data preserved at: {distance_data_dir}")
 
     finally:
-        # Clean up temporary env config file
-        if 'temp_env_config_path' in locals() and temp_env_config_path:
-            try:
-                import os
-                os.remove(temp_env_config_path)
-                print(f"Cleaned up temporary config file: {temp_env_config_path}")
-            except Exception as e:
-                print(f"Warning: Could not remove temporary config file: {e}")
-
         # Clean up algorithm before shutting down Ray
         try:
             if 'algo' in locals():
@@ -561,6 +561,16 @@ def main():
         if ray.is_initialized():
             print("Shutting down Ray...")
             ray.shutdown()
+
+        # Clean up temporary env config file AFTER Ray shutdown
+        if 'temp_env_config_path' in locals() and temp_env_config_path:
+            try:
+                import os
+                os.remove(temp_env_config_path)
+                print(f"Cleaned up temporary config file: {temp_env_config_path}")
+            except Exception as e:
+                print(f"Warning: Could not remove temporary config file: {e}")
+
         print("Inference completed")
 
 

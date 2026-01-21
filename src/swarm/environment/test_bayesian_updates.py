@@ -1,7 +1,7 @@
 """
 Test script for Bayesian capacitance model updates.
 
-Performs 5 update steps and saves a 3x3 grid of scans centered around zero volts
+Performs 5 update steps and saves a 3x3 grid of scans centered around ground truth volts
 for the left dot pair (gates 0 and 1) at each step. Passes all 9 scans through the
 capacitance model and updates the virtual gate matrix with the weighted mean prediction.
 """
@@ -32,6 +32,13 @@ def main():
     # This ensures the first set of scans uses identity VGM (no virtualization)
     env.array._reset_virtual_gate_matrix_to_identity()
 
+    # Get ground truth voltages for the left dot pair (gates 0 and 1)
+    ground_truth_voltages = env.device_state["gate_ground_truth"][:2]
+    v0_center = ground_truth_voltages[0]
+    v1_center = ground_truth_voltages[1]
+
+    print(f"Ground truth center: Gate 0 = {v0_center:.2f}V, Gate 1 = {v1_center:.2f}V")
+
     # Get other gate and barrier voltages
     other_gates = env.device_state["current_gate_voltages"][2:]
     barriers = env.device_state["current_barrier_voltages"]
@@ -51,11 +58,11 @@ def main():
     else:
         num_update_steps = 5
 
-    # Define the 3x3 grid centered at zero volts
+    # Define the 3x3 grid centered at ground truth voltages
     # Using 10V steps as in map_device_range
     step_size = 10.0
-    v0_points = np.array([-step_size, 0.0, step_size])
-    v1_points = np.array([-step_size, 0.0, step_size])
+    v0_points = np.array([v0_center - step_size, v0_center, v0_center + step_size])
+    v1_points = np.array([v1_center - step_size, v1_center, v1_center + step_size])
 
     print(f"\nVoltage grid for gates 0 and 1:")
     print(f"  Gate 0 values: {v0_points}")
@@ -221,16 +228,18 @@ def main():
         # The first step shows scans with identity VGM (no virtualization)
         # Subsequent steps show progressive virtualization as the model learns
         if use_ml_model and update_step < num_update_steps - 1:
-            # Update using the bottom left scan (-step_size, -step_size)
+            # Update using the bottom left scan (ground_truth - step_size for both gates)
             # This will process the scan through the ML model and update the Bayesian predictor
-            bottom_left_gate_voltages = np.array([-step_size, -step_size] + list(other_gates))
+            bottom_left_v0 = v0_center - step_size
+            bottom_left_v1 = v1_center - step_size
+            bottom_left_gate_voltages = np.array([bottom_left_v0, bottom_left_v1] + list(other_gates))
             bottom_left_raw_obs = env.array._get_obs(bottom_left_gate_voltages, barriers)
             bottom_left_obs_normalized = env._normalise_obs(bottom_left_raw_obs)
 
             # Use the environment's built-in update method
             env._update_virtual_gate_matrix(bottom_left_obs_normalized)
 
-            print(f"  Updated virtual gate matrix using bottom left scan at ({-step_size:.0f}, {-step_size:.0f})")
+            print(f"  Updated virtual gate matrix using bottom left scan at ({bottom_left_v0:.0f}, {bottom_left_v1:.0f})")
             print(f"  VGM after update:")
             print(env.array.model.gate_voltage_composer.virtual_gate_matrix)
 
