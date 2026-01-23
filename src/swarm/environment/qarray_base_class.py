@@ -92,7 +92,7 @@ class QarrayBaseClass:
 
 
 
-    def _get_charge_sensor_data(self, gate1, gate2, gate_voltages, barrier_voltages=None):
+    def _get_charge_sensor_data(self, gate1, gate2, gate_voltages, barrier_voltages=None, sensor_voltage=None):
         """
         Get charge sensor data for given voltages using TunnelCoupledChargeSensed interface.
 
@@ -114,38 +114,13 @@ class QarrayBaseClass:
         voltage1 = gate_voltages[dot1_idx]
         voltage2 = gate_voltages[dot2_idx]
 
+        # add sensor value to gate voltages (default to 0 if not provided)
+        if sensor_voltage is None:
+            sensor_voltage = 0.0
+        gate_voltages = np.concatenate([gate_voltages, [sensor_voltage]])
+
         # No barriers: cgd has shape (num_dots, num_gates) where there is 1 gate per dot plus a sensor gate
         # Barriers: cgd has shape (num_dots + 1, num_gates + num_barriers) where num_gates = num_dots + 1
-
-        # Apply crosstalk to the central voltage values
-        # TODO remove this code later
-
-        # if not self.use_barriers:
-        #     cgd = self.array.model.cgd
-        # else:
-        #     cgd = self.array.model.cgd_full
-
-        # if gate1 == 1:
-        #     dot1_crosstalks = [None, float(cgd[dot1_idx, dot1_idx + 1])] # L, R
-        #     dot2_crosstalks = [float(cgd[dot2_idx, dot2_idx - 1]), float(cgd[dot2_idx, dot2_idx + 1])]
-
-        #     voltage1 += dot1_crosstalks[1] * gate_voltages[dot1_idx + 1]
-        #     voltage2 += (dot2_crosstalks[0] * gate_voltages[dot2_idx - 1] + dot2_crosstalks[1] * gate_voltages[dot2_idx + 1])
-
-        # elif gate1 == self.num_dots - 1:
-        #     dot1_crosstalks = [float(cgd[dot1_idx, dot1_idx - 1]), float(cgd[dot1_idx, dot1_idx + 1])]
-        #     dot2_crosstalks = [float(cgd[dot2_idx, dot2_idx - 1]), None]
-
-        #     voltage1 += (dot1_crosstalks[0] * gate_voltages[dot1_idx - 1] + dot1_crosstalks[1] * gate_voltages[dot1_idx + 1])
-        #     voltage2 += dot2_crosstalks[0] * gate_voltages[dot2_idx - 1]
-
-        # else:
-        #     dot1_crosstalks = [float(cgd[dot1_idx, dot1_idx - 1]), float(cgd[dot1_idx, dot1_idx + 1])]
-        #     dot2_crosstalks = [float(cgd[dot2_idx, dot2_idx - 1]), float(cgd[dot2_idx, dot2_idx + 1])]
-
-        #     voltage1 += (dot1_crosstalks[0] * gate_voltages[dot1_idx - 1] + dot1_crosstalks[1] * gate_voltages[dot1_idx + 1])
-        #     voltage2 += (dot2_crosstalks[0] * gate_voltages[dot2_idx - 1] + dot2_crosstalks[1] * gate_voltages[dot2_idx + 1])
-
 
         if not self.use_barriers:
             # assert barrier_voltages is None, "Barrier voltages provided but model is not configured for barriers"
@@ -174,18 +149,12 @@ class QarrayBaseClass:
             voltage2 + self.obs_voltage_min,
             voltage2 + self.obs_voltage_max,
             self.obs_image_size,
+            gate_voltages,
+            self.add_full_crosstalk
         )
 
         # Flatten the voltage grid to shape (obs_image_size^2, n_gates)
         vg_flat = vg.reshape(-1, vg.shape[-1])
-
-        # Add back the correct voltages for proper crosstalk effects
-        if self.add_full_crosstalk:
-            mask = np.ones(self.num_dots, dtype=bool)
-            mask[dot1_idx] = False
-            mask[dot2_idx] = False
-            gate_voltages_array = np.array(gate_voltages)
-            vg_flat[:, :self.num_dots][:, mask] += gate_voltages_array[mask]
 
         # Create barrier voltage array (same shape as flattened gate voltage array)
         vb = jnp.full((vg_flat.shape[0], self.num_barrier_voltages), jnp.array(barrier_voltages))
@@ -199,7 +168,7 @@ class QarrayBaseClass:
         return z
 
 
-    def _get_obs(self, gate_voltages, barrier_voltages=None):
+    def _get_obs(self, gate_voltages, barrier_voltages=None, sensor_voltage=None):
         """
         Helper method to get the current observation of the environment.
 
@@ -221,14 +190,14 @@ class QarrayBaseClass:
         for i, (gate1, gate2) in enumerate(zip(allgates[:-1], allgates[1:])):
 
             if self.peak_width_model is not None:
-                print(gate_voltages[i], gate_voltages[i+1])
-                print(gate_voltages)
+                #print(gate_voltages[i], gate_voltages[i+1])
+                #print(gate_voltages)
                 peak_width = self.peak_width_model.linearly_vary_peak_width(gate_voltages[i], gate_voltages[i+1])
                 self.model.coulomb_peak_width = peak_width
 
             voltage1 = float(gate_voltages[i])  # Use 0-based indexing for gate_voltages array
             voltage2 = float(gate_voltages[i + 1])  # Use 0-based indexing for gate_voltages array
-            z = self._get_charge_sensor_data(gate1, gate2, gate_voltages, barrier_voltages)
+            z = self._get_charge_sensor_data(gate1, gate2, gate_voltages, barrier_voltages, sensor_voltage)
 
             # Apply radial noise if enabled and ground truth is set
             if self.gate_ground_truth is not None:
@@ -1108,7 +1077,7 @@ class QarrayBaseClass:
         return vb_optimal
 
 
-    def calculate_ground_truth(self, debug=False):
+    def calculate_ground_truth_old(self, current_gate_voltages, current_barrier_voltages, debug=False):
         """
         Get the ground truth for the quantum dot array.
 
@@ -1160,6 +1129,19 @@ class QarrayBaseClass:
         # Calculate barrier voltage for each barrier using its own alpha value
         vb_optimal = np.array([-np.log(tc_ratio) / alpha_i for alpha_i in self.barrier_alpha])
 
+        # Convert virtual gate voltages to physical for Cbg calculation
+        # Cbg expects physical voltages, but current_gate_voltages are in virtual space
+        current_vgm = self.model.gate_voltage_composer.virtual_gate_matrix
+        plunger_offset = self.model.gate_voltage_composer.virtual_gate_origin
+
+        # Add sensor voltage (0) to match dimensions for transformation
+        current_gate_voltages_with_sensor = np.concatenate([current_gate_voltages, [0]])
+        current_gate_voltages_physical = current_vgm @ current_gate_voltages_with_sensor + plunger_offset
+
+        # Use physical voltages for gate contribution to barriers
+        gate_contribution = self.model.Cbg[:, :self.num_dots] @ current_gate_voltages_physical[:self.num_dots]
+        vb_optimal -= gate_contribution
+
         # calculate change in dot potential due to barriers
         dot_potential = cgd[: ndot + numsensor, -nbarrier:] @ vb_optimal
 
@@ -1169,20 +1151,213 @@ class QarrayBaseClass:
         sensor_optimal_physical = vg_optimal_physical[-numsensor:]
         plunger_optimal_physical = vg_optimal_physical[:-numsensor]
 
+        # RECALCULATE
+        # Assumes Vb = 0
+        vg_optimal_physical = self.model.optimal_Vg(self.optimal_VG_center)
+
+        # Recalculate barriers using optimal physical gate voltages
+        # (not the current gate voltages which were used above)
+        tc_ratio_final = float(self.optimal_tc) / self.barrier_tc_base
+        vb_base_final = np.array([-np.log(tc_ratio_final) / alpha_i for alpha_i in self.barrier_alpha])
+        gate_contribution_final = self.model.Cbg[:, :self.num_dots] @ vg_optimal_physical[:self.num_dots]
+        vb_optimal = vb_base_final - gate_contribution_final
+
         # Use current VGM instead of perfect VGM for plunger transformation
-        current_vgm = self.model.gate_voltage_composer.virtual_gate_matrix
-        plunger_offset = self.model.gate_voltage_composer.virtual_gate_origin[:ndot]
-        plunger_vgm = current_vgm[:ndot, :ndot]
-        plunger_optimal_virtual = np.linalg.inv(plunger_vgm) @ (plunger_optimal_physical - plunger_offset)
+        vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical - plunger_offset)
 
         if debug:
             print(f"Original Optimal VG: {self.model.optimal_Vg(self.optimal_VG_center)}")
-            print(f"Plunger optimal virtual: {plunger_optimal_virtual}")
+            print(f"VG optimal virtual: {vg_optimal_virtual[:-1]}")
             print(f"Sensor optimal physical: {sensor_optimal_physical}")
-            print(f"Plunger optimal physical: {plunger_optimal_physical}")
+            print(f"VG optimal physical: {vg_optimal_physical}")
             print(f"VB optimal: {vb_optimal}")
 
-        return plunger_optimal_virtual, vb_optimal, sensor_optimal_physical
+        return vg_optimal_virtual[:-1], vb_optimal, sensor_optimal_physical.item()
+
+
+
+    def calculate_ground_truth(self, current_gate_voltages, current_barrier_voltages, debug=False):
+        """
+        Get the ground truth for the quantum dot array.
+
+        Ground truth is calculated based on the CURRENT virtual gate matrix (VGM),
+        not the perfect/ideal VGM. This ensures the reward target reflects
+        what virtual voltages are needed given the current virtualization state.
+
+        The optimal physical voltages (the true target in physical space) remain
+        constant, but their representation in virtual space changes as the VGM
+        is updated.
+        """
+        if not self.use_barriers:
+            # calculates virtualised optimal gate voltages
+            vg_optimal_physical = self.model.optimal_Vg(self.optimal_VG_center)
+
+            # Use current VGM instead of perfect VGM
+            current_vgm = self.model.gate_voltage_composer.virtual_gate_matrix
+            plunger_offset = self.model.gate_voltage_composer.virtual_gate_origin
+            vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical - plunger_offset)
+            vg_optimal_virtual = vg_optimal_virtual[:-1]
+            return vg_optimal_virtual, None, None
+
+    
+        ndot = self.num_dots
+        nbarrier = self.num_barrier_voltages
+        nsensor = 1
+        cbg = self.model.Cbg
+        cgd = self.model.cgd_full
+        cgd_barriers = cgd[:ndot + nsensor, -nbarrier:]
+        cgd_gates_inv = np.linalg.inv(cgd[:ndot + nsensor, :ndot + nsensor])
+
+        current_vgm = self.model.gate_voltage_composer.virtual_gate_matrix
+        plunger_offset = self.model.gate_voltage_composer.virtual_gate_origin
+
+        if debug:
+            print(f"Cgd: {cgd}")
+
+        # Assumes Vb = 0
+        optimal_vg_center = self.model.optimal_Vg(self.optimal_VG_center) # contains the sensor dot at the end
+
+        # Assumes perfectly virtualised barriers (this is not the case but since ground truth for barriers is approximate we leave this)
+        tc_ratio = float(self.optimal_tc) / self.barrier_tc_base
+        vb_optimal_base = np.array([-np.log(tc_ratio) / alpha_i for alpha_i in self.barrier_alpha])
+
+
+        # 0. Solve with old method (matching working calculate_ground_truth)
+
+        # # Convert virtual gate voltages to physical for Cbg calculation
+        # current_gate_voltages_with_sensor = np.concatenate([current_gate_voltages, [0]])
+        # current_gate_voltages_physical = current_vgm @ current_gate_voltages_with_sensor + plunger_offset
+
+        # # Calculate barriers with gate contribution
+        # vb_optimal = vb_optimal_base
+        # gate_contribution = cbg[:, :ndot] @ current_gate_voltages_physical[:ndot]
+        # vb_optimal -= gate_contribution
+
+        # # Calculate change in dot potential due to barriers
+        # dot_potential = cgd[: ndot + nsensor, -nbarrier:] @ vb_optimal
+        # delta_vg = np.linalg.inv(cgd[: ndot + nsensor, : ndot + nsensor]) @ dot_potential
+        # vg_optimal_physical = optimal_vg_center - delta_vg
+        # sensor_optimal_physical = vg_optimal_physical[-nsensor:]
+
+        # # RECALCULATE - Assumes Vb = 0
+        # vg_optimal_physical = self.model.optimal_Vg(self.optimal_VG_center)
+
+        # # Recalculate barriers using optimal physical gate voltages
+        # vb_base_final = np.array([-np.log(tc_ratio) / alpha_i for alpha_i in self.barrier_alpha])
+        # gate_contribution_final = cbg[:, :ndot] @ vg_optimal_physical[:ndot]
+        # vb_optimal = vb_base_final - gate_contribution_final
+
+        # # Transform to virtual using full VGM and offset (not just plunger submatrix)
+        # vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical - plunger_offset)
+
+        # return vg_optimal_virtual[:-1], vb_optimal, sensor_optimal_physical.item()
+
+
+        # 1. Solve with vb_optimal
+        # current_gate_voltages_with_sensor = np.concatenate([current_gate_voltages, [0]])
+        # current_gate_voltages_physical = current_vgm @ current_gate_voltages_with_sensor + plunger_offset
+
+        # vb_optimal = vb_optimal_base
+        # gate_contribution = cbg[:, :ndot] @ current_gate_voltages_physical[:ndot]
+        # vb_optimal -= gate_contribution
+
+        # dot_potential = cgd_barriers @ vb_optimal
+        # vg_optimal_physical = optimal_vg_center - cgd_gates_inv @ dot_potential
+
+        # RECALCULATE - Assumes Vb = 0
+        vg_optimal_physical = self.model.optimal_Vg(self.optimal_VG_center)
+        # gate_contribution_final = cbg[:, :ndot] @ vg_optimal_physical[:ndot]
+        # vb_optimal = vb_optimal_base - gate_contribution_final
+        vb_optimal = vb_optimal_base - cbg @ vg_optimal_physical
+        # print(cgd[:ndot + nsensor, :ndot + nsensor] @ plunger_offset)
+        vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical - plunger_offset)
+
+        return vg_optimal_virtual[:-1], vb_optimal, vg_optimal_virtual[-1]
+
+
+
+        # 2. Solve self-consistent equations
+
+        # -------
+        # vb_optimal_physical = vb_optimal_base - cbg @ vg_optimal_physical
+        # dot_potential = cgd_barriers @ vb_optimal_physical
+        # vg_optimal_physical = optimal_vg_center - cgd_gates_inv @ dot_potential
+        # -------
+
+        # vb_optimal_physical = vb_optimal_base - cbg @ (
+        #     optimal_vg_center - cgd_gates_inv @ (cgd_barriers @ vb_optimal_physical)
+        # )
+
+        # vg_optimal_physical = optimal_vg_center - cgd_gates_inv @ (
+        #     cgd_barriers @ (vb_optimal_base - cbg @ vg_optimal_physical)
+        # )
+
+        # (I - cgd_gates_inv @ cgd_barriers @ cbg) @ vg_optimal_physical = optimal_vg_center - cgd_gates_inv @ cgd_barriers @ vb_optimal_base
+        A = np.eye(ndot + nsensor) - cgd_gates_inv @ cgd_barriers @ cbg
+        b = optimal_vg_center - cgd_gates_inv @ cgd_barriers @ vb_optimal_base
+        vg_optimal_physical = np.linalg.solve(A, b)
+        vb_optimal = vb_optimal_base - cbg @ vg_optimal_physical
+
+        # (I - cbg @ cgd_gates_inv @ cgd_barriers) @ vb = vb_base - cbg @ optimal_vg_center
+        # A = np.eye(nbarrier) - cbg @ cgd_gates_inv @ cgd_barriers
+        # b = vb_optimal_base - cbg @ optimal_vg_center
+        # vb_optimal = np.linalg.solve(A, b)
+        # dot_potential = cgd_barriers @ vb_optimal
+        # vg_optimal_physical = optimal_vg_center - cgd_gates_inv @ dot_potential
+
+        vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical - plunger_offset)
+
+        return vg_optimal_virtual[:-1], vb_optimal, vg_optimal_virtual[-1]
+
+
+
+
+        
+
+        # # Use physical voltages for gate contribution to barriers
+        # gate_contribution = self.model.Cbg[:, :self.num_dots] @ current_gate_voltages_physical[:self.num_dots]
+        # vb_optimal -= gate_contribution
+
+        # # calculate change in dot potential due to barriers
+        # dot_potential = cgd[: ndot + numsensor, -nbarrier:] @ vb_optimal
+
+        # delta_vg = np.linalg.inv(cgd[: ndot + numsensor, : ndot + numsensor]) @ dot_potential
+
+        # vg_optimal_physical -= delta_vg
+
+        current_gate_voltages_with_sensor = np.concatenate([current_gate_voltages, [0]]) # no crosstalk from sensor since already virtualised
+        current_gate_voltages_physical = (current_vgm @ current_gate_voltages_with_sensor + plunger_offset)[:-1]
+
+        # RECALCULATE
+        # Assumes Vb = 0
+        vg_optimal_physical = self.model.optimal_Vg(self.optimal_VG_center)
+
+        # Recalculate barriers using optimal physical gate voltages
+        # (not the current gate voltages which were used above)
+        tc_ratio_final = float(self.optimal_tc) / self.barrier_tc_base
+        vb_base_final = np.array([-np.log(tc_ratio_final) / alpha_i for alpha_i in self.barrier_alpha])
+        gate_contribution_final = self.model.Cbg[:, :self.num_dots] @ vg_optimal_physical[:self.num_dots]
+        vb_optimal = vb_base_final - gate_contribution_final
+
+        # Use current VGM instead of perfect VGM for plunger transformation
+        current_vgm = self.model.gate_voltage_composer.virtual_gate_matrix
+        plunger_offset = self.model.gate_voltage_composer.virtual_gate_origin
+
+        vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical - plunger_offset)
+        return vg_optimal_virtual[:-1], vb_optimal, sensor_optimal_physical.item()
+        
+        # plunger_offset = self.model.gate_voltage_composer.virtual_gate_origin[:ndot]
+        # plunger_vgm = current_vgm[:ndot, :ndot]
+        # plunger_optimal_virtual = np.linalg.inv(plunger_vgm) @ (plunger_optimal_physical - plunger_offset)
+
+        # if debug:
+        #     print(f"Original Optimal VG: {self.model.optimal_Vg(self.optimal_VG_center)}")
+        #     print(f"Plunger optimal virtual: {plunger_optimal_virtual}")
+        #     print(f"Sensor optimal physical: {sensor_optimal_physical}")
+        #     print(f"Plunger optimal physical: {plunger_optimal_physical}")
+        #     print(f"VB optimal: {vb_optimal}")
+
+        # return plunger_optimal_virtual, vb_optimal, sensor_optimal_physical
 
 
 if __name__ == "__main__":
@@ -1207,7 +1382,7 @@ if __name__ == "__main__":
 
     # experiment._reset_virtual_gate_matrix_to_perfect()
 
-    # experiment._get_obs([1, 2, 3, 4], [0] * (num_dots - 1))["image"][:, :, 0]
+    experiment._get_obs([1, 2, 3, 4], [0] * (num_dots - 1))["image"][:, :, 0]
     import sys
     sys.exit(0)
 
