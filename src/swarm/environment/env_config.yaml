@@ -13,7 +13,7 @@ simulator:
   
   delta_max: 5.0 #only used if use_deltas is true
 
-  constant_voltage_offset: {"min": -20, "max": 20}
+  constant_voltage_offset: {"min": -50, "max": 50}
   
   full_plunger_range_width: {"min": 80, "max": 100} #range in V of plungers
 
