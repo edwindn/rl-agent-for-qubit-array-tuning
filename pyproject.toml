@@ -7,7 +7,7 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
     # QArray
     "qarray==1.6.0",
-    "qarray-latched @ git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@fcc472276f27e7633bb3aafc6f0d6c92966875d7",
+    "qarray-latched @ git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@fd344d7a47d88444c7db658346cf59fc22af493a",
     # Core ML/RL - pinned to match working conda env
     "torch==2.8.0",
     "torchvision==0.23.0",

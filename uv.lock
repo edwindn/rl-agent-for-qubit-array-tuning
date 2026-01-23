@@ -1644,7 +1644,7 @@ wheels = [
 [[package]]
 name = "qarray-latched"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/b-vanstraaten/qarray-latched.git?rev=fcc472276f27e7633bb3aafc6f0d6c92966875d7#fcc472276f27e7633bb3aafc6f0d6c92966875d7" }
+source = { git = "ssh://git@github.com/b-vanstraaten/qarray-latched.git?rev=fd344d7a47d88444c7db658346cf59fc22af493a#fd344d7a47d88444c7db658346cf59fc22af493a" }
 dependencies = [
     { name = "jax" },
     { name = "jaxopt" },
@@ -2004,7 +2004,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pyyaml", specifier = "==6.0.2" },
     { name = "qarray", specifier = "==1.6.0" },
-    { name = "qarray-latched", git = "ssh://git@github.com/b-vanstraaten/qarray-latched.git?rev=fcc472276f27e7633bb3aafc6f0d6c92966875d7" },
+    { name = "qarray-latched", git = "ssh://git@github.com/b-vanstraaten/qarray-latched.git?rev=fd344d7a47d88444c7db658346cf59fc22af493a" },
     { name = "ray", extras = ["rllib"], specifier = "==2.49.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "scienceplots" },
@@ -2174,7 +2174,7 @@ dependencies = [
     { name = "setuptools", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
-    { url = "https://download.pytorch.org/whl/triton-3.4.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" },
+    { url = "https://download.pytorch.org/whl/triton-3.4.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e2b0afe420d202d96f50b847d744a487b780567975455e56f64b061152ee9554" },
 ]
 
 [[package]]
