@@ -1,5 +1,5 @@
 """
-Nelder-Mead optimization benchmark for quantum dot array tuning.
+L-BFGS-B optimization benchmark for quantum dot array tuning.
 
 Usage:
     python run.py --num_dots 2 --num_trials 10 --max_iter 500 --seed 42 --mode joint
@@ -26,16 +26,20 @@ def run_joint_optimization(
     env,
     x0: np.ndarray,
     max_iter: int,
-    tol: float = 1e-6,
+    ftol: float = 1e-6,
+    gtol: float = 1e-5,
+    maxcor: int = 10,
 ) -> dict:
     """
-    Run Nelder-Mead optimization on all voltages jointly.
+    Run L-BFGS-B optimization on all voltages jointly.
 
     Args:
         env: QuantumDeviceEnv instance
         x0: Initial voltage array [plungers, barriers]
         max_iter: Maximum iterations
-        tol: Convergence tolerance
+        ftol: Function value convergence tolerance
+        gtol: Gradient convergence tolerance
+        maxcor: Maximum number of variable metric corrections (memory size)
 
     Returns:
         dict with optimization results
@@ -60,14 +64,14 @@ def run_joint_optimization(
     result = minimize(
         objective,
         x0,
-        method='Nelder-Mead',
+        method='L-BFGS-B',
         bounds=bounds,
         callback=callback,
         options={
             'maxiter': max_iter,
-            'xatol': tol,
-            'fatol': tol,
-            'disp': False,
+            'ftol': ftol,
+            'gtol': gtol,
+            'maxcor': maxcor,
         }
     )
 
@@ -91,13 +95,12 @@ def run_sliding_window_optimization(
     cap_per_barrier: float = 4.0,
     threshold_per_plunger: float = 0.5,
     threshold_per_barrier: float = 1.0,
-    simplex_step_plunger: float = 35.0,
-    simplex_step_barrier: float = 4.0,
-    xatol: float = 0.1,
-    fatol: float = 0.1,
+    ftol: float = 1e-6,
+    gtol: float = 1e-5,
+    maxcor: int = 10,
 ) -> dict:
     """
-    Sliding window optimization.
+    Sliding window optimization using L-BFGS-B.
 
     Slides one dot at a time: (0,1), (1,2), (2,3), etc.
     Each window includes 2 adjacent plungers + the barrier between them.
@@ -106,16 +109,16 @@ def run_sliding_window_optimization(
     Args:
         env: QuantumDeviceEnv instance
         x0: Initial voltage array [plungers, barriers]
-        max_iter_per_set: Maximum Nelder-Mead iterations per window
+        max_iter_per_set: Maximum L-BFGS-B iterations per window
         max_sweeps: Maximum sweeps through all windows
+        max_scans: Maximum total scans/function evaluations
         cap_per_plunger: Cap in V^2 per plunger (default 5.0)
         cap_per_barrier: Cap in V^2 per barrier (default 4.0)
         threshold_per_plunger: Convergence threshold in V (L1) per plunger (default 0.5)
         threshold_per_barrier: Convergence threshold in V (L1) per barrier (default 1.0)
-        simplex_step_plunger: Initial simplex step size for plungers in V (default 20.0)
-        simplex_step_barrier: Initial simplex step size for barriers in V (default 4.0)
-        xatol: Nelder-Mead convergence tolerance on x (default 0.1)
-        fatol: Nelder-Mead convergence tolerance on f (default 0.1)
+        ftol: L-BFGS-B function value convergence tolerance
+        gtol: L-BFGS-B gradient convergence tolerance
+        maxcor: L-BFGS-B memory size (number of corrections)
 
     Note: Convergence threshold is computed as (sum of L1 thresholds)^2
 
@@ -211,33 +214,17 @@ def run_sliding_window_optimization(
             subset_bounds = [plunger_bounds[p] for p in plungers] + \
                             [barrier_bounds[b] for b in barriers]
 
-            # Build initial simplex: N+1 vertices for N variables
-            # Each vertex is x0 with one dimension stepped by the appropriate amount
-            n_vars = len(subset_x0)
-            step_sizes = [simplex_step_plunger] * len(p_idx) + [simplex_step_barrier] * len(b_idx)
-            initial_simplex = np.zeros((n_vars + 1, n_vars))
-            initial_simplex[0] = subset_x0
-            for i in range(n_vars):
-                initial_simplex[i + 1] = subset_x0.copy()
-                initial_simplex[i + 1, i] += step_sizes[i]
-                # Clip simplex vertices to bounds
-                initial_simplex[i + 1, i] = np.clip(
-                    initial_simplex[i + 1, i],
-                    subset_bounds[i][0],
-                    subset_bounds[i][1]
-                )
-
-            # Run Nelder-Mead with bounds
+            # Run L-BFGS-B with bounds
             result = minimize(
                 sub_objective,
                 subset_x0,
-                method='Nelder-Mead',
+                method='L-BFGS-B',
                 bounds=subset_bounds,
                 options={
                     'maxiter': max_iter_per_set,
-                    'xatol': xatol,
-                    'fatol': fatol,
-                    'initial_simplex': initial_simplex,
+                    'ftol': ftol,
+                    'gtol': gtol,
+                    'maxcor': maxcor,
                 },
             )
 
@@ -289,10 +276,9 @@ def run_single_trial(
     cap_per_barrier: float = 4.0,
     threshold_per_plunger: float = 0.5,
     threshold_per_barrier: float = 1.0,
-    simplex_step_plunger: float = 35.0,
-    simplex_step_barrier: float = 4.0,
-    xatol: float = 0.1,
-    fatol: float = 0.1,
+    ftol: float = 1e-6,
+    gtol: float = 1e-5,
+    maxcor: int = 10,
 ) -> TrialResult:
     """Run a single optimization trial."""
     rng = np.random.default_rng(seed)
@@ -302,7 +288,7 @@ def run_single_trial(
 
     # Run optimization
     if mode == "joint":
-        opt_result = run_joint_optimization(env, x0, max_iter)
+        opt_result = run_joint_optimization(env, x0, max_iter, ftol=ftol, gtol=gtol, maxcor=maxcor)
         # For joint mode: scans = ceil(num_plungers/2) * iterations
         num_pairs = math.ceil(env.num_plunger_voltages / 2)
         num_scans = num_pairs * opt_result["nit"]
@@ -316,10 +302,9 @@ def run_single_trial(
             cap_per_barrier=cap_per_barrier,
             threshold_per_plunger=threshold_per_plunger,
             threshold_per_barrier=threshold_per_barrier,
-            simplex_step_plunger=simplex_step_plunger,
-            simplex_step_barrier=simplex_step_barrier,
-            xatol=xatol,
-            fatol=fatol,
+            ftol=ftol,
+            gtol=gtol,
+            maxcor=maxcor,
         )
         # For pairwise mode: scans = function evaluations
         num_scans = opt_result["nfev"]
@@ -347,7 +332,7 @@ def run_single_trial(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Nelder-Mead benchmark for quantum dot tuning")
+    parser = argparse.ArgumentParser(description="L-BFGS-B benchmark for quantum dot tuning")
     parser.add_argument("--mode", choices=["joint", "pairwise"], default="pairwise", help="Optimization mode")
     parser.add_argument("--num_dots", type=int, default=2, help="Number of quantum dots")
     parser.add_argument("--num_trials", type=int, default=10, help="Number of trials to run")
@@ -362,16 +347,15 @@ def main():
     parser.add_argument("--cap_per_barrier", type=float, default=10.0, help="Cap in V^2 per barrier (pairwise mode)")
     parser.add_argument("--threshold_per_plunger", type=float, default=0.5, help="Convergence threshold in V (L1) per plunger (pairwise mode)")
     parser.add_argument("--threshold_per_barrier", type=float, default=1.0, help="Convergence threshold in V (L1) per barrier (pairwise mode)")
-    parser.add_argument("--simplex_step_plunger", type=float, default=35.0, help="Initial simplex step size for plungers in V (pairwise mode)")
-    parser.add_argument("--simplex_step_barrier", type=float, default=4.0, help="Initial simplex step size for barriers in V (pairwise mode)")
-    parser.add_argument("--xatol", type=float, default=0.1, help="Nelder-Mead convergence tolerance on x (pairwise mode)")
-    parser.add_argument("--fatol", type=float, default=0.1, help="Nelder-Mead convergence tolerance on f (pairwise mode)")
+    parser.add_argument("--ftol", type=float, default=1e-6, help="L-BFGS-B function value convergence tolerance")
+    parser.add_argument("--gtol", type=float, default=1e-5, help="L-BFGS-B gradient convergence tolerance")
+    parser.add_argument("--maxcor", type=int, default=10, help="L-BFGS-B memory size (number of corrections)")
     parser.add_argument("--output", type=str, default=None, help="Output file path")
     args = parser.parse_args()
 
     use_barriers = args.use_barriers and not args.no_barriers
 
-    print(f"Running Nelder-Mead benchmark")
+    print(f"Running L-BFGS-B benchmark")
     print(f"  Mode: {args.mode}")
     print(f"  Dots: {args.num_dots}, Barriers: {use_barriers}")
     print(f"  Trials: {args.num_trials}, Max iter: {args.max_iter}")
@@ -382,13 +366,12 @@ def main():
         print(f"  Max sweeps: {args.max_sweeps}")
         print(f"  Cap: {args.cap_per_plunger} V^2/plunger, {args.cap_per_barrier} V^2/barrier")
         print(f"  Convergence: {args.threshold_per_plunger} V/plunger, {args.threshold_per_barrier} V/barrier")
-        print(f"  Simplex step: {args.simplex_step_plunger}V plunger, {args.simplex_step_barrier}V barrier")
-        print(f"  Tolerances: xatol={args.xatol}, fatol={args.fatol}")
+    print(f"  L-BFGS-B: ftol={args.ftol}, gtol={args.gtol}, maxcor={args.maxcor}")
     print()
 
     # Initialize benchmark result
     result = BenchmarkResult(
-        method="nelder_mead",
+        method="lbfgs",
         mode=args.mode,
         num_dots=args.num_dots,
         use_barriers=use_barriers,
@@ -401,10 +384,6 @@ def main():
         cap_per_barrier=args.cap_per_barrier if args.mode == "pairwise" else None,
         threshold_per_plunger=args.threshold_per_plunger if args.mode == "pairwise" else None,
         threshold_per_barrier=args.threshold_per_barrier if args.mode == "pairwise" else None,
-        simplex_step_plunger=args.simplex_step_plunger if args.mode == "pairwise" else None,
-        simplex_step_barrier=args.simplex_step_barrier if args.mode == "pairwise" else None,
-        xatol=args.xatol if args.mode == "pairwise" else None,
-        fatol=args.fatol if args.mode == "pairwise" else None,
     )
 
     base_rng = np.random.default_rng(args.seed)
@@ -432,10 +411,9 @@ def main():
             cap_per_barrier=args.cap_per_barrier,
             threshold_per_plunger=args.threshold_per_plunger,
             threshold_per_barrier=args.threshold_per_barrier,
-            simplex_step_plunger=args.simplex_step_plunger,
-            simplex_step_barrier=args.simplex_step_barrier,
-            xatol=args.xatol,
-            fatol=args.fatol,
+            ftol=args.ftol,
+            gtol=args.gtol,
+            maxcor=args.maxcor,
         )
 
         result.trials.append(trial_result)

@@ -965,6 +965,45 @@ class QarrayBaseClass:
         assert isinstance(v0, np.ndarray) and len(v0) == self.num_dots + 1, f"Expected virtual gate origin to be array of length num_dots + 1"
         self.model.gate_voltage_composer.virtual_gate_origin = v0
 
+    def _set_vgm_for_target_effective_coupling(self, target_coupling_matrix: np.ndarray):
+        """
+        Set VGM to achieve specific effective cross-couplings in virtual space.
+
+        The effective capacitance in virtual space is: Cdd_inv @ Cgd @ VGM
+        This method computes VGM such that the effective coupling matches the target.
+
+        Args:
+            target_coupling_matrix: (num_dots, num_dots) matrix where
+                - diagonal = 1.0 (primary coupling preserved)
+                - off-diagonal[i,i+1] = desired effective coupling (can be negative)
+
+        Example:
+            # Create target with coupling of -0.3 between dots 0-1
+            target = np.eye(4)
+            target[0, 1] = target[1, 0] = -0.3
+            qarray._set_vgm_for_target_effective_coupling(target)
+        """
+        # Extend target matrix to full size (include sensor gate)
+        # Target matrix should have sensor row/column as identity (no coupling)
+        n_full = self.num_dots + 1
+        T_full = np.eye(n_full)
+        T_full[:self.num_dots, :self.num_dots] = target_coupling_matrix
+
+        # A = Cdd_inv @ Cgd (using full matrices that include sensor)
+        # This matches the approach in _reset_virtual_gate_matrix_to_perfect
+        if self.use_barriers:
+            cgd_gates = self.model.cgd_full[:, :self.model.n_gate]
+            A = self.model.cdd_inv_full @ cgd_gates
+        else:
+            # Use full matrices (includes sensor row/column)
+            A = self.model.cdd_inv_full @ self.model.cgd_full
+
+        # Solve for VGM: A @ VGM = T  =>  VGM = pinv(A) @ T
+        # Apply negative sign to match qarray convention
+        vgm = -np.linalg.pinv(A) @ T_full
+
+        self.model.gate_voltage_composer.virtual_gate_matrix = vgm
+
 
     def _render_frame(self, image, path="quantum_dot_plot_pv"):
         """
