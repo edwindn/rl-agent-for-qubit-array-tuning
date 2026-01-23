@@ -616,8 +616,12 @@ def train_func(config: dict):
     val_loader = prepare_data_loader(val_loader)
     
     # Create model and loss function
-    print("Creating model...")
-    model = create_model(mobilenet=config['mobilenet'])
+    print(f"Creating model with {config['backbone']} backbone...")
+    model = create_model(
+        output_size=2 if not config.get('disable_nearest_neighbours', False) else 3,
+        backbone=config['backbone'],
+        mobilenet=config['mobilenet']
+    )
     model = prepare_model(model)  # Ray Train preparation
     
     loss_fn = create_loss_function(
@@ -728,6 +732,8 @@ def main():
                        help='Disable wandb logging')
     parser.add_argument('--mobilenet', type=str, default='small', choices=['small', 'large'],
                        help='MobileNet architecture size (small or large)')
+    parser.add_argument('--backbone', type=str, default='mobilenet', choices=['mobilenet', 'impala'],
+                       help='CNN backbone: mobilenet (~2.5M params) or impala (~100K params)')
     parser.add_argument('--disable_nearest_neighbours', action='store_true',
                         help='Whether to only predict nearest-neighbour capacitances (disables)')
     
@@ -856,8 +862,12 @@ def main():
         )
         
         # Create model and loss function
-        print("Creating model...")
-        model = create_model(output_size = 2 if not args.disable_nearest_neighbours else 3, mobilenet=args.mobilenet)
+        print(f"Creating model with {args.backbone} backbone...")
+        model = create_model(
+            output_size=2 if not args.disable_nearest_neighbours else 3,
+            backbone=args.backbone,
+            mobilenet=args.mobilenet
+        )
         model = model.to(device)
         
         loss_fn = create_loss_function(

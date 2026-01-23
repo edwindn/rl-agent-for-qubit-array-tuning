@@ -50,9 +50,12 @@ reward:
 
 
 capacitance_model:
-  update_method: null  # Options: null (does not update vgm), "perfect", "fake", "ema", "bayesian", "kriging"
+  update_method: null  # Options: null, "perfect", "fake", "ema", "bayesian", "kriging", "kalman"
   nearest_neighbour: true # set to true if the ML model outputs two values per prediction (gate-dot RL and LR couplings in this order)
   # note that the perfect method will also remove any cross-talk with and between the barriers
+  # Kalman filter settings (only used when update_method: "kalman")
+  variance_threshold: 0.05  # Reject predictions with variance > this (std > 0.22)
+  process_noise: 0.0  # Set > 0 for time-varying capacitance
 
 init:
   debug: false

@@ -560,6 +560,25 @@ class QuantumDeviceEnv(gym.Env):
 
         update_method = self.config["capacitance_model"]["update_method"]
 
+        if update_method == "kalman":
+            # Kalman filter: values are deltas, use variance gating
+            # Note: negate predictions due to qarray sign convention
+            if self.capacitance_model["nearest_neighbour"]:
+                for i in range(self.num_dots - 1):
+                    ml_outputs = [
+                        (-float(values_np[i, 0]), float(log_vars_np[i, 0])),  # RL (negated)
+                        (-float(values_np[i, 1]), float(log_vars_np[i, 1])),  # LR (negated)
+                    ]
+                    self.capacitance_model["capacitance_predictor"].update_from_scan(
+                        left_dot=i, ml_outputs=ml_outputs
+                    )
+            else:
+                raise NotImplementedError("Kalman update only supports nearest-neighbour mode")
+
+            cgd_estimate = self.capacitance_model["capacitance_predictor"].get_full_matrix()
+            self.array._update_virtual_gate_matrix(cgd_estimate)
+            return
+
         if update_method == "ema":
             # EMA method: use ML predictions directly (not deltas)
             if self.capacitance_model["nearest_neighbour"]:
@@ -706,6 +725,16 @@ class QuantumDeviceEnv(gym.Env):
                 # Initialize EMA predictor
                 capacitance_predictor = EmaCapacitancePredictor(
                     n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
+                )
+            elif update_method == "kalman":
+                # Initialize Kalman filter with variance gating
+                from swarm.capacitance_model.KalmanUpdater import KalmanCapacitanceUpdater
+                capacitance_predictor = KalmanCapacitanceUpdater(
+                    n_dots=self.num_dots,
+                    prior_mean=0.0,
+                    prior_variance=0.5,
+                    variance_threshold=self.config["capacitance_model"].get("variance_threshold", 0.05),
+                    process_noise=self.config["capacitance_model"].get("process_noise", 0.0),
                 )
             else:
                 raise ValueError(f"Unknown update method: {update_method}")

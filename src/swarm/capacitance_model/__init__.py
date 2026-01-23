@@ -9,6 +9,7 @@ from .CapacitancePrediction import CapacitancePredictionModel, create_model, cre
 from .BayesianUpdater import BayesianCapacitancePredictor
 from .KrigingUpdater import KrigingCapacitancePredictor
 from .EmaUpdater import EmaCapacitancePredictor
+from .KalmanUpdater import KalmanCapacitanceUpdater
 
 __all__ = [
     'CapacitancePredictionModel',
@@ -16,5 +17,6 @@ __all__ = [
     'create_loss_function',
     'BayesianCapacitancePredictor',
     'KrigingCapacitancePredictor',
-    'EmaCapacitancePredictor'
+    'EmaCapacitancePredictor',
+    'KalmanCapacitanceUpdater',
 ]

@@ -5,6 +5,112 @@ import torchvision.models as models
 import torch.optim as optim
 
 
+# =============================================================================
+# IMPALA CNN Backbone (lightweight, ~100-200K params)
+# =============================================================================
+
+class ResNetBlock(nn.Module):
+    """
+    IMPALA residual block: y = x + Conv3x3(ReLU(Conv3x3(ReLU(x))))
+    """
+    def __init__(self, channels: int):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, x):
+        y = F.relu(x)
+        y = self.conv1(y)
+        y = F.relu(y)
+        y = self.conv2(y)
+        return x + y
+
+
+class IMPALABackbone(nn.Module):
+    """
+    IMPALA CNN encoder - lightweight backbone for capacitance prediction.
+
+    Architecture: Conv -> MaxPool -> ResBlocks -> ReLU (repeated per stage)
+    Default: 16->32->32 channels with 2 ResBlocks per stage (~100-200K params)
+    """
+
+    def __init__(self, in_channels: int = 1, channels: list = None, num_res_blocks: int = 2):
+        super().__init__()
+
+        if channels is None:
+            channels = [16, 32, 32]  # Default IMPALA channel progression
+
+        self.channels = channels
+        self.num_res_blocks = num_res_blocks
+
+        layers = []
+        prev_channels = in_channels
+
+        for i, out_channels in enumerate(channels):
+            # Conv layer
+            layers.append(nn.Conv2d(prev_channels, out_channels, kernel_size=3, stride=1, padding=1))
+            # MaxPool for downsampling (stride 2)
+            layers.append(nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+            # ResNet blocks
+            for _ in range(num_res_blocks):
+                layers.append(ResNetBlock(out_channels))
+            # ReLU after blocks
+            layers.append(nn.ReLU())
+            prev_channels = out_channels
+
+        # Adaptive pooling to fixed size
+        layers.append(nn.AdaptiveAvgPool2d((4, 4)))
+        layers.append(nn.Flatten())
+
+        self.cnn = nn.Sequential(*layers)
+        self.feature_dim = channels[-1] * 4 * 4  # After adaptive pooling
+
+    def forward(self, x):
+        return self.cnn(x)
+
+
+class IMPALACapacitanceModel(nn.Module):
+    """
+    IMPALA-based model for capacitance prediction with uncertainty estimation.
+    Much lighter than MobileNet (~100-200K params vs ~2.5M).
+    """
+
+    def __init__(self, output_size: int = 3, channels: list = None, num_res_blocks: int = 2):
+        super().__init__()
+
+        self.backbone = IMPALABackbone(in_channels=1, channels=channels, num_res_blocks=num_res_blocks)
+        feature_dim = self.backbone.feature_dim
+        self.output_size = output_size
+
+        # Value head for capacitance predictions
+        self.value_head = nn.Sequential(
+            nn.Linear(feature_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, output_size),
+        )
+
+        # Confidence head for uncertainty estimation (log variance)
+        self.confidence_head = nn.Sequential(
+            nn.Linear(feature_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, output_size),
+        )
+
+    def forward(self, x):
+        features = self.backbone(x)
+        values = self.value_head(features)
+        log_vars = self.confidence_head(features)
+        return values, log_vars
+
+
 class CapacitancePredictionModel(nn.Module):
     """
     ResNet18-based model for capacitance prediction with uncertainty estimation.
@@ -148,9 +254,21 @@ class CapacitanceLoss(nn.Module):
         return total_loss, mse_loss, nll_loss, log_vars, squared_errors
 
 
-def create_model(output_size, mobilenet="small"):
-    """Factory function to create the model"""
-    return CapacitancePredictionModel(output_size, mobilenet=mobilenet)
+def create_model(output_size, backbone="mobilenet", mobilenet="small", impala_channels=None, num_res_blocks=2):
+    """
+    Factory function to create the model.
+
+    Args:
+        output_size: Number of output values to predict
+        backbone: "mobilenet" or "impala"
+        mobilenet: "small" or "large" (only used if backbone="mobilenet")
+        impala_channels: Channel list for IMPALA (default [16, 32, 32])
+        num_res_blocks: Number of ResNet blocks per stage for IMPALA (default 2)
+    """
+    if backbone == "impala":
+        return IMPALACapacitanceModel(output_size, channels=impala_channels, num_res_blocks=num_res_blocks)
+    else:
+        return CapacitancePredictionModel(output_size, mobilenet=mobilenet)
 
 
 def create_loss_function(mse_weight=1.0, nll_weight=0.1):
