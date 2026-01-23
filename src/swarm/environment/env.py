@@ -179,23 +179,14 @@ class QuantumDeviceEnv(gym.Env):
         )
 
         # Add the random offset to shift the voltage space
+        # we do not shift the sensor dot voltage
         self.array._update_virtual_gate_origin(np.concatenate([self.constant_voltage_offset, [0]]))
 
-        plunger_ground_truth, barrier_ground_truth, _ = self.array.calculate_ground_truth()
-
-        if barrier_ground_truth is None:
-            assert not self.use_barriers, "Expected array for barrier_ground_truth, got None"
-            barrier_ground_truth = np.zeros(self.num_barrier_voltages, dtype=np.float32)
-        else:
-            barrer_ground_truth = np.array(barrier_ground_truth).flatten().astype(np.float32)
-
-        plunger_ground_truth = np.array(plunger_ground_truth).flatten().astype(np.float32)
-
-        assert len(plunger_ground_truth) == self.num_plunger_voltages, f"Expected plunger ground truth to be of length {self.num_plunger_voltages}, got {len(plunger_ground_truth)}"
-        assert len(barrier_ground_truth) == self.num_barrier_voltages, f"Expected plunger ground truth to be of length {self.num_barrier_voltages}, got {len(barrier_ground_truth)}"
-
-        # Set ground truth on array for radial noise
-        self.array.gate_ground_truth = plunger_ground_truth
+        # calculate approximate values to get the window size
+        plunger_ground_truth, barrier_ground_truth, sensor_ground_truth = self._calculate_ground_truth(
+            self.constant_voltage_offset,
+            np.zeros(self.num_barrier_voltages)
+        )
 
         self._init_voltage_ranges(
             plunger_ground_truth,
@@ -203,13 +194,17 @@ class QuantumDeviceEnv(gym.Env):
         )
 
         plungers, barriers = self._starting_voltages()
-        #note this overrides the ideal ground truth calculated for zero charge occupation
-        if self.use_barriers:
-            barrier_ground_truth = self.array.calculate_barrier_ground_truth(plungers)
+
+        # recalculate based on the true values
+        plunger_ground_truth, barrier_ground_truth, sensor_ground_truth = self._calculate_ground_truth(
+            plungers,
+            barriers
+        )
 
         self.device_state = {
             "gate_ground_truth": plunger_ground_truth,
             "barrier_ground_truth": barrier_ground_truth,
+            "sensor_ground_truth": sensor_ground_truth,
             "current_gate_voltages": plungers,
             "current_barrier_voltages": barriers,
             "virtual_gate_matrix": self.array.model.gate_voltage_composer.virtual_gate_matrix,
@@ -220,6 +215,7 @@ class QuantumDeviceEnv(gym.Env):
         raw_observation = self.array._get_obs(
             self.device_state["current_gate_voltages"],
             self.device_state["current_barrier_voltages"],
+            self.device_state["sensor_ground_truth"]
         )
 
         observation = self._normalise_obs(raw_observation)
@@ -268,9 +264,7 @@ class QuantumDeviceEnv(gym.Env):
 
         self.device_state["current_gate_voltages"] = gate_voltages
         self.device_state["current_barrier_voltages"] = barrier_voltages
-
-        if self.use_barriers:
-            self.device_state["barrier_ground_truth"] = self.array.calculate_barrier_ground_truth(gate_voltages)
+        optimal_sensor_voltage = self.device_state["sensor_ground_truth"]
 
         reward = self._get_reward()
 
@@ -283,14 +277,22 @@ class QuantumDeviceEnv(gym.Env):
         if skip_obs:
             observation = None
         else:
-            raw_observation = self.array._get_obs(gate_voltages, barrier_voltages)
+            raw_observation = self.array._get_obs(gate_voltages, barrier_voltages, optimal_sensor_voltage)
             observation = self._normalise_obs(raw_observation)
 
             self._update_virtual_gate_matrix(observation)
             self.device_state["virtual_gate_matrix"] = (
                 self.array.model.gate_voltage_composer.virtual_gate_matrix
             )
-            self._recalculate_ground_truth()
+
+            plunger_ground_truth, barrier_ground_truth, sensor_ground_truth = self._calculate_ground_truth(
+                gate_voltages,
+                barrier_voltages
+            )
+
+            self.device_state["gate_ground_truth"] = plunger_ground_truth
+            self.device_state["barrier_ground_truth"] = barrier_ground_truth
+            self.device_state["sensor_ground_truth"] = sensor_ground_truth
 
         info = self._get_info()
 
@@ -303,24 +305,36 @@ class QuantumDeviceEnv(gym.Env):
         )
 
 
-    def _recalculate_ground_truth(self):
+    def _calculate_ground_truth(self, current_plunger_voltages, current_barrier_voltages):
         """
-        Recalculate ground truth based on current VGM.
+        Calculate ground truth based on current VGM.
 
         This should be called after any VGM update to ensure the reward target
         reflects the current virtualization state. The optimal physical voltages
         (true target) remain constant, but their representation in virtual space
         changes as the VGM is updated.
         """
-        plunger_ground_truth, barrier_ground_truth, _ = self.array.calculate_ground_truth()
+
+        plunger_ground_truth, barrier_ground_truth, sensor_ground_truth = self.array.calculate_ground_truth(
+            current_plunger_voltages,
+            current_barrier_voltages
+        )
+
+        assert len(plunger_ground_truth) == self.num_plunger_voltages, f"Expected plunger ground truth to be of length {self.num_plunger_voltages}, got {len(plunger_ground_truth)}"
+        if barrier_ground_truth is not None:
+            assert len(barrier_ground_truth) == self.num_barrier_voltages, f"Expected barrier ground truth to be of length {self.num_barrier_voltages}, got {len(barrier_ground_truth)}"
+
+        assert isinstance(sensor_ground_truth, float), f"Sensor ground truth should be a singular value, got {sensor_ground_truth}"
+
         plunger_ground_truth = np.array(plunger_ground_truth).flatten().astype(np.float32)
 
-        self.device_state["gate_ground_truth"] = plunger_ground_truth
-        self.array.gate_ground_truth = plunger_ground_truth
+        self.array.gate_ground_truth = plunger_ground_truth #used to set radial noise
 
-        if self.use_barriers and barrier_ground_truth is not None:
+        if self.use_barriers:
+            assert barrier_ground_truth is not None, "barrier ground truth required for using barriers"
             barrier_ground_truth = np.array(barrier_ground_truth).flatten().astype(np.float32)
-            self.device_state["barrier_ground_truth"] = barrier_ground_truth
+
+        return plunger_ground_truth, barrier_ground_truth, sensor_ground_truth
 
 
     def _get_reward(self):
