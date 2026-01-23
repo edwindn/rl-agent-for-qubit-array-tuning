@@ -58,10 +58,6 @@ def test_random_origin():
         # Get sensor ground truth
         sensor_ground_truth = env.device_state["sensor_ground_truth"]
 
-        # Get other gates (gates 2 onward)
-        gate_voltages = env.device_state["current_gate_voltages"]
-        other_gates = gate_voltages[2:]
-
         # Override observation voltage range to -10 to +10
         env.array.obs_voltage_min = -10.0
         env.array.obs_voltage_max = 10.0
@@ -70,8 +66,8 @@ def test_random_origin():
         v0_center_gt = gate_ground_truth[0]
         v1_center_gt = gate_ground_truth[1]
 
-        # Prepare gate voltages centered at ground truth
-        gate_voltages_scan = np.array([v0_center_gt, v1_center_gt] + list(other_gates))
+        # Use ALL gate ground truths (not just gates 0-1)
+        gate_voltages_scan = gate_ground_truth.copy()
 
         # Normalize gate voltages to [-1, 1] for step action
         # The step method expects normalized actions in [-1, 1]
