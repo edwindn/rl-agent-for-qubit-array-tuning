@@ -337,12 +337,18 @@ def plot_convergence_curves(
         ax.fill_between(target_scans, q25, q75, alpha=0.2, color=color)
         plotted.append((method, num_dots, arr.shape[0]))
 
-    # Threshold line - use a representative max_distance for display
-    # (actual normalization is per-method, so this is approximate)
-    max_distance_approx = get_plunger_voltage_range()
-    normalized_threshold = 1.0 - (threshold / max_distance_approx)
-    ax.axhline(y=normalized_threshold, color='red', linestyle='--', alpha=0.7,
-               linewidth=2, label=f'Threshold ({threshold}V)')
+    # Threshold line - compute based on actual num_dots being plotted
+    # Success requires each gate within threshold, so total threshold distance = num_gates * threshold
+    if num_dots_filter and plotted:
+        plunger_range, barrier_range = get_voltage_ranges_from_config()
+        num_plungers = num_dots_filter
+        num_barriers = num_dots_filter - 1  # assuming use_barriers=True
+        num_gates = num_plungers + num_barriers
+        max_distance = plunger_range * num_plungers + barrier_range * num_barriers
+        threshold_total_distance = num_gates * threshold
+        normalized_threshold = 1.0 - (threshold_total_distance / max_distance)
+        ax.axhline(y=normalized_threshold, color='red', linestyle='--', alpha=0.7,
+                   linewidth=2, label=f'Threshold ({threshold}V/gate)')
 
     ax.set_xlabel("Scan Number", fontsize=12)
     ax.set_ylabel("Convergence Score (0=worst, 1=converged)", fontsize=12)
