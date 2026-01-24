@@ -33,13 +33,6 @@ if modalignore_path.exists():
 # Only rebuilds if requirements.txt changes
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")  # Required for pip_install_private_repos
-    .pip_install_private_repos(
-        # Install qarray-latched from private repo at specific commit
-        "github.com/b-vanstraaten/qarray-latched@fcc472276f27e7633bb3aafc6f0d6c92966875d7",
-        git_user="rahul-marchand",  # Your GitHub username
-        secrets=[modal.Secret.from_name("github-private")],
-    )
     .pip_install("uv")
     .add_local_dir(
         str(project_root),
@@ -48,12 +41,12 @@ image = (
         copy=True
     )
     .run_commands(
-        "cd /root/quantum-rl-project && uv sync --frozen",
-        "cp -r /usr/local/lib/python3.11/site-packages/qarray_latched* /root/quantum-rl-project/.venv/lib/python3.11/site-packages/"
+        "cd /root/quantum-rl-project && uv sync --frozen"
     )
     .add_local_file(
-        str(project_root / "src/swarm/capacitance_model/weights/best_model_barriers.pth"),
-        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/weights/best_model_barriers.pth"
+        str(project_root / "src/swarm/capacitance_model/symmetric_weights/mobilenet_barrier_weights.pth"),
+        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/symmetric_weights/mobilenet_barrier_weights.pth"
+        #remote_path="/root/quantum-rl-project/src/impala_barrier_weights.pth"
     )
 )
 
@@ -67,9 +60,7 @@ app = modal.App("quantum-rl-training")
     # Note: H100, A100, L40S, L4, T4 support up to 8 GPUs; A10 supports up to 4
     image=image,
     timeout=86400,  # 24 hour timeout
-    secrets=[
-        modal.Secret.from_name("wandb-secret"),  # W&B logging
-    ],
+    secrets=[modal.Secret.from_name("wandb-secret")],
 )
 def train():
     """Run the training script inside Modal container."""
