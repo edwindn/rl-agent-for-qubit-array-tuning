@@ -903,19 +903,15 @@ class QarrayBaseClass:
             else:
                 cbd_values = np.zeros_like(cbd_from_model)
 
-            # Extend cgd_estimate to include barrier capacitances: (n_dots, n_dots) -> (n_dots, n_dots + n_barriers)
-            cgd_estimate_with_barriers = np.hstack([cgd_estimate, cbd_values])
-
-            # Add sensor gate column of zeros: (n_dots, n_dots + n_barriers) -> (n_dots, n_dots + n_barriers + 1)
             sensor_gate_column = np.zeros((self.num_dots, 1))
-            cgd_estimate_with_sensor_gate = np.hstack([cgd_estimate_with_barriers, sensor_gate_column])
+            cgd_estimate_with_sensor = np.hstack([cgd_estimate, sensor_gate_column])
+            cgd_estimate_with_barriers = np.hstack([cgd_estimate_with_sensor, cbd_values])
 
-            # Add sensor row of zeros: (n_dots, n_dots + n_barriers + 1) -> (n_dots + 1, n_dots + n_barriers + 1)
             sensor_row = np.zeros((1, self.num_dots + self.num_barrier_voltages + 1))
-            cgd_estimate_full = np.vstack([cgd_estimate_with_sensor_gate, sensor_row])
+            cgd_estimate_full = np.vstack([cgd_estimate_with_barriers, sensor_row])
 
             # Set sensor coupling to one
-            cgd_estimate_full[-1, -1] = 1.0
+            cgd_estimate_full[-1, self.num_dots] = 1.0
 
             # Qarray uses negative matrix convention - we pass in a positive matrix
             cgd_estimate_full = -cgd_estimate_full

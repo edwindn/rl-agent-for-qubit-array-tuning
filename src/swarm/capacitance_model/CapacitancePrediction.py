@@ -75,7 +75,7 @@ class IMPALACapacitanceModel(nn.Module):
     Much lighter than MobileNet (~100-200K params vs ~2.5M).
     """
 
-    def __init__(self, output_size: int = 3, channels: list = None, num_res_blocks: int = 2):
+    def __init__(self, output_size: int, channels: list = None, num_res_blocks: int = 2):
         super().__init__()
 
         self.backbone = IMPALABackbone(in_channels=1, channels=channels, num_res_blocks=num_res_blocks)

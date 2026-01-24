@@ -56,6 +56,9 @@ class QuantumDeviceEnv(gym.Env):
         self.num_barrier_voltages = self.num_dots - 1
         self.resolution = self.config['simulator']['resolution']
 
+        if not self.use_barriers:
+            raise NotImplementedError("env.py only supports barrier mode for now")
+
         #voltage params, set by _voltage_init() called in reset()
         self.plunger_max = None
         self.plunger_min = None
@@ -668,7 +671,7 @@ class QuantumDeviceEnv(gym.Env):
                 swarm_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             
             if self.use_barriers:
-                weights_path = os.path.join(swarm_dir, "capacitance_model", "weights", "best_model_barriers.pth")
+                weights_path = os.path.join(swarm_dir, "capacitance_model", "symmetric_weights", "mobilenet_barrier_weights.pth")
             else:
                 weights_path = os.path.join(swarm_dir, "capacitance_model", "weights", "best_model_no_barriers.pth")
 
@@ -731,7 +734,7 @@ class QuantumDeviceEnv(gym.Env):
                 from swarm.capacitance_model.KalmanUpdater import KalmanCapacitanceUpdater
                 capacitance_predictor = KalmanCapacitanceUpdater(
                     n_dots=self.num_dots,
-                    prior_mean=0.0,
+                    prior_mean=0.3,
                     prior_variance=0.5,
                     variance_threshold=self.config["capacitance_model"].get("variance_threshold", 0.05),
                     process_noise=self.config["capacitance_model"].get("process_noise", 0.0),
