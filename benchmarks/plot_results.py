@@ -219,12 +219,18 @@ def plot_convergence_curves(
         print(f"No results found in {results_dir}")
         return
 
-    # Filter by num_dots if specified
+    # Filter by num_dots if specified, otherwise auto-detect if all results have same num_dots
     if num_dots_filter:
         results = [r for r in results if r.get("num_dots") == num_dots_filter]
         if not results:
             print(f"No results found for {num_dots_filter} dots")
             return
+    else:
+        # Auto-detect: if all results have the same num_dots, use that
+        all_num_dots = set(r.get("num_dots") for r in results)
+        if len(all_num_dots) == 1:
+            num_dots_filter = all_num_dots.pop()
+            print(f"Auto-detected num_dots={num_dots_filter}")
 
     fig, ax = plt.subplots(figsize=(12, 7))
     colors = {'nelder_mead': 'C0', 'lbfgs': 'C1', 'random': 'C2', 'bayesian': 'C3', 'dreamerv3': 'C4'}
