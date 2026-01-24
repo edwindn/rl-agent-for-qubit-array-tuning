@@ -30,7 +30,7 @@ class ObjectiveConfig:
         noise_seed: Random seed for reproducible noise (default None = random)
     """
     noise_std: float = 0.1
-    noise_seed: Optional[int] = None
+    noise_seed: Optional[int] = 42
 
 
 @dataclass

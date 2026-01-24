@@ -327,6 +327,20 @@ def parse_arguments():
         help='GPU device ID to use for training (e.g., 0, 1, 2)'
     )
 
+    parser.add_argument(
+        '--num-dots',
+        type=int,
+        default=None,
+        help='Number of quantum dots (overrides env_config.yaml)'
+    )
+
+    parser.add_argument(
+        '--use-barriers',
+        type=lambda x: x.lower() == 'true',
+        default=True,
+        help='Enable barrier voltage control (default: True)'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -338,7 +352,7 @@ def parse_arguments():
 
 
 
-def create_env(config=None, env_config_path="env_config.yaml"):
+def create_env(config=None, env_config_path="env_config.yaml", num_dots_override=None, use_barriers=True):
     """Create single-agent quantum environment with JAX safety."""
     import os
     import jax
@@ -357,8 +371,7 @@ def create_env(config=None, env_config_path="env_config.yaml"):
 
     from utils.env_wrapper import SingleAgentEnvWrapper
 
-    # Wrap base env in single-agent wrapper (barriers always zero)
-    return SingleAgentEnvWrapper(training=True, config_path=env_config_path)
+    return SingleAgentEnvWrapper(training=True, config_path=env_config_path, num_dots_override=num_dots_override, use_barriers=use_barriers)
 
 
 def create_env_to_module_connector(env, spaces, device, use):
@@ -446,6 +459,10 @@ def main():
         os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
         print(f"Using GPU {args.gpu}")
 
+    # Log --num-dots override
+    if args.num_dots is not None:
+        print(f"Overriding num_dots to: {args.num_dots}")
+
     # Distance data disabled for single-agent benchmark
     distance_data_dir = None
     if config['defaults'].get('save_distance_data', False):
@@ -481,12 +498,16 @@ def main():
 
     try:
         # Use checkpoint's env_config if available, otherwise use default
+        # Also pass num_dots override and use_barriers if specified
+        num_dots_override = args.num_dots
+        use_barriers = args.use_barriers
         if env_config_path is not None:
-            create_env_fn = partial(create_env, env_config_path=env_config_path)
+            create_env_fn = partial(create_env, env_config_path=env_config_path, num_dots_override=num_dots_override, use_barriers=use_barriers)
         else:
-            create_env_fn = create_env
+            create_env_fn = partial(create_env, num_dots_override=num_dots_override, use_barriers=use_barriers)
         register_env("qarray_singleagent_env", create_env_fn)
         env_instance = create_env_fn()
+        print(f"\nBarrier control: {'enabled' if use_barriers else 'disabled'}")
 
         # Extract environment config and merge with training config for wandb
         if use_wandb:
@@ -627,7 +648,7 @@ def main():
                 learner_connector=learner_connector,
                 **train_config,
             )
-            .resources(num_gpus=config['resources']['num_gpus'])
+            # .resources() removed - let Ray auto-allocate based on per-worker GPU settings
             # .callbacks([custom_callbacks] if use_wandb else [])
         )
 

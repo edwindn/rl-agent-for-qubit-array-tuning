@@ -32,6 +32,7 @@ sys.path.insert(0, str(benchmarks_dir))
 from env_init import create_benchmark_env, get_voltage_ranges, random_initial_voltages
 from objective import create_objective_fn, get_distances, check_success
 from utils import BenchmarkResult, TrialResult, save_results, print_summary
+from convergence_tracker import ConvergenceTracker
 
 
 # -----------------------------------------------------------------------------
@@ -162,6 +163,7 @@ def run_joint_optimization(
     env,
     x0: np.ndarray,
     max_iter: int,
+    tracker: ConvergenceTracker,
     n_initial_points: int = 20,
     batch_size: int = 1,
     seed: int = None,
@@ -174,6 +176,7 @@ def run_joint_optimization(
         env: QuantumDeviceEnv instance
         x0: Initial voltage array [plungers, barriers] (for reference)
         max_iter: Maximum iterations (function evaluations)
+        tracker: ConvergenceTracker for recording distances
         n_initial_points: Number of Sobol initial points before GP modeling
         batch_size: Number of candidates per acquisition (1=sequential, >1=batch q-EI)
         seed: Random seed for reproducibility
@@ -187,6 +190,7 @@ def run_joint_optimization(
 
     objective = create_objective_fn(env)
     ranges = get_voltage_ranges(env)
+    num_pairs = env.num_plunger_voltages - 1  # num_dots - 1
 
     # Build bounds tensor
     lower = []
@@ -203,12 +207,18 @@ def run_joint_optimization(
     # Generate initial points via Sobol
     train_X = generate_initial_points(bounds, n_initial_points, seed=seed)
 
-    # Evaluate initial points
-    train_Y = torch.tensor(
-        [[objective(x.cpu().numpy())] for x in train_X],
-        dtype=torch.float64,
-        device=device,
-    )
+    # Evaluate initial points and record distances
+    train_Y_list = []
+    for i, x in enumerate(train_X):
+        x_np = x.cpu().numpy()
+        y = objective(x_np)
+        train_Y_list.append([y])
+        # Record distances for convergence tracking
+        plunger_dists, barrier_dists = get_distances(x_np, env)
+        current_scan = num_pairs * (i + 1)
+        tracker.record(plunger_dists, barrier_dists, current_scan)
+
+    train_Y = torch.tensor(train_Y_list, dtype=torch.float64, device=device)
 
     history = train_Y.squeeze(-1).tolist()
 
@@ -235,12 +245,18 @@ def run_joint_optimization(
             raw_samples=512,
         )
 
-        # Evaluate candidates
-        new_Y = torch.tensor(
-            [[objective(c.cpu().numpy())] for c in candidates],
-            dtype=torch.float64,
-            device=device,
-        )
+        # Evaluate candidates and record distances
+        new_Y_list = []
+        for c in candidates:
+            c_np = c.cpu().numpy()
+            y = objective(c_np)
+            new_Y_list.append([y])
+            # Record distances for convergence tracking
+            plunger_dists, barrier_dists = get_distances(c_np, env)
+            current_scan = num_pairs * (len(history) + len(new_Y_list))
+            tracker.record(plunger_dists, barrier_dists, current_scan)
+
+        new_Y = torch.tensor(new_Y_list, dtype=torch.float64, device=device)
 
         # Update training data
         train_X = torch.cat([train_X, candidates], dim=0)
@@ -273,6 +289,7 @@ def run_joint_optimization(
 def run_sliding_window_optimization(
     env,
     x0: np.ndarray,
+    tracker: ConvergenceTracker,
     n_calls_per_window: int = 30,
     n_initial_points: int = 20,
     max_sweeps: int = 50,
@@ -344,10 +361,13 @@ def run_sliding_window_optimization(
     total_nfev = 0
     all_below_threshold = False
 
-    # Record initial global objective
+    # Record initial state (scan 0)
     initial_global_obj = objective(current_voltages)
     global_history.append(initial_global_obj)
     voltage_history.append(current_voltages.tolist())
+    # Record initial distances for convergence tracking
+    plunger_dists, barrier_dists = get_distances(current_voltages, env)
+    tracker.record(plunger_dists, barrier_dists, scan_number=0)
 
     rng = np.random.default_rng(seed)
 
@@ -405,6 +425,11 @@ def run_sliding_window_optimization(
                     global_obj = objective(full_v)
                     global_history.append(global_obj)
                     voltage_history.append(full_v.tolist())
+
+                    # Record distances for convergence tracking
+                    # In pairwise mode, each function eval = 1 scan
+                    plunger_dists, barrier_dists = get_distances(full_v, env)
+                    tracker.record(plunger_dists, barrier_dists, scan_number=len(global_history))
 
                     return local_obj
 
@@ -552,6 +577,7 @@ def run_single_trial(
     max_iter: int,
     mode: str,
     success_threshold: float,
+    tracker: ConvergenceTracker,
     n_initial_points: int = 20,
     max_sweeps: int = 50,
     max_scans: int = None,
@@ -569,22 +595,29 @@ def run_single_trial(
     # Generate random initial voltages
     x0 = random_initial_voltages(env, rng)
 
+    # Reset tracker for this trial
+    tracker.reset()
+
     # Run optimization
     if mode == "joint":
         opt_result = run_joint_optimization(
             env,
             x0,
             max_iter,
+            tracker=tracker,
             n_initial_points=n_initial_points,
             batch_size=batch_size,
             seed=seed,
             device=device,
         )
-        num_scans = opt_result["nfev"]
+        # For joint mode: scans = (num_dots - 1) * num_evaluations
+        num_pairs = env.num_plunger_voltages - 1
+        num_scans = num_pairs * opt_result["nfev"]
     else:
         opt_result = run_sliding_window_optimization(
             env,
             x0,
+            tracker=tracker,
             n_calls_per_window=n_calls_per_window,
             n_initial_points=n_initial_points,
             max_sweeps=max_sweeps,
@@ -597,6 +630,7 @@ def run_single_trial(
             seed=seed,
             device=device,
         )
+        # For pairwise mode: scans = function evaluations
         num_scans = opt_result["nfev"]
 
     # Get final distances
@@ -618,6 +652,12 @@ def run_single_trial(
         convergence_history=opt_result["history"],
         global_objective_history=opt_result.get("global_history", opt_result["history"]),
         voltage_history=opt_result.get("voltage_history", []),
+        # New distance tracking fields
+        scan_numbers=tracker.scan_numbers.copy(),
+        plunger_distance_history=tracker.plunger_distance_history.copy(),
+        barrier_distance_history=tracker.barrier_distance_history.copy(),
+        plunger_range=tracker.plunger_range,
+        barrier_range=tracker.barrier_range,
     )
 
 
@@ -747,6 +787,14 @@ def main():
 
     base_rng = np.random.default_rng(args.seed)
 
+    # Create tracker once (will be reused across trials)
+    temp_env = create_benchmark_env(
+        num_dots=args.num_dots,
+        use_barriers=use_barriers,
+        seed=0,
+    )
+    tracker = ConvergenceTracker.from_env(temp_env)
+
     for trial_idx in range(args.num_trials):
         trial_seed = base_rng.integers(0, 2**31)
 
@@ -764,6 +812,7 @@ def main():
             max_iter=args.max_iter,
             mode=args.mode,
             success_threshold=args.threshold,
+            tracker=tracker,
             n_initial_points=args.n_initial,
             max_sweeps=args.max_sweeps,
             max_scans=args.max_scans,

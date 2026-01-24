@@ -8,6 +8,7 @@ across all benchmark methods (Nelder-Mead, Bayesian, RL, etc.)
 import sys
 from pathlib import Path
 import numpy as np
+import yaml
 
 # Add src directory to path for imports
 project_root = Path(__file__).parent.parent
@@ -15,6 +16,46 @@ src_dir = project_root / "src"
 sys.path.insert(0, str(src_dir))
 
 from swarm.environment.env import QuantumDeviceEnv
+
+# =============================================================================
+# Centralized config path - change this to use a different env config
+# =============================================================================
+ENV_CONFIG_PATH = src_dir / "swarm" / "environment" / "env_config.yaml"
+
+
+def load_env_config() -> dict:
+    """
+    Load the environment config from the centralized path.
+
+    Returns:
+        Config dictionary
+
+    Raises:
+        FileNotFoundError: If config file not found
+    """
+    if not ENV_CONFIG_PATH.exists():
+        raise FileNotFoundError(f"Environment config not found: {ENV_CONFIG_PATH}")
+
+    with open(ENV_CONFIG_PATH) as f:
+        return yaml.safe_load(f)
+
+
+def get_voltage_ranges_from_config() -> tuple:
+    """
+    Get plunger and barrier voltage ranges from config.
+
+    Returns:
+        (plunger_range, barrier_range) - midpoint of min/max config values
+    """
+    config = load_env_config()
+
+    plunger_cfg = config["simulator"]["full_plunger_range_width"]
+    barrier_cfg = config["simulator"]["full_barrier_range_width"]
+
+    plunger_range = (plunger_cfg["min"] + plunger_cfg["max"]) / 2
+    barrier_range = (barrier_cfg["min"] + barrier_cfg["max"]) / 2
+
+    return plunger_range, barrier_range
 
 
 def create_benchmark_env(
@@ -35,15 +76,13 @@ def create_benchmark_env(
     Returns:
         QuantumDeviceEnv instance with ground truth accessible via device_state
     """
-    # Create env - it reads num_dots and use_barriers from config
-    # We need to temporarily modify the config
-    env = QuantumDeviceEnv(training=True)
-
-    # Override the config-loaded values
-    env.num_dots = num_dots
-    env.use_barriers = use_barriers
-    env.num_plunger_voltages = num_dots
-    env.num_barrier_voltages = num_dots - 1
+    # Create env using centralized config path
+    env = QuantumDeviceEnv(
+        training=True,
+        config_path=str(ENV_CONFIG_PATH),
+        num_dots=num_dots,
+        use_barriers=use_barriers,
+    )
 
     # Update capacitance model setting
     if capacitance_model is not None:
@@ -51,7 +90,7 @@ def create_benchmark_env(
     else:
         env.capacitance_model = None  # No updates, use initial
 
-    # Reset with seed (this will create the array with correct num_dots)
+    # Reset with seed
     obs, info = env.reset(seed=int(seed) if seed is not None else None)
 
     # Initialize voltage ranges with seeded rng for reproducibility

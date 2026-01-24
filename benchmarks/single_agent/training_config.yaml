@@ -6,6 +6,7 @@ defaults:
   num_iterations: 200        # Total training iterations
   delete_old_checkpoints: true # Delete local checkpoints as we go along
   save_distance_data: false  # Disable distance data for single-agent benchmark
+  use_barriers: true         # Enable barrier voltage control (gates + barriers)
 
 # Weights & Biases configuration
 wandb:
@@ -22,14 +23,36 @@ ray:
   # Runtime environment settings
   runtime_env:
     excludes:
-      - "dataset"
-      - "dataset_v1"
+      # Large directories (must exclude to stay under 512MB)
+      - ".venv"
+      - ".git"
+      - "logs"
       - "wandb"
+      - "checkpoints"
+      - "__pycache__"
+      - "symmetric_dataset_150k"
+      - "benchmarks/.venv"
+      - "benchmarks/results"
+      - "benchmarks/dreamer"
+      - "benchmarks/wandb"
+      - "benchmarks/checkpoints"
+      - "benchmarks/logs"
+      - "src/swarm/capacitance_model/weights"
+      - "src/swarm/capacitance_model/symmetric_weights"
+      - "src/swarm/qarray_dataset"
+      - "src/swarm/artifacts"
+      - "src/swarm/wandb"
+      - "src/swarm/training/wandb"
+      - "src/swarm/training/checkpoints"
+      # File patterns
+      - "*.pth"
+      - "*.pt"
+      - "*.ckpt"
+      - "*.log"
+      - "*dataset*"
+      - "weights*"
       - "outputs"
       - "test_outputs"
-      - "checkpoints"
-      - "weights*"
-      - "*dataset*"
 
     env_vars:
       JAX_PLATFORM_NAME: "cuda"

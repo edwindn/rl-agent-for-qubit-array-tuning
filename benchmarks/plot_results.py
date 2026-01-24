@@ -3,7 +3,7 @@ Plot benchmark comparison across methods and array sizes.
 
 Two main plots:
 1. Scans to threshold vs num_dots (for converged trials)
-2. Convergence curves: best mean abs distance vs scans
+2. Convergence curves: normalized convergence score vs scans
 
 Usage:
     uv run python plot_results.py --dir results/final_results
@@ -18,6 +18,8 @@ from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 
+from env_init import get_voltage_ranges_from_config
+
 
 def cumulative_min(data: np.ndarray) -> np.ndarray:
     """Compute cumulative minimum (best seen so far)."""
@@ -26,6 +28,17 @@ def cumulative_min(data: np.ndarray) -> np.ndarray:
     for i in range(1, len(data)):
         result[i] = min(result[i - 1], data[i])
     return result
+
+
+def get_plunger_voltage_range() -> float:
+    """
+    Load the plunger voltage range from centralized env config.
+
+    Returns the midpoint of the full_plunger_range_width config,
+    which represents the maximum possible distance from ground truth.
+    """
+    plunger_range, _ = get_voltage_ranges_from_config()
+    return plunger_range
 
 
 def load_all_results(results_dir: Path) -> list:
@@ -159,6 +172,26 @@ def plot_scans_to_threshold(results_dir: Path, output_path: Path = None, thresho
                 print(f"  {num_dots} dots: no trials converged")
 
 
+def interpolate_to_scans(scan_numbers: list, values: list, target_scans: np.ndarray) -> np.ndarray:
+    """
+    Interpolate values at given scan_numbers to target_scans grid.
+
+    Uses linear interpolation between recorded points.
+    Extends last value for scans beyond the recorded range.
+    """
+    if not scan_numbers or not values:
+        return np.full(len(target_scans), np.nan)
+
+    scan_numbers = np.array(scan_numbers)
+    values = np.array(values)
+
+    # Handle case where data starts after target_scans[0]
+    # Fill with first value for early scans
+    result = np.interp(target_scans, scan_numbers, values)
+
+    return result
+
+
 def plot_convergence_curves(
     results_dir: Path,
     output_path: Path = None,
@@ -167,10 +200,19 @@ def plot_convergence_curves(
     threshold: float = 0.5,
 ):
     """
-    Plot 2: X = scans, Y = best mean abs distance to ground truth.
+    Plot 2: X = scans, Y = normalized convergence score.
 
     Shows convergence curves for all methods, optionally filtered by num_dots.
     Uses cumulative minimum (best seen so far) with median + IQR.
+
+    Y-axis normalized using:
+    - max_distance = (plunger_range * num_plungers) + (barrier_range * num_barriers)
+    - 0 = max distance (worst)
+    - 1 = zero distance (converged)
+
+    Uses new distance tracking fields (scan_numbers, plunger_distance_history,
+    barrier_distance_history) with interpolation for consistent x-axis.
+    Falls back to legacy global_objective_history if new fields not available.
     """
     results = load_all_results(results_dir)
     if not results:
@@ -185,73 +227,135 @@ def plot_convergence_curves(
             return
 
     fig, ax = plt.subplots(figsize=(12, 7))
-    colors = {'nelder_mead': 'C0', 'lbfgs': 'C1', 'random': 'C2', 'bayesian': 'C3'}
+    colors = {'nelder_mead': 'C0', 'lbfgs': 'C1', 'random': 'C2', 'bayesian': 'C3', 'dreamerv3': 'C4'}
 
     plotted = []
+    target_scans = np.arange(max_scans + 1)  # Common x-axis grid
 
     for result in sorted(results, key=lambda r: (r["method"], r.get("num_dots", 0))):
         method = result["method"]
         num_dots = result.get("num_dots", 2)
         use_barriers = result.get("use_barriers", True)
-        num_gates = num_dots + (num_dots - 1 if use_barriers else 0)
+        num_plungers = num_dots
+        num_barriers = num_dots - 1 if use_barriers else 0
 
-        # Get histories
-        histories = [t.get("global_objective_history", []) for t in result.get("trials", [])]
-        histories = [h for h in histories if h]
-
-        if not histories:
-            print(f"Skipping {method} {num_dots}d: no history data")
+        trials = result.get("trials", [])
+        if not trials:
+            print(f"Skipping {method} {num_dots}d: no trials")
             continue
 
-        # Pad to max_scans length (so all methods extend to same x-axis)
-        max_len = max_scans if max_scans else max(len(h) for h in histories)
+        # Check if new distance fields are available
+        first_trial = trials[0]
+        has_new_fields = (
+            "plunger_distance_history" in first_trial
+            and "barrier_distance_history" in first_trial
+            and "plunger_range" in first_trial
+            and "barrier_range" in first_trial
+        )
 
-        padded = []
-        for h in histories:
-            if len(h) >= max_len:
-                padded.append(h[:max_len])
-            else:
-                padded.append(h + [h[-1]] * (max_len - len(h)))
+        if has_new_fields:
+            # Use new distance tracking fields
+            plunger_range = first_trial["plunger_range"]
+            barrier_range = first_trial["barrier_range"]
+            max_distance = plunger_range * num_plungers + barrier_range * num_barriers
 
-        arr = np.array(padded)
+            print(f"{method} {num_dots}d: Using new distance fields")
+            print(f"  plunger_range={plunger_range}V, barrier_range={barrier_range}V")
+            print(f"  max_distance={max_distance:.1f}V ({num_plungers} plungers, {num_barriers} barriers)")
 
-        # Convert to mean absolute distance
-        arr = np.sqrt(np.abs(arr)) / np.sqrt(num_gates)
+            interpolated_scores = []
+            for trial in trials:
+                scan_nums = trial.get("scan_numbers", [])
+                plunger_dists = trial.get("plunger_distance_history", [])
+                barrier_dists = trial.get("barrier_distance_history", [])
 
-        # Compute cumulative minimum for each trial
-        for j in range(arr.shape[0]):
-            arr[j] = cumulative_min(arr[j])
+                if not scan_nums or not plunger_dists:
+                    continue
 
+                # Total distance at each recorded point
+                total_dists = [p + b for p, b in zip(plunger_dists, barrier_dists)]
+
+                # Interpolate to target scans
+                interp_dists = interpolate_to_scans(scan_nums, total_dists, target_scans)
+
+                # Compute cumulative minimum (best seen so far)
+                interp_dists = cumulative_min(interp_dists)
+
+                # Normalize: 0 = max_distance (worst), 1 = 0 (converged)
+                scores = 1.0 - (interp_dists / max_distance)
+                scores = np.clip(scores, 0, 1)
+                interpolated_scores.append(scores)
+
+            if not interpolated_scores:
+                print(f"Skipping {method} {num_dots}d: no valid distance data")
+                continue
+
+            arr = np.array(interpolated_scores)
+
+        else:
+            # Fall back to legacy global_objective_history
+            print(f"{method} {num_dots}d: Using legacy global_objective_history (old format)")
+            max_distance = get_plunger_voltage_range()
+
+            histories = [t.get("global_objective_history", []) for t in trials]
+            histories = [h for h in histories if h]
+
+            if not histories:
+                print(f"Skipping {method} {num_dots}d: no history data")
+                continue
+
+            # Pad to max_scans length
+            padded = []
+            for h in histories:
+                if len(h) >= max_scans:
+                    padded.append(h[:max_scans + 1])
+                else:
+                    padded.append(h + [h[-1]] * (max_scans + 1 - len(h)))
+
+            arr = np.array(padded)
+
+            # Convert objective to approximate distance
+            arr = np.sqrt(np.abs(arr)) / np.sqrt(num_plungers)
+
+            # Compute cumulative minimum for each trial
+            for j in range(arr.shape[0]):
+                arr[j] = cumulative_min(arr[j])
+
+            # Normalize
+            arr = 1.0 - (arr / max_distance)
+            arr = np.clip(arr, 0, 1)
+
+        # Compute statistics across trials
         median = np.median(arr, axis=0)
         q25 = np.percentile(arr, 25, axis=0)
         q75 = np.percentile(arr, 75, axis=0)
-        scans = np.arange(len(median))
 
         label = f"{method}" if num_dots_filter else f"{method} ({num_dots}d)"
         color = colors.get(method, f'C{len(plotted)}')
 
-        ax.plot(scans, median, color=color, linewidth=2, label=label)
-        ax.fill_between(scans, q25, q75, alpha=0.2, color=color)
-        plotted.append((method, num_dots, len(histories)))
+        ax.plot(target_scans, median, color=color, linewidth=2, label=label)
+        ax.fill_between(target_scans, q25, q75, alpha=0.2, color=color)
+        plotted.append((method, num_dots, arr.shape[0]))
 
-    # Threshold line
-    ax.axhline(y=threshold, color='red', linestyle='--', alpha=0.7,
+    # Threshold line - use a representative max_distance for display
+    # (actual normalization is per-method, so this is approximate)
+    max_distance_approx = get_plunger_voltage_range()
+    normalized_threshold = 1.0 - (threshold / max_distance_approx)
+    ax.axhline(y=normalized_threshold, color='red', linestyle='--', alpha=0.7,
                linewidth=2, label=f'Threshold ({threshold}V)')
 
-    ax.set_xlabel("Scan Step", fontsize=12)
-    ax.set_ylabel("Best Mean Abs Distance to Optimal (V)", fontsize=12)
+    ax.set_xlabel("Scan Number", fontsize=12)
+    ax.set_ylabel("Convergence Score (0=worst, 1=converged)", fontsize=12)
 
     title = "Convergence Comparison"
     if num_dots_filter:
         title += f" - {num_dots_filter} Dots"
     ax.set_title(title, fontsize=14)
 
-    ax.legend(loc="upper right")
+    ax.legend(loc="lower right")
     ax.grid(True, alpha=0.3)
     ax.set_xlim(0, max_scans)
-
-    # Set reasonable y-axis limit
-    ax.set_ylim(0, min(30, ax.get_ylim()[1]))
+    ax.set_ylim(0, 1.05)
 
     plt.tight_layout()
 

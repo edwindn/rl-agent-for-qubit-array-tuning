@@ -26,6 +26,13 @@ class TrialResult:
     global_objective_history: List[float] = field(default_factory=list)  # Global objective at each func eval
     voltage_history: List[List[float]] = field(default_factory=list)  # Voltages at each func eval (optional)
 
+    # Separate distance tracking for proper normalization
+    scan_numbers: List[int] = field(default_factory=list)  # scan number for each distance record
+    plunger_distance_history: List[float] = field(default_factory=list)  # sum(|plunger_i - optimal|) at each step
+    barrier_distance_history: List[float] = field(default_factory=list)  # sum(|barrier_i - optimal|) at each step
+    plunger_range: float = 0.0  # from config, for normalization
+    barrier_range: float = 0.0  # from config, for normalization
+
 
 @dataclass
 class BenchmarkResult:

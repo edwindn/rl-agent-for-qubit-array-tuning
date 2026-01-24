@@ -40,6 +40,7 @@ from env_init import create_benchmark_env, get_ground_truth
 from objective import get_distances, check_success
 from utils import BenchmarkResult, TrialResult, save_results, print_summary
 from wrapper import make_dreamer_env
+from convergence_tracker import ConvergenceTracker
 
 
 def load_agent_from_checkpoint(checkpoint_path: str, env):
@@ -94,7 +95,8 @@ def load_agent_from_checkpoint(checkpoint_path: str, env):
     ))
 
     # Load checkpoint using elements.Checkpoint
-    ckpt_dir = Path(checkpoint_path) / 'ckpt'
+    # Use absolute path - elements' custom pathlib doesn't handle relative paths well
+    ckpt_dir = (Path(checkpoint_path) / 'ckpt').resolve()
     if ckpt_dir.exists():
         cp = elements.Checkpoint(ckpt_dir)
         cp.agent = agent
@@ -114,6 +116,7 @@ def run_single_trial(
     trial_idx: int,
     seed: int,
     success_threshold: float,
+    tracker: ConvergenceTracker,
 ) -> TrialResult:
     """
     Evaluate trained DreamerV3 agent on a single trial.
@@ -126,6 +129,7 @@ def run_single_trial(
         trial_idx: Trial index
         seed: Random seed for this trial
         success_threshold: Distance threshold for success
+        tracker: ConvergenceTracker for recording distances
 
     Returns:
         TrialResult with trial metrics
@@ -168,6 +172,9 @@ def run_single_trial(
     global_objective_history = []
     step_count = 0
 
+    # Reset tracker for this trial
+    tracker.reset()
+
     for step_idx in range(max_steps):
         # Get action from policy (returns: carry, acts, outs)
         state, act, _ = agent.policy(state, obs, mode='eval')
@@ -196,6 +203,10 @@ def run_single_trial(
             plunger_dists, barrier_dists = get_distances(voltages, benchmark_env)
             global_obj = np.sum(plunger_dists**2) + np.sum(barrier_dists**2)
             global_objective_history.append(float(global_obj))
+
+            # Record distances for convergence tracking
+            # In RL mode, each step = 1 scan
+            tracker.record(plunger_dists, barrier_dists, scan_number=step_count)
         except:
             voltage_history.append([])
             global_objective_history.append(float('inf'))
@@ -235,6 +246,12 @@ def run_single_trial(
         convergence_history=reward_history,
         global_objective_history=global_objective_history,
         voltage_history=voltage_history,
+        # New distance tracking fields
+        scan_numbers=tracker.scan_numbers.copy(),
+        plunger_distance_history=tracker.plunger_distance_history.copy(),
+        barrier_distance_history=tracker.barrier_distance_history.copy(),
+        plunger_range=tracker.plunger_range,
+        barrier_range=tracker.barrier_range,
     )
 
 
@@ -293,6 +310,15 @@ def main():
     # Run trials
     base_rng = np.random.default_rng(args.seed)
 
+    # Create tracker once (will be reused across trials)
+    temp_env = create_benchmark_env(
+        num_dots=args.num_dots,
+        use_barriers=args.use_barriers,
+        seed=0,
+    )
+    tracker = ConvergenceTracker.from_env(temp_env)
+    temp_env.close()
+
     for trial_idx in range(args.num_trials):
         trial_seed = int(base_rng.integers(0, 2**31))
 
@@ -306,6 +332,7 @@ def main():
             trial_idx=trial_idx,
             seed=trial_seed,
             success_threshold=args.threshold,
+            tracker=tracker,
         )
 
         result.trials.append(trial_result)

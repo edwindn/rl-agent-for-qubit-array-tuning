@@ -1,12 +1,12 @@
 """
 Single-agent environment wrapper for quantum device tuning.
 
-This wrapper modifies the action space to only accept gate voltages,
-automatically setting barrier voltages to zero for benchmarking purposes.
+This wrapper provides a simplified interface for RL training.
+Supports optional barrier voltage control (enabled by default).
 
 Observation format matches swarm's multi-agent wrapper for encoder compatibility:
 - 'image': The full multi-channel CSD image (H, W, num_dots-1)
-- 'voltage': Concatenated gate and barrier voltages
+- 'voltage': Concatenated gate and barrier voltages (when use_barriers=True)
 """
 
 import sys
@@ -28,31 +28,35 @@ class SingleAgentEnvWrapper(gym.Env):
     """
     Wrapper for QuantumDeviceEnv that simplifies to single-agent control.
 
-    - Action space: Only gate voltages (barriers are always set to zero)
+    - Action space: Gate voltages + barrier voltages (when use_barriers=True)
     - Observation space: Dict with 'image' and 'voltage' keys (matches swarm encoder interface)
-    - Rewards: Combined gate rewards (sum)
+    - Rewards: Combined gate + barrier rewards (sum)
     """
 
-    def __init__(self, training=True, config_path="env_config.yaml"):
+    def __init__(self, training=True, config_path="env_config.yaml", num_dots_override=None, use_barriers=True):
         """
         Initialize single-agent wrapper.
 
         Args:
             training: Whether in training mode
             config_path: Path to environment config yaml file
+            num_dots_override: If provided, overrides num_dots from config
+            use_barriers: Whether to include barrier voltages in action/observation space
         """
         super().__init__()
-        self.base_env = QuantumDeviceEnv(training=training, config_path=config_path)
+        self.base_env = QuantumDeviceEnv(training=training, config_path=config_path, num_dots=num_dots_override)
 
+        self.use_barriers = use_barriers
         self.num_gates = self.base_env.num_dots
         self.num_barriers = self.base_env.num_dots - 1
         self.num_channels = self.num_gates - 1  # N-1 CSD scans
+        self.num_actions = self.num_gates + (self.num_barriers if use_barriers else 0)
 
-        # Simplified action space: only gate voltages
+        # Action space: gate voltages + barrier voltages (when enabled)
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(self.num_gates,),
+            shape=(self.num_actions,),
             dtype=np.float32,
         )
 
@@ -63,7 +67,7 @@ class SingleAgentEnvWrapper(gym.Env):
             'voltage': spaces.Box(
                 low=-1.0,
                 high=1.0,
-                shape=(self.num_gates,),  # Only gate voltages (barriers always zero)
+                shape=(self.num_actions,),  # Gates + barriers when use_barriers=True
                 dtype=np.float32,
             ),
         })
@@ -78,9 +82,12 @@ class SingleAgentEnvWrapper(gym.Env):
         Returns:
             Dict with 'image' and 'voltage' keys
         """
+        voltages = [base_obs['obs_gate_voltages']]
+        if self.use_barriers:
+            voltages.append(base_obs['obs_barrier_voltages'])
         return {
             'image': base_obs['image'].astype(np.float32),
-            'voltage': base_obs['obs_gate_voltages'].astype(np.float32),
+            'voltage': np.concatenate(voltages).astype(np.float32),
         }
 
     def reset(self, *, seed=None, options=None):
@@ -95,10 +102,10 @@ class SingleAgentEnvWrapper(gym.Env):
 
     def step(self, action):
         """
-        Step environment with gate-only actions.
+        Step environment with gate (and optionally barrier) actions.
 
         Args:
-            action: Array of gate voltages (num_gates,)
+            action: Array of voltages (num_gates,) or (num_gates + num_barriers,)
 
         Returns:
             Tuple of (observation, reward, terminated, truncated, info)
@@ -106,15 +113,22 @@ class SingleAgentEnvWrapper(gym.Env):
         # Convert action to expected format
         action = np.array(action).flatten().astype(np.float32)
 
-        if len(action) != self.num_gates:
+        if len(action) != self.num_actions:
             raise ValueError(
-                f"Expected {self.num_gates} gate voltages, got {len(action)}"
+                f"Expected {self.num_actions} actions, got {len(action)}"
             )
 
-        # Create full action dict with barriers set to zero
+        # Split action into gate and barrier components
+        if self.use_barriers:
+            gate_action = action[:self.num_gates]
+            barrier_action = action[self.num_gates:]
+        else:
+            gate_action = action
+            barrier_action = np.zeros(self.num_barriers, dtype=np.float32)
+
         full_action = {
-            "action_gate_voltages": action,
-            "action_barrier_voltages": np.zeros(self.num_barriers, dtype=np.float32),
+            "action_gate_voltages": gate_action,
+            "action_barrier_voltages": barrier_action,
         }
 
         # Step base environment
@@ -123,9 +137,10 @@ class SingleAgentEnvWrapper(gym.Env):
         # Convert observation to swarm-compatible format
         obs = self._convert_observation(base_obs)
 
-        # Combine gate rewards (sum of all gate rewards)
+        # Combine gate and barrier rewards
         gate_rewards = rewards.get("gates", np.zeros(self.num_gates))
-        combined_reward = float(np.sum(gate_rewards))
+        barrier_rewards = rewards.get("barriers", np.zeros(self.num_barriers)) if self.use_barriers else 0
+        combined_reward = float(np.sum(gate_rewards) + np.sum(barrier_rewards))
 
         return obs, combined_reward, terminated, truncated, info
 
@@ -138,33 +153,35 @@ if __name__ == "__main__":
     """Test the single-agent wrapper."""
     print("=== Testing Single-Agent Quantum Wrapper ===")
 
-    try:
-        wrapper = SingleAgentEnvWrapper(training=True)
-        print(" Created single-agent wrapper")
+    for use_barriers in [True, False]:
+        print(f"\n--- Testing with use_barriers={use_barriers} ---")
+        try:
+            wrapper = SingleAgentEnvWrapper(training=True, use_barriers=use_barriers)
+            print(f"Created single-agent wrapper (use_barriers={use_barriers})")
 
-        print(f"\nAction space: {wrapper.action_space}")
-        print(f"Observation space: {wrapper.observation_space}")
+            print(f"\nAction space: {wrapper.action_space}")
+            print(f"Observation space: {wrapper.observation_space}")
 
-        # Test reset
-        obs, info = wrapper.reset()
-        print(f" Reset successful")
-        print(f"  Observation keys: {list(obs.keys())}")
-        print(f"  Image shape: {obs['image'].shape}")
-        print(f"  Voltage shape: {obs['voltage'].shape}")
+            # Test reset
+            obs, info = wrapper.reset()
+            print("Reset successful")
+            print(f"  Observation keys: {list(obs.keys())}")
+            print(f"  Image shape: {obs['image'].shape}")
+            print(f"  Voltage shape: {obs['voltage'].shape}")
 
-        # Test step with random action
-        action = wrapper.action_space.sample()
-        print(f"\nSampled action shape: {action.shape}")
+            # Test step with random action
+            action = wrapper.action_space.sample()
+            print(f"\nSampled action shape: {action.shape}")
 
-        obs, reward, terminated, truncated, info = wrapper.step(action)
-        print(f" Step successful")
-        print(f"  Combined reward: {reward}")
-        print(f"  Terminated: {terminated}, Truncated: {truncated}")
+            obs, reward, terminated, truncated, info = wrapper.step(action)
+            print("Step successful")
+            print(f"  Combined reward: {reward}")
+            print(f"  Terminated: {terminated}, Truncated: {truncated}")
 
-        wrapper.close()
-        print("\n All tests passed!")
+            wrapper.close()
+            print(f"\nAll tests passed for use_barriers={use_barriers}!")
 
-    except Exception as e:
-        print(f" Test failed: {e}")
-        import traceback
-        traceback.print_exc()
+        except Exception as e:
+            print(f"Test failed: {e}")
+            import traceback
+            traceback.print_exc()

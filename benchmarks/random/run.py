@@ -12,14 +12,16 @@ sys.path.insert(0, str(benchmarks_dir))
 from env_init import create_benchmark_env, get_voltage_ranges
 from objective import create_objective_fn, get_distances, check_success
 from utils import BenchmarkResult, TrialResult, save_results, print_summary
+from convergence_tracker import ConvergenceTracker
 
 
 def run_single_trial(
     env,
     trial_idx: int,
     seed: int,
-    max_samples: int,
+    max_scans: int,
     success_threshold: float,
+    tracker: ConvergenceTracker,
     batch_size: int = 1000,
 ) -> TrialResult:
     """Run a single random sampling trial with batched evaluation."""
@@ -29,6 +31,7 @@ def run_single_trial(
 
     num_plungers = env.num_plunger_voltages
     num_barriers = env.num_barrier_voltages
+    num_pairs = num_plungers - 1  # num_dots - 1, for scan counting
 
     # Get optimal voltages for vectorized success check
     from objective import PhysicalObjective
@@ -38,14 +41,17 @@ def run_single_trial(
     opt_plungers, opt_barriers = phys_obj.get_optimal_voltages(ref)
     optimal = np.concatenate([opt_plungers, opt_barriers])
 
+    # Reset tracker for this trial
+    tracker.reset()
+
     global_history = []
     success = False
-    final_sample = max_samples
+    final_sample = max_scans
     voltages = None
 
     samples_done = 0
-    while samples_done < max_samples:
-        current_batch = min(batch_size, max_samples - samples_done)
+    while samples_done < max_scans:
+        current_batch = min(batch_size, max_scans - samples_done)
 
         # Batch sample random voltages
         plunger_v = rng.uniform(
@@ -66,6 +72,11 @@ def run_single_trial(
             obj_val = objective(voltages)
             global_history.append(obj_val)
 
+            # Record distances for convergence tracking
+            plunger_dists, barrier_dists = get_distances(voltages, env)
+            current_scan = num_pairs * (samples_done + i + 1)
+            tracker.record(plunger_dists, barrier_dists, current_scan)
+
             # Vectorized success check: all voltages within threshold
             if np.all(np.abs(voltages - optimal) <= success_threshold):
                 success = True
@@ -79,26 +90,35 @@ def run_single_trial(
     # Get final distances
     plunger_dists, barrier_dists = get_distances(voltages, env)
 
+    # num_scans = num_pairs * num_samples (each sample evaluates all pairs)
+    num_scans = num_pairs * final_sample
+
     return TrialResult(
         trial_idx=trial_idx,
         seed=seed,
         success=success,
         num_iterations=final_sample,
         num_function_evals=final_sample,
-        num_scans=final_sample,
+        num_scans=num_scans,
         final_objective=global_history[-1],
         final_plunger_distances=plunger_dists.tolist(),
         final_barrier_distances=barrier_dists.tolist(),
         convergence_history=[],
         global_objective_history=global_history,
+        # New distance tracking fields
+        scan_numbers=tracker.scan_numbers.copy(),
+        plunger_distance_history=tracker.plunger_distance_history.copy(),
+        barrier_distance_history=tracker.barrier_distance_history.copy(),
+        plunger_range=tracker.plunger_range,
+        barrier_range=tracker.barrier_range,
     )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Random sampling benchmark for quantum dot tuning")
     parser.add_argument("--num_dots", type=int, default=2, help="Number of quantum dots")
-    parser.add_argument("--num_trials", type=int, default=10, help="Number of trials to run")
-    parser.add_argument("--max_samples", type=int, default=100000, help="Maximum samples per trial")
+    parser.add_argument("--num_trials", type=int, default=100, help="Number of trials to run")
+    parser.add_argument("--max_scans", type=int, default=100000, help="Maximum samples per trial")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed")
     parser.add_argument("--threshold", type=float, default=0.5, help="Success threshold in volts")
     parser.add_argument("--output", type=str, default=None, help="Output file path")
@@ -106,7 +126,7 @@ def main():
 
     print(f"Running random sampling benchmark")
     print(f"  Dots: {args.num_dots}")
-    print(f"  Trials: {args.num_trials}, Max samples: {args.max_samples}")
+    print(f"  Trials: {args.num_trials}, Max samples: {args.max_scans}")
     print(f"  Seed: {args.seed}, Threshold: {args.threshold}V")
     print()
 
@@ -116,11 +136,16 @@ def main():
         num_dots=args.num_dots,
         use_barriers=True,
         num_trials=args.num_trials,
-        max_iterations=args.max_samples,
+        max_iterations=args.max_scans,
         success_threshold=args.threshold,
     )
 
     base_rng = np.random.default_rng(args.seed)
+
+    # Create tracker once (all trials have same num_dots so same num_plungers/barriers)
+    first_env = create_benchmark_env(num_dots=args.num_dots, use_barriers=True, seed=args.seed)
+    tracker = ConvergenceTracker.from_env(first_env)
+    print()
 
     for trial_idx in range(args.num_trials):
         trial_seed = base_rng.integers(0, 2**31)
@@ -135,8 +160,9 @@ def main():
             env=env,
             trial_idx=trial_idx,
             seed=trial_seed,
-            max_samples=args.max_samples,
+            max_scans=args.max_scans,
             success_threshold=args.threshold,
+            tracker=tracker,
         )
 
         result.trials.append(trial_result)

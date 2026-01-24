@@ -20,12 +20,14 @@ sys.path.insert(0, str(benchmarks_dir))
 from env_init import create_benchmark_env, get_voltage_ranges, random_initial_voltages
 from objective import create_objective_fn, get_distances, check_success
 from utils import BenchmarkResult, TrialResult, save_results, print_summary
+from convergence_tracker import ConvergenceTracker
 
 
 def run_joint_optimization(
     env,
     x0: np.ndarray,
     max_iter: int,
+    tracker: ConvergenceTracker,
     tol: float = 1e-6,
 ) -> dict:
     """
@@ -35,18 +37,30 @@ def run_joint_optimization(
         env: QuantumDeviceEnv instance
         x0: Initial voltage array [plungers, barriers]
         max_iter: Maximum iterations
+        tracker: ConvergenceTracker for recording distances
         tol: Convergence tolerance
 
     Returns:
         dict with optimization results
     """
     objective = create_objective_fn(env)
+    num_pairs = env.num_plunger_voltages - 1  # num_dots - 1
 
     # Track convergence history
     history = []
+    iteration_count = [0]  # Use list to allow mutation in closure
+
+    # Record initial distances (scan 0)
+    plunger_dists, barrier_dists = get_distances(x0, env)
+    tracker.record(plunger_dists, barrier_dists, scan_number=0)
 
     def callback(xk):
+        iteration_count[0] += 1
         history.append(objective(xk))
+        # Record distances for convergence tracking
+        plunger_dists, barrier_dists = get_distances(xk, env)
+        current_scan = num_pairs * iteration_count[0]
+        tracker.record(plunger_dists, barrier_dists, current_scan)
 
     # Get bounds from voltage ranges
     ranges = get_voltage_ranges(env)
@@ -84,6 +98,7 @@ def run_joint_optimization(
 def run_sliding_window_optimization(
     env,
     x0: np.ndarray,
+    tracker: ConvergenceTracker,
     max_iter_per_set: int = 100,
     max_sweeps: int = 50,
     max_scans: int = None,
@@ -106,6 +121,7 @@ def run_sliding_window_optimization(
     Args:
         env: QuantumDeviceEnv instance
         x0: Initial voltage array [plungers, barriers]
+        tracker: ConvergenceTracker for recording distances at each step
         max_iter_per_set: Maximum Nelder-Mead iterations per window
         max_sweeps: Maximum sweeps through all windows
         cap_per_plunger: Cap in V^2 per plunger (default 5.0)
@@ -151,10 +167,13 @@ def run_sliding_window_optimization(
     sweep = 0
     all_below_threshold = False
 
-    # Record initial global objective
+    # Record initial state (scan 0)
     initial_global_obj = objective(current_voltages)  # Full objective (all gates)
     global_history.append(initial_global_obj)
     voltage_history.append(current_voltages.tolist())
+    # Record initial distances for convergence tracking
+    plunger_dists, barrier_dists = get_distances(current_voltages, env)
+    tracker.record(plunger_dists, barrier_dists, scan_number=0)
 
     for sweep in range(max_sweeps):
         all_below_threshold = True
@@ -198,6 +217,11 @@ def run_sliding_window_optimization(
                 global_obj = objective(full_v)
                 global_history.append(global_obj)
                 voltage_history.append(full_v.tolist())
+
+                # Record distances for convergence tracking
+                # In pairwise mode, each function eval = 1 scan
+                plunger_dists, barrier_dists = get_distances(full_v, env)
+                tracker.record(plunger_dists, barrier_dists, scan_number=len(global_history))
 
                 return local_obj
 
@@ -283,6 +307,7 @@ def run_single_trial(
     max_iter: int,
     mode: str,
     success_threshold: float,
+    tracker: ConvergenceTracker,
     max_sweeps: int = 50,
     max_scans: int = None,
     cap_per_plunger: float = 5.0,
@@ -300,15 +325,19 @@ def run_single_trial(
     # Generate random initial voltages
     x0 = random_initial_voltages(env, rng)
 
+    # Reset tracker for this trial
+    tracker.reset()
+
     # Run optimization
     if mode == "joint":
-        opt_result = run_joint_optimization(env, x0, max_iter)
+        opt_result = run_joint_optimization(env, x0, max_iter, tracker)
         # For joint mode: scans = ceil(num_plungers/2) * iterations
+        # (multiple pairs scanned simultaneously per iteration)
         num_pairs = math.ceil(env.num_plunger_voltages / 2)
         num_scans = num_pairs * opt_result["nit"]
     else:
         opt_result = run_sliding_window_optimization(
-            env, x0,
+            env, x0, tracker,
             max_iter_per_set=max_iter,
             max_sweeps=max_sweeps,
             max_scans=max_scans,
@@ -341,8 +370,14 @@ def run_single_trial(
         final_plunger_distances=plunger_dists.tolist(),
         final_barrier_distances=barrier_dists.tolist(),
         convergence_history=opt_result["history"],
-        global_objective_history=opt_result["history"],  # Use same history for plotting compatibility
+        global_objective_history=opt_result.get("global_history", opt_result["history"]),
         voltage_history=opt_result.get("voltage_history", []),
+        # New distance tracking fields
+        scan_numbers=tracker.scan_numbers.copy(),
+        plunger_distance_history=tracker.plunger_distance_history.copy(),
+        barrier_distance_history=tracker.barrier_distance_history.copy(),
+        plunger_range=tracker.plunger_range,
+        barrier_range=tracker.barrier_range,
     )
 
 
@@ -409,6 +444,15 @@ def main():
 
     base_rng = np.random.default_rng(args.seed)
 
+    # Create tracker once (will be reused across trials)
+    # Need a temporary env to initialize tracker with correct dimensions
+    temp_env = create_benchmark_env(
+        num_dots=args.num_dots,
+        use_barriers=use_barriers,
+        seed=0,
+    )
+    tracker = ConvergenceTracker.from_env(temp_env)
+
     for trial_idx in range(args.num_trials):
         trial_seed = base_rng.integers(0, 2**31)
 
@@ -426,6 +470,7 @@ def main():
             max_iter=args.max_iter,
             mode=args.mode,
             success_threshold=args.threshold,
+            tracker=tracker,
             max_sweeps=args.max_sweeps,
             max_scans=args.max_scans,
             cap_per_plunger=args.cap_per_plunger,

@@ -58,15 +58,16 @@ class DreamerEnvWrapper(gym.Env):
         self.max_steps = max_steps
         self._seed = seed
 
-        # Create underlying environment
-        self._env = QuantumDeviceEnv(training=True)
+        # Create underlying environment with correct parameters
+        # (must pass to constructor since reset() is called during __init__)
+        self._env = QuantumDeviceEnv(
+            training=True,
+            num_dots=num_dots,
+            use_barriers=use_barriers,
+        )
 
-        # Override config-loaded values
-        self._env.num_dots = num_dots
-        self._env.use_barriers = use_barriers
+        # Override config values not in constructor
         self._env.max_steps = max_steps
-        self._env.num_plunger_voltages = num_dots
-        self._env.num_barrier_voltages = num_dots - 1
         self._env.resolution = resolution  # Override for DreamerV3 encoder compatibility
 
         # Calculate dimensions
