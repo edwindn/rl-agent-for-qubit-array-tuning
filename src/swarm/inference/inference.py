@@ -45,6 +45,8 @@ from swarm.training.utils import (  # noqa: E402
     print_training_progress,
     policy_mapping_fn,
     cleanup_gif_files,
+    CustomFrameStackingEnvToModule,
+    CustomFrameStackingLearner,
 )
 
 from swarm.training.train_utils import (  # noqa: E402

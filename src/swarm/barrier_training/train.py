@@ -141,12 +141,12 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     except:
         pass
 
-    from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
+    from swarm.barrier_training.fixed_plunger_wrapper import FixedPlungerWrapper
 
-    # Wrap in multi-agent wrapper (config unused but required by RLlib)
+    # Wrap in fixed plunger wrapper (plunger gates fixed to ground truth)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
     # RLlib handles temporal sequences via ConnectorV2, not via environment
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=env_config_path)
+    return FixedPlungerWrapper(return_voltage=True, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=env_config_path)
 
 
 def load_config(config_path=None, checkpoint_path=None):

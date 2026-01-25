@@ -77,7 +77,6 @@ rl_config:
       - "plunger_policy"
       - "barrier_policy"
     policies_to_train:
-      - "plunger_policy"
       - "barrier_policy"
     count_steps_by: "agent_steps"
     free_log_std: false

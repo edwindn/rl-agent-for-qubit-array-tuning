@@ -60,6 +60,63 @@ from swarm.training.utils import (  # noqa: E402
     CustomFrameStackingLearner,
 )
 
+# Import inference utilities for scan saving (we'll define locally to work with training directory)
+def save_scans_to_iteration_folder(iteration_num, config, save_dir=None):
+    """Save scan images to a dedicated folder for this iteration."""
+    import shutil
+
+    gif_save_dir = Path(config['gif_config']['save_dir'])
+    training_dir = Path(__file__).parent if save_dir is None else Path(save_dir)
+
+    if not gif_save_dir.exists():
+        print("No image dir found for scans")
+        return
+
+    try:
+        print(f"Saving scans for iteration {iteration_num}...")
+
+        # Create rollout_scans parent folder and iteration-specific subfolder
+        rollout_scans_dir = training_dir / "rollout_scans"
+        iteration_folder = rollout_scans_dir / f"iteration_{iteration_num}_scans"
+        iteration_folder.mkdir(parents=True, exist_ok=True)
+
+        # Find all agent subdirectories
+        agent_dirs = [d for d in gif_save_dir.iterdir() if d.is_dir()]
+
+        if not agent_dirs:
+            print("No agent directories found")
+            return
+
+        scans_saved = 0
+        # Copy each agent's images to the iteration folder
+        for agent_dir in agent_dirs:
+            agent_id = agent_dir.name
+            image_files = sorted(agent_dir.glob("step_*.png"))
+
+            if not image_files:
+                print(f"No images found for {agent_id}")
+                continue
+
+            # Create agent subfolder within iteration folder
+            agent_iteration_folder = iteration_folder / agent_id
+            agent_iteration_folder.mkdir(parents=True, exist_ok=True)
+
+            # Copy all images to the iteration folder
+            for img_file in image_files:
+                dest_path = agent_iteration_folder / img_file.name
+                shutil.copy2(img_file, dest_path)
+                scans_saved += 1
+
+        print(f"Saved {scans_saved} scan images to {iteration_folder}")
+
+        # Clean up temporary gif_captures directory
+        shutil.rmtree(gif_save_dir, ignore_errors=True)
+
+    except Exception as e:
+        print(f"Error saving scans: {e}")
+        import traceback
+        traceback.print_exc()
+
 from swarm.training.train_utils import (  # noqa: E402
     parse_config_overrides,
     map_sweep_parameters,
@@ -122,7 +179,7 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None):
+def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None, scan_save_dir=None):
     """Create multi-agent quantum environment with JAX safety."""
     import os
     import jax
@@ -141,12 +198,19 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     except:
         pass
 
-    from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
+    from swarm.environment.scan_saving_wrapper import ScanSavingWrapper
 
-    # Wrap in multi-agent wrapper (config unused but required by RLlib)
+    # Wrap in scan-saving wrapper (which inherits from MultiAgentEnvWrapper)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
     # RLlib handles temporal sequences via ConnectorV2, not via environment
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=env_config_path)
+    return ScanSavingWrapper(
+        return_voltage=True,
+        gif_config=gif_config,
+        distance_data_dir=distance_data_dir,
+        env_config_path=env_config_path,
+        scan_save_dir=scan_save_dir,
+        scan_save_enabled=scan_save_dir is not None,
+    )
 
 
 def load_config(config_path=None, checkpoint_path=None):
@@ -202,6 +266,10 @@ def main():
     args = parse_arguments()
 
     use_wandb = not args.disable_wandb
+
+    # Resolve checkpoint path to absolute path if provided
+    if args.load_checkpoint:
+        args.load_checkpoint = str(Path(args.load_checkpoint).resolve())
 
     # Determine checkpoint path for config loading if --load-configs is set
     checkpoint_path = args.load_checkpoint if args.load_configs else None
@@ -270,8 +338,15 @@ def main():
 
     try:
         gif_config = config["gif_config"]
+        # Override gif save dir to local training directory
+        gif_config['save_dir'] = str(Path(__file__).parent / "gif_captures")
         # Clean up any previous GIF capture lock files
         cleanup_gif_files(gif_config['save_dir'])
+
+        # Create scan save directory (use absolute path for Ray workers)
+        scan_save_dir = Path(__file__).parent.resolve() / "scan_captures"
+        scan_save_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Scan images will be saved to: {scan_save_dir}\n")
 
         # Load env config directly from YAML (no GPU initialization needed on driver)
         env_config = load_env_config(checkpoint_path)
@@ -288,7 +363,13 @@ def main():
             temp_env_config_file.close()
             print(f"Written env config to temporary file: {temp_env_config_path}")
 
-        create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=temp_env_config_path)
+        create_env_fn = partial(
+            create_env,
+            gif_config=gif_config,
+            distance_data_dir=distance_data_dir,
+            env_config_path=temp_env_config_path,
+            scan_save_dir=str(scan_save_dir)
+        )
         register_env("qarray_multiagent_env", create_env_fn)
 
         # Merge with training config for wandb logging
@@ -436,6 +517,15 @@ def main():
                    else {"learner_class": SACLearnerWithRewardScaling} if algo == "sac"
                    else {}),
             )
+            .evaluation(
+                evaluation_num_env_runners=1,
+                evaluation_duration=1,  # Run 1 episode per evaluation
+                evaluation_duration_unit="episodes",
+                evaluation_sample_timeout_s=1800,
+                evaluation_config={
+                    "explore": True,  # Use stochastic actions
+                },
+            )
             # .callbacks([custom_callbacks] if use_wandb else [])
         )
 
@@ -454,7 +544,7 @@ def main():
         
         if args.load_checkpoint:
             # Load specific checkpoint
-            checkpoint_path = Path(args.load_checkpoint)
+            checkpoint_path = Path(args.load_checkpoint).resolve()
             if not checkpoint_path.exists():
                 raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
 
@@ -477,9 +567,6 @@ def main():
 
             except Exception as e:
                 raise RuntimeError(f"Error loading checkpoint: {e}") from e
-            else:
-                print(f"Error: Checkpoint path does not exist: {checkpoint_path}")
-                print("Continuing with fresh training...")
                 
         elif args.resume_latest:
             # Find and load most recent checkpoint
@@ -541,7 +628,8 @@ def main():
         best_reward = float("-inf")  # Track best performance for artifact upload
 
         for i in range(start_iteration, config['defaults']['num_iterations']):
-            result = algo.train()
+            # Use evaluate() instead of train() to skip gradient updates
+            result = algo.evaluate()
 
             # Clean console output and wandb logging
             print_training_progress(result, i, training_start_time)
@@ -549,7 +637,13 @@ def main():
             # Log metrics to wandb (EMA is calculated automatically in metrics_logger)
             log_to_wandb(result, i, distance_data_dir)
 
-            # Process and log GIFs if enabled
+            # Save scans to iteration folder if enabled
+            if config['gif_config']['enabled']:
+                # Wait briefly for async worker processes to finish writing data to disk
+                time.sleep(0.5)
+                save_scans_to_iteration_folder(i + 1, config)
+
+            # Process and log GIFs if enabled (uses gif_captures, not scan_captures)
             if config['gif_config']['enabled'] and use_wandb:
                 process_and_log_gifs(i + 1, config, use_wandb)
 

@@ -589,8 +589,8 @@ class QuantumDeviceEnv(gym.Env):
                     # For EMA, use absolute ML predictions directly
                     # The ML model predicts absolute capacitance values, not deltas
                     absolute_values = [
-                        float(values_np[i, 0]),  # RL coupling
-                        float(values_np[i, 1]),  # LR coupling
+                        -float(values_np[i, 0]),  # RL coupling
+                        -float(values_np[i, 1]),  # LR coupling
                     ]
 
                     # Update the EMA predictor with absolute values and log variances
@@ -852,10 +852,13 @@ class QuantumDeviceEnv(gym.Env):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
+    import time
 
     #os.environ['CUDA_VISIBLE_DEVICES'] = '7'
-    env = QuantumDeviceEnv(num_dots=6)
+    env = QuantumDeviceEnv(num_dots=8)
+    start = time.time()
     obs, info = env.reset()
+    end = time.time()
     print(env.observation_space)
     print(env.action_space)
     print(env.device_state)
@@ -882,4 +885,5 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig('scans.png', dpi=150, bbox_inches='tight')
     print(f"\nSaved scans to scans.png")
+    print(f"Took {end-start:.4f} seconds to generate")
     plt.close()
