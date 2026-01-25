@@ -64,6 +64,9 @@ def _ground_state_open(model, vg, vb=None):
         cdd_inv_batch = jnp.expand_dims(cdd_inv, 0).repeat(num_pixels, axis=0)
         cgd_batch = jnp.expand_dims(cgd, 0).repeat(num_pixels, axis=0)
         
+    # Get constant_charge_shift from model (convert None to 0 for JIT)
+    constant_charge_shift = 0 if model.constant_charge_shift is None else model.constant_charge_shift
+
     #build charge states
     if truncate:
         from qarray_latched.DotArrays.hamiltonian_build import _jit_free_energy, full_physics_informed_tunneling_hamiltonian
@@ -71,13 +74,13 @@ def _ground_state_open(model, vg, vb=None):
         num_charge_states = model.num_charge_states
         charge_state_batch_size = model.charge_state_batch_size
 
-        charge_states = build_charge_states(truncate=True, num_charge_states=num_charge_states, batchsize = charge_state_batch_size, v_extended = v_extended, cdd_inv_batch=cdd_inv_batch, cgd_batch= cgd_batch, n_dot=n_dots)
-    
+        charge_states = build_charge_states(truncate=True, num_charge_states=num_charge_states, batchsize = charge_state_batch_size, v_extended = v_extended, cdd_inv_batch=cdd_inv_batch, cgd_batch= cgd_batch, n_dot=n_dots, constant_charge_shift=constant_charge_shift)
+
     else:
         from qarray_latched.DotArrays.unbatched_hamiltonian_build import _jit_free_energy_unbatched as _jit_free_energy, full_physics_informed_tunneling_hamiltonian_unbatched as full_physics_informed_tunneling_hamiltonian
 
         mcc = model.max_charge_carriers
-        charge_states = build_charge_states(truncate=False, max_charge_carriers=mcc, n_dot=n_dots)
+        charge_states = build_charge_states(truncate=False, max_charge_carriers=mcc, n_dot=n_dots, constant_charge_shift=constant_charge_shift)
 
     #build tc matrix
     if use_barriers:
@@ -100,7 +103,7 @@ def _ground_state_open(model, vg, vb=None):
     #build hamiltonian
 
     #TODO: we already calculate free energy during the truncation of the charge states but discarded the values should use those instead of recalculating. Not a bottleneck so for now doesn't matter.
-    F = _jit_free_energy(v_extended, cdd_inv_batch, cgd_batch, charge_states, n_dots)
+    F = _jit_free_energy(v_extended, cdd_inv_batch, cgd_batch, charge_states, n_dots, constant_charge_shift)
 
     H_f = convert_free_energy_into_hamiltionian_form(F, charge_states)
 

@@ -87,6 +87,8 @@ class TunnelCoupledChargeSensed:
     tc: float = 0
     voltage_capacitance_model: VoltageDependendentCapacitanceModel | None = None
 
+    constant_charge_shift : int | None = None
+
     # Barrier voltage parameters
     Cbd: CddNonMaxwell | None = None  # barrier-to-dot capacitance matrix
     Cbg: CgdNonMaxwell | None = None  # barrier-to-gate capacitance matrix
@@ -176,7 +178,13 @@ class TunnelCoupledChargeSensed:
         self.gate_voltage_composer = GateVoltageComposer(n_gate=self.n_gate, n_dot=self.n_dot, n_sensor=self.n_sensor)
         # Extract gate-only submatrix for virtual gate calculation (exclude barrier columns)
         cgd_gates_only = self.cgd_full[:, :self.n_gate]
-        self.gate_voltage_composer.virtual_gate_matrix = -np.linalg.pinv(self.cdd_inv_full @ cgd_gates_only)
+        virtual_gate_matrix = -np.linalg.pinv(self.cdd_inv_full @ cgd_gates_only)
+
+        # Apply charge carrier convention
+        if self.charge_carrier == 'electrons':
+            virtual_gate_matrix = -virtual_gate_matrix
+
+        self.gate_voltage_composer.virtual_gate_matrix = virtual_gate_matrix
         self.gate_voltage_composer.virtual_gate_origin = np.zeros(self.n_gate)
 
         if self.voltage_capacitance_model is not None:
@@ -221,11 +229,12 @@ class TunnelCoupledChargeSensed:
         # Extract gate-only submatrix for virtual gate calculation (exclude barrier columns)
         cgd_gates_only = self.cgd_full[:, :self.n_gate]
         virtual_gate_matrix = compute_optimal_virtual_gate_matrix(self.cdd_inv_full, cgd_gates_only)
-        self.gate_voltage_composer.virtual_gate_matrix = virtual_gate_matrix
 
+        # Apply charge carrier convention
         if self.charge_carrier == 'electrons':
             virtual_gate_matrix = -virtual_gate_matrix
 
+        self.gate_voltage_composer.virtual_gate_matrix = virtual_gate_matrix
         return virtual_gate_matrix
 
     def compute_optimal_sensor_virtual_gate_matrix(self):
@@ -240,6 +249,10 @@ class TunnelCoupledChargeSensed:
         inv = np.linalg.inv(device_virtual_gates)
         sensor_virtual_matrix = np.eye(self.n_gate)
         sensor_virtual_matrix[-1, :-1] = inv @ sensor_gates
+
+        # Apply charge carrier convention
+        if self.charge_carrier == 'electrons':
+            sensor_virtual_matrix = -sensor_virtual_matrix
 
         self.gate_voltage_composer.virtual_gate_matrix = sensor_virtual_matrix
         return sensor_virtual_matrix
@@ -332,6 +345,11 @@ class TunnelCoupledChargeSensed:
         
         # Computing the continuous minimum charge state (open) - now includes all effects
         N_cont = np.einsum('ij, ...j', self.cgd_full, v_extended)
+        if self.constant_charge_shift is not None:
+            n0 = np.array([self.constant_charge_shift]*self.n_dot + [0]*self.n_sensor)
+            N_cont = N_cont + n0
+        #N_cont[:] += np.array([10]*5)
+        #print(N_cont.shape)
 
         # computing the discrete state on the charge sensor
         # Extract only sensor portion from extended system [dots + sensors + barriers]
@@ -352,7 +370,15 @@ class TunnelCoupledChargeSensed:
                 else:
                     # Standard system: [dots, sensors]
                     N_full = np.concatenate([n_open, perturbed_N_sensor + input_noise], axis=-1)
-                F[i, ..., sensor] = free_energy(self.cdd_inv_full, self.cgd_full, v_extended, N_full)
+                
+                def free_energy_shifted(cdd_inv, cgd, vg, n, n0_shift):
+                    v_dash = np.einsum('ij, ...j', cgd, vg)
+                    if n0_shift is not None:
+                        v_dash = v_dash + n0_shift
+                    F = np.einsum('...i, ij, ...j', n - v_dash, cdd_inv, n - v_dash)
+                    return F
+                n0_shift = np.array([self.constant_charge_shift]*self.n_dot + [0]*self.n_sensor) if self.constant_charge_shift is not None else None
+                F[i, ..., sensor] = free_energy_shifted(self.cdd_inv_full, self.cgd_full, v_extended, N_full, n0_shift)
 
         signal = lorentzian(np.diff(F, axis=0), 0, self.coulomb_peak_width).sum(axis=0)
         output_noise = self.noise_model.sample_output_noise(N_sensor.shape)
@@ -435,4 +461,16 @@ class TunnelCoupledChargeSensed:
         # With corrected physics: cdd_inv_full and cgd_full already contain only dots+sensors
         # Barriers are voltage sources only, so we only need to extract gate columns from cgd
         cgd_gates_only = self.cgd_full[:, :self.n_gate]  # Extract gate columns only
-        return optimal_Vg(cdd_inv=self.cdd_inv_full, cgd=cgd_gates_only, n_charges=n_charges, rcond=rcond)
+
+        def optimal_Vg_cholesky(cdd_inv, cgd, n_charges, rcond=1e-3, constant_charge_shift=None):
+            R = np.linalg.cholesky(cdd_inv).T
+            M = np.linalg.pinv(R @ cgd, rcond=rcond) @ R
+
+            n_eff = np.array(n_charges)
+            if constant_charge_shift is not None:
+                n0 = np.array([constant_charge_shift]*self.n_dot + [0]*self.n_sensor)
+                n_eff = n_eff - n0
+
+            return np.einsum('ij, ...j', M, n_eff)
+
+        return optimal_Vg_cholesky(cdd_inv=self.cdd_inv_full, cgd=cgd_gates_only, n_charges=n_charges, rcond=rcond, constant_charge_shift=self.constant_charge_shift)

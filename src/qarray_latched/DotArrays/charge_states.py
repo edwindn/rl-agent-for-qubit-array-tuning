@@ -33,17 +33,18 @@ def create_full_charge_state_space(max_electrons_per_dot: int = 4, n_dot: int = 
     
     return states.astype(jnp.int32)
 
-@partial(jax.jit, static_argnums=(3,))
+@partial(jax.jit, static_argnums=(3, 4))
 def compute_continuous_ground_state_open(v_extended: jnp.ndarray,
                                          cdd_inv: jnp.ndarray,
                                          cgd: jnp.ndarray,
-                                         n_dot: int
+                                         n_dot: int,
+                                         constant_charge_shift: int = 0
                                          ) -> jnp.ndarray:
     """
     Computes the continuous ground state for a single set of voltages and their corresponding capacitance matrices.
     Identical to the single-step solver in https://github.com/pranavjv/QArray/blob/voltage_dependence/qarray/jax_implementations/voltage_dependent_capacitance.py
     (as of 11/09/25)
-    
+
     Parameters:
     -----------
     v_extended : jnp.ndarray
@@ -54,9 +55,13 @@ def compute_continuous_ground_state_open(v_extended: jnp.ndarray,
         Gate-dot capacitance matrix (full system)
     n_dot : int
         Number of dots (to extract dot-only portion)
+    constant_charge_shift : int
+        Constant charge shift to add. Pass 0 if no shift desired.
     """
     # Extract only dot effects from full system matrices
+    n0 = jnp.full(n_dot, constant_charge_shift)
     n_continuous = cgd[:n_dot, :] @ v_extended
+    n_continuous = n_continuous + n0
 
     def analytical_valid():
         return n_continuous
@@ -86,13 +91,13 @@ def compute_continuous_ground_state_open(v_extended: jnp.ndarray,
 
 
 
-@partial(jax.jit, static_argnums=(3, 4))
-def _jit_extract_charge_state_candidates(v_extended, cdd_inv, cgd, num_states, n_dot):
+@partial(jax.jit, static_argnums=(3, 4, 5))
+def _jit_extract_charge_state_candidates(v_extended, cdd_inv, cgd, num_states, n_dot, constant_charge_shift=0):
     """
     Extracts a set of candidate charge states around the continuous ground state and selects those with the lowest energy.
     """
 
-    n_continuous = compute_continuous_ground_state_open(v_extended, cdd_inv, cgd, n_dot)
+    n_continuous = compute_continuous_ground_state_open(v_extended, cdd_inv, cgd, n_dot, constant_charge_shift)
 
     floor_values = jnp.floor(n_continuous)
 
@@ -101,7 +106,7 @@ def _jit_extract_charge_state_candidates(v_extended, cdd_inv, cgd, num_states, n
 
     n_deltas = len(possible_deltas)
     delta_array = jnp.array(possible_deltas)
-    
+
     # Create meshgrid for all combinations of deltas across all dots
     args = [delta_array] * n_dot
     number_of_configurations = n_deltas ** n_dot
@@ -109,12 +114,13 @@ def _jit_extract_charge_state_candidates(v_extended, cdd_inv, cgd, num_states, n
 
     # Add floor values to delta combinations to get charge configurations
     charge_configurations = delta_combinations + floor_values
-    
+
     # Filter out any combinations with negative charge (JAX-compatible approach)
     valid_mask = jnp.all(charge_configurations >= 0, axis=-1)  # (n_configurations,)
-    
+
     # Calculate energy for all configurations, but set invalid ones to high energy
-    v_dash = cgd[:n_dot, :] @ v_extended
+    n0 = jnp.full(n_dot, constant_charge_shift)
+    v_dash = cgd[:n_dot, :] @ v_extended + n0
     F = jnp.einsum('...i, ij, ...j', charge_configurations - v_dash, cdd_inv[:n_dot, :n_dot], charge_configurations - v_dash)
     
     # Set energy of invalid configurations to a very high value so they're never selected
@@ -128,26 +134,27 @@ def _jit_extract_charge_state_candidates(v_extended, cdd_inv, cgd, num_states, n
 
 
 
-@partial(jax.jit, static_argnums=(3, 4, 5))
-def _jit_extract_charge_state_candidates_memory_optimized(v_extended, cdd_inv, cgd, num_states, n_dot, chunk_size=1024):
+@partial(jax.jit, static_argnums=(3, 4, 5, 6))
+def _jit_extract_charge_state_candidates_memory_optimized(v_extended, cdd_inv, cgd, num_states, n_dot, chunk_size=1024, constant_charge_shift=0):
     """
     Memory-optimized version for 8-dot systems using chunked energy computation.
     Generates all charge state combinations efficiently and computes energies in chunks.
     """
 
-    n_continuous = compute_continuous_ground_state_open(v_extended, cdd_inv, cgd, n_dot)
+    n_continuous = compute_continuous_ground_state_open(v_extended, cdd_inv, cgd, n_dot, constant_charge_shift)
     floor_values = jnp.floor(n_continuous)
 
     possible_deltas = [-1, 0, 1, 2] # Approximate delta range for ~98% coverage
     n_deltas = len(possible_deltas)
     delta_array = jnp.array(possible_deltas)
-    
+
     # Calculate total combinations but don't store them all
     total_combinations = n_deltas ** n_dot  # 4^8 = 65,536 combinations
     n_chunks = (total_combinations + chunk_size - 1) // chunk_size  # Ceiling division
-    
+
     # Initialize tracking of best candidates
-    v_dash = cgd[:n_dot, :] @ v_extended
+    n0 = jnp.full(n_dot, constant_charge_shift)
+    v_dash = cgd[:n_dot, :] @ v_extended + n0
     best_energies = jnp.full(num_states, jnp.inf)
     best_states = jnp.zeros((num_states, n_dot))
     
@@ -218,15 +225,18 @@ def _jit_extract_charge_state_candidates_memory_optimized(v_extended, cdd_inv, c
 
 
 
-def build_charge_states(truncate = False, num_charge_states = None, v_extended = None, cdd_inv_batch = None, cgd_batch = None, batchsize = None, max_charge_carriers=None, n_dot=None):
+def build_charge_states(truncate = False, num_charge_states = None, v_extended = None, cdd_inv_batch = None, cgd_batch = None, batchsize = None, max_charge_carriers=None, n_dot=None, constant_charge_shift=None):
+
+    # Convert None to 0 for JIT compatibility
+    charge_shift = 0 if constant_charge_shift is None else constant_charge_shift
 
     #Truncates the charge states considered by electrostatic free energy
     if truncate:
         #For large dots the full charge state space is too large to hold in RAM
         if batchsize is not None:
-            extract_charge_state_candidates_vmap = partial(_jit_extract_charge_state_candidates_memory_optimized, num_states=num_charge_states, n_dot=n_dot, chunk_size=batchsize)
+            extract_charge_state_candidates_vmap = partial(_jit_extract_charge_state_candidates_memory_optimized, num_states=num_charge_states, n_dot=n_dot, chunk_size=batchsize, constant_charge_shift=charge_shift)
         else:
-            extract_charge_state_candidates_vmap = partial(_jit_extract_charge_state_candidates, num_states=num_charge_states, n_dot=n_dot)
+            extract_charge_state_candidates_vmap = partial(_jit_extract_charge_state_candidates, num_states=num_charge_states, n_dot=n_dot, constant_charge_shift=charge_shift)
 
         charge_states, ground_states = jax.vmap(
             extract_charge_state_candidates_vmap,
@@ -238,5 +248,5 @@ def build_charge_states(truncate = False, num_charge_states = None, v_extended =
     #Blindly selects all charge states
     else:
         charge_states = jnp.array(create_full_charge_state_space(max_charge_carriers, n_dot))
-    
+
     return charge_states
