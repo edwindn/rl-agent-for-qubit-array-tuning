@@ -9,7 +9,7 @@ Quantum dot array simulation package with advanced features:
 
 # Main model classes
 from .TunnelCoupledChargeSensed import TunnelCoupledChargeSensed
-from .AdvancedLatching import AdvancedLatching
+# from .AdvancedLatching import AdvancedLatching
 
 # Core computation modules  
 from .ground_state import _ground_state_open
@@ -29,7 +29,7 @@ from .barrier_voltage_model import BarrierVoltageModel
 __all__ = [
     # Main classes
     'TunnelCoupledChargeSensed',
-    'AdvancedLatching',
+    # 'AdvancedLatching',
     
     # Core functions
     '_ground_state_open',
