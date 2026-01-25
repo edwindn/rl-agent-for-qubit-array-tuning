@@ -600,6 +600,7 @@ class QarrayBaseClass:
             "algorithm": model_config["algorithm"],
             "implementation": model_config["implementation"],
             "max_charge_carriers": model_config["max_charge_carriers"],
+            "charge_carrier": model_config["charge_carrier_type"],
             "optimal_VG_center": measurement_config["optimal_VG_center"],
         }
 
@@ -687,6 +688,7 @@ class QarrayBaseClass:
             "algorithm": model_config["algorithm"],
             "implementation": model_config["implementation"],
             "max_charge_carriers": model_config["max_charge_carriers"],
+            "charge_carrier": model_config["charge_carrier_type"],
             "optimal_VG_center": measurement_config["optimal_VG_center"],
             "use_sparse": latched_config["use_sparse"],
             "num_charge_states": latched_config["num_charge_states"],
@@ -832,6 +834,7 @@ class QarrayBaseClass:
             use_sparse=model_params["use_sparse"],
             num_charge_states=model_params["num_charge_states"],
             charge_state_batch_size=model_params["charge_state_batch_size"],
+            charge_carrier=model_params["charge_carrier"],
         )
 
         # Create and set voltage-dependent capacitance model
@@ -866,6 +869,10 @@ class QarrayBaseClass:
         # Both with and without barriers vgm has shape (num_dot + 1, num_dot + 1)
         identity_vgm = np.eye(self.num_dots + 1, self.num_dots + 1)
 
+        # Apply charge carrier convention
+        if self.model.charge_carrier == 'electrons':
+            identity_vgm = -identity_vgm
+
         self.model.gate_voltage_composer.virtual_gate_matrix = identity_vgm
         # print(f"Reset virtual gate matrix to identity:\n{identity_vgm}")
 
@@ -886,6 +893,10 @@ class QarrayBaseClass:
             # For non-barrier models, use full cgd_full matrix
             # From ChargeSensedDotArray.py:123
             perfect_vgm = -np.linalg.pinv(self.model.cdd_inv_full @ self.model.cgd_full)
+
+        # Apply charge carrier convention
+        if self.model.charge_carrier == 'electrons':
+            perfect_vgm = -perfect_vgm
 
         self.model.gate_voltage_composer.virtual_gate_matrix = perfect_vgm
         # print(f"Reset virtual gate matrix to perfect (from exact Cgd):\n{perfect_vgm}")
@@ -922,6 +933,10 @@ class QarrayBaseClass:
             vgm = -np.linalg.pinv(self.model.cdd_inv_full @ cgd_estimate_gates_only)
         else:
             vgm = -np.linalg.pinv(np.linalg.inv(self.model.Cdd) @ cgd_estimate)
+
+        # Apply charge carrier convention
+        if self.model.charge_carrier == 'electrons':
+            vgm = -vgm
 
         #print(vgm)
         self.model.gate_voltage_composer.virtual_gate_matrix = vgm
@@ -966,6 +981,10 @@ class QarrayBaseClass:
         # Solve for VGM: A @ VGM = T  =>  VGM = pinv(A) @ T
         # Apply negative sign to match qarray convention
         vgm = -np.linalg.pinv(A) @ T_full
+
+        # Apply charge carrier convention
+        if self.model.charge_carrier == 'electrons':
+            vgm = -vgm
 
         self.model.gate_voltage_composer.virtual_gate_matrix = vgm
 

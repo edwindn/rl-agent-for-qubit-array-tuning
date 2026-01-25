@@ -114,6 +114,8 @@ simulator:
     implementation: "jax"
     # Maximum number of charge carriers
     max_charge_carriers: 4
+    # Charge carrier type (holes or electrons)
+    charge_carrier_type: "electrons" # "electrons" or "h"
 
   measurement:
     #model.optimal_Vg(center) gives the optimal gate voltage in volts from desired charge occupancy
