@@ -93,13 +93,6 @@ def create_benchmark_env(
     # Reset with seed
     obs, info = env.reset(seed=int(seed) if seed is not None else None)
 
-    # Initialize voltage ranges with seeded rng for reproducibility
-    # Use different seed than trial rng to avoid correlation between
-    # bound positioning and initial voltage sampling
-    bounds_seed = seed + 1_000_000 if seed is not None else None
-    bounds_rng = np.random.default_rng(bounds_seed)
-    get_voltage_ranges(env, bounds_rng)  # This caches the result on env
-
     return env
 
 
@@ -120,60 +113,24 @@ def get_ground_truth(env: QuantumDeviceEnv) -> tuple:
 
 def get_voltage_ranges(env: QuantumDeviceEnv, rng: np.random.Generator = None) -> dict:
     """
-    Get voltage ranges with physical optimal randomly placed within window.
+    Get voltage ranges from environment's internal bounds.
 
-    Creates bounds of the same size as env's original bounds, but positioned
-    such that the physical optimal is at a random location within the window.
-    Results are cached on the env to ensure consistency across multiple calls.
+    Returns the env's internal voltage bounds to ensure benchmarks
+    operate in the same voltage space as RL training.
 
     Args:
         env: QuantumDeviceEnv instance
-        rng: Random generator for positioning (only used on first call)
+        rng: Unused, kept for backward compatibility
 
     Returns:
         dict with plunger_min, plunger_max, barrier_min, barrier_max
     """
-    # Return cached bounds if already computed
-    if hasattr(env, '_benchmark_voltage_ranges'):
-        return env._benchmark_voltage_ranges
-
-    # Import here to avoid circular dependency
-    from objective import PhysicalObjective
-
-    if rng is None:
-        rng = np.random.default_rng()
-
-    # Get window sizes from env's original bounds
-    plunger_window = env.plunger_max - env.plunger_min
-    barrier_window = env.barrier_max - env.barrier_min
-
-    # Compute physical optimal using env's GT as reference point
-    env_gt_plungers = env.device_state["gate_ground_truth"]
-    env_gt_barriers = env.device_state["barrier_ground_truth"]
-    ref_voltages = np.concatenate([env_gt_plungers, env_gt_barriers])
-
-    obj = PhysicalObjective(env)
-    phys_opt_plungers, phys_opt_barriers = obj.get_optimal_voltages(ref_voltages)
-
-    # Random position of optimal within window (0 = at min edge, 1 = at max edge)
-    plunger_pos = rng.uniform(0.1, 0.9, size=len(phys_opt_plungers))  # Keep away from edges
-    barrier_pos = rng.uniform(0.1, 0.9, size=len(phys_opt_barriers))
-
-    # Position window so optimal is at random location within it
-    plunger_min = phys_opt_plungers - plunger_pos * plunger_window
-    plunger_max = plunger_min + plunger_window
-    barrier_min = phys_opt_barriers - barrier_pos * barrier_window
-    barrier_max = barrier_min + barrier_window
-
-    # Cache on env for consistency
-    env._benchmark_voltage_ranges = {
-        "plunger_min": plunger_min,
-        "plunger_max": plunger_max,
-        "barrier_min": barrier_min,
-        "barrier_max": barrier_max,
+    return {
+        "plunger_min": env.plunger_min,
+        "plunger_max": env.plunger_max,
+        "barrier_min": env.barrier_min,
+        "barrier_max": env.barrier_max,
     }
-
-    return env._benchmark_voltage_ranges
 
 
 def get_current_voltages(env: QuantumDeviceEnv) -> tuple:

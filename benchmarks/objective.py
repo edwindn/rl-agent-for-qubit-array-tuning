@@ -44,6 +44,10 @@ class PhysicsParams:
     Physics:
     - Charge on dots: n = cgd @ V (energy minimum when induced charge = target)
     - Tunnel coupling: tc = tc_base * exp(-alpha * V_eff) where V_eff depends on barriers and gates
+
+    Virtual gate transformation:
+    - The RL agent operates in virtual voltage space, not physical space
+    - Optimal voltages must be transformed: V_virtual = VGM^-1 @ (V_physical - offset)
     """
     n_dots: int
     n_barriers: int
@@ -57,9 +61,14 @@ class PhysicsParams:
     cgd_plunger_diag: np.ndarray  # (n_dots,) - diagonal of cgd_plungers for self-coupling
 
     # Barrier coupling matrices for tunnel coupling model
-    Cbg: np.ndarray               # (n_barriers, n_dots) - plunger gates only
+    Cbg: np.ndarray               # (n_barriers, n_dots+1) - all gates including sensor
     alpha: np.ndarray             # (n_barriers,) per-barrier alpha
     log_tc_ratio: float           # -ln(tc_target / tc_base)
+
+    # Virtual gate matrix transformation (for matching env ground truth)
+    vgm_inv: np.ndarray           # (n_dots+1, n_dots+1) - inverse of virtual gate matrix
+    vg_offset: np.ndarray         # (n_dots+1,) - virtual gate origin offset
+    optimal_vg_physical: np.ndarray  # (n_dots+1,) - optimal physical plunger voltages
 
 
 def _extract_physics_params(env, eps: float = 1e-10) -> PhysicsParams:
@@ -118,6 +127,17 @@ def _extract_physics_params(env, eps: float = 1e-10) -> PhysicsParams:
 
     log_tc_ratio = -np.log(tc_target / tc_base)
 
+    # Extract virtual gate matrix transformation (matching env's calculate_ground_truth)
+    vgm = np.array(model.gate_voltage_composer.virtual_gate_matrix, dtype=np.float64)
+    vgm_inv = np.linalg.inv(vgm)
+    vg_offset = np.array(model.gate_voltage_composer.virtual_gate_origin, dtype=np.float64)
+
+    # Get optimal physical plunger voltages (model.optimal_Vg returns physical voltages)
+    optimal_vg_physical = np.array(model.optimal_Vg(array.optimal_VG_center), dtype=np.float64)
+
+    # Get full Cbg matrix (including sensor gate for barrier calculation)
+    Cbg_full = np.array(model.Cbg, dtype=np.float64)  # (n_barriers, n_dots+1)
+
     return PhysicsParams(
         n_dots=n_dots,
         n_barriers=n_barriers,
@@ -125,9 +145,12 @@ def _extract_physics_params(env, eps: float = 1e-10) -> PhysicsParams:
         cgd_plungers=cgd_plungers,
         cgd_barriers=cgd_barriers,
         cgd_plunger_diag=cgd_plunger_diag,
-        Cbg=Cbg,
+        Cbg=Cbg_full,
         alpha=alpha,
         log_tc_ratio=log_tc_ratio,
+        vgm_inv=vgm_inv,
+        vg_offset=vg_offset,
+        optimal_vg_physical=optimal_vg_physical,
     )
 
 
@@ -145,6 +168,11 @@ class PhysicalObjective:
 
     The optimum is the fixed point where all local constraints are satisfied.
 
+    Virtual gate transformation:
+    - The RL agent operates in virtual voltage space, not physical space
+    - Optimal voltages are computed to match env's calculate_ground_truth
+    - The VGM and offset are fetched fresh each call to handle capacitance model updates
+
     Optional config enables:
     - Cap: return constant when any voltage is far from local optimal
     - Noise: add Gaussian noise to simulate measurement uncertainty
@@ -159,6 +187,7 @@ class PhysicalObjective:
             config: Optional ObjectiveConfig for cap/noise behavior
             eps: Minimum denominator value for numerical stability
         """
+        self.env = env  # Store env reference for fresh VGM access
         self.params = _extract_physics_params(env, eps)
         self.config = config or ObjectiveConfig()
         self.eps = eps
@@ -229,65 +258,35 @@ class PhysicalObjective:
         plunger_subset: Optional[list] = None
     ) -> np.ndarray:
         """
-        Compute optimal plunger voltages.
+        Compute optimal plunger voltages in VIRTUAL space.
 
-        If plunger_subset is provided, solves jointly for those plungers,
-        treating all other voltages (plungers outside subset + all barriers) as fixed.
+        This matches the env's calculate_ground_truth which transforms physical
+        optimal voltages to virtual space using the CURRENT VGM:
+            V_virtual = VGM^-1 @ (V_physical - offset)
 
-        If plunger_subset is None, computes each plunger's optimal independently
-        (original behavior for backward compatibility).
+        The VGM is fetched fresh from the env to handle capacitance model updates.
+        For non-RL algorithms, VGM = identity so virtual = physical.
 
-        From the charge model: n_i = cgd_plungers[i,:] @ V_p + cgd_barriers[i,:] @ V_b
-
-        Independent (plunger_subset=None):
-            V_i_opt = (n_target[i] - cgd_plungers[i,≠i] @ V_p[≠i] - cgd_barriers[i,:] @ V_b)
-                      / cgd_plungers[i,i]
-
-        Joint (plunger_subset=[...]):
-            Solve cgd[S,S] @ V_opt[S] = n_target[S] - cgd[S,S̄] @ V_p[S̄] - cgd_b[S,:] @ V_b
+        Note: plunger_subset is ignored in virtual-space mode since the
+        transformation is applied globally.
         """
+        _ = V_p  # Not used - we use pre-computed optimal physical voltages
+        _ = V_b
+        _ = plunger_subset
         p = self.params
 
-        if plunger_subset is None:
-            # Original independent computation
-            full_plunger_contrib = p.cgd_plungers @ V_p
-            self_plunger_contrib = p.cgd_plunger_diag * V_p
-            other_plunger_contrib = full_plunger_contrib - self_plunger_contrib
-            barrier_contrib = p.cgd_barriers @ V_b
-            return (p.n_target - other_plunger_contrib - barrier_contrib) / p.cgd_plunger_diag
+        # Get CURRENT VGM and offset from env (may have been updated by capacitance model)
+        model = self.env.array.model
+        current_vgm = np.array(model.gate_voltage_composer.virtual_gate_matrix, dtype=np.float64)
+        current_offset = np.array(model.gate_voltage_composer.virtual_gate_origin, dtype=np.float64)
+        vgm_inv = np.linalg.inv(current_vgm)
 
-        # Joint solve for subset
-        S = plunger_subset
-        S_bar = [i for i in range(p.n_dots) if i not in S]
+        # Transform optimal physical voltages to virtual space
+        # This matches env's: vg_optimal_virtual = np.linalg.inv(current_vgm) @ (vg_optimal_physical - plunger_offset)
+        vg_optimal_virtual = vgm_inv @ (p.optimal_vg_physical - current_offset)
 
-        # Build linear system: cgd[S,S] @ V_opt[S] = rhs
-        cgd_SS = p.cgd_plungers[np.ix_(S, S)]
-        rhs = p.n_target[S].copy()
-
-        # Subtract contribution from fixed plungers
-        if S_bar:
-            cgd_SS_bar = p.cgd_plungers[np.ix_(S, S_bar)]
-            rhs -= cgd_SS_bar @ V_p[S_bar]
-
-        # Subtract contribution from all barriers (treated as fixed)
-        rhs -= p.cgd_barriers[S, :] @ V_b
-
-        # Solve the k×k system
-        V_p_opt_subset = np.linalg.solve(cgd_SS, rhs)
-
-        # Build full result array
-        # For gates in subset: joint optimal
-        # For gates not in subset: independent optimal (for consistency)
-        V_p_opt = np.zeros(p.n_dots)
-        V_p_opt[S] = V_p_opt_subset
-
-        # Compute independent optimal for gates not in subset
-        for i in S_bar:
-            other_contrib = p.cgd_plungers[i, :] @ V_p - p.cgd_plunger_diag[i] * V_p[i]
-            barrier_contrib = p.cgd_barriers[i, :] @ V_b
-            V_p_opt[i] = (p.n_target[i] - other_contrib - barrier_contrib) / p.cgd_plunger_diag[i]
-
-        return V_p_opt
+        # Return only plunger voltages (exclude sensor gate at the end)
+        return vg_optimal_virtual[:p.n_dots]
 
     def _compute_barrier_optimal(
         self,
@@ -298,22 +297,23 @@ class PhysicalObjective:
         """
         Compute optimal barrier voltages.
 
-        Barrier equations are independent (no barrier-to-barrier coupling),
-        so joint vs independent gives the same result. The barrier_subset
-        parameter is accepted for API consistency but doesn't change the math.
+        Matches environment's calculate_ground_truth formula:
+            vb_optimal = vb_optimal_base - cbg @ vg_optimal_physical
 
-        Matches environment's calculate_barrier_ground_truth formula:
-            V_b_j_opt = -ln(tc_target / tc_base) / alpha_j - Cbg[j, :] @ V_plungers
+        Where:
+            vb_optimal_base = -ln(tc_target / tc_base) / alpha
+            cbg @ vg_optimal_physical is the gate contribution using PHYSICAL voltages
         """
-        _ = V_b  # Not used in barrier optimal computation
-        _ = barrier_subset  # No coupling between barriers
+        _ = V_p  # Not used - we use pre-computed optimal physical voltages
+        _ = V_b
+        _ = barrier_subset
         p = self.params
 
         # Base term from tunnel coupling target: -ln(tc_target/tc_base) / alpha_j
         base_term = p.log_tc_ratio / p.alpha
 
-        # Gate contribution: Cbg @ V_plungers (all plungers, treated as fixed)
-        gate_term = p.Cbg @ V_p
+        # Gate contribution: Cbg @ optimal_physical_voltages (including sensor)
+        gate_term = p.Cbg @ p.optimal_vg_physical
 
         return base_term - gate_term
 
@@ -356,7 +356,9 @@ def create_objective_fn(
 
 def get_distances(voltages: np.ndarray, env) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Get individual distances from locally optimal voltages.
+    Get individual distances from ground truth voltages.
+
+    Uses env's ground truth directly for consistency with RL training.
 
     Args:
         voltages: Concatenated voltage array [plungers, barriers]
@@ -365,15 +367,15 @@ def get_distances(voltages: np.ndarray, env) -> Tuple[np.ndarray, np.ndarray]:
     Returns:
         (plunger_distances, barrier_distances): Per-gate distance arrays
     """
-    obj = PhysicalObjective(env)
-    plunger_opt, barrier_opt = obj.get_optimal_voltages(voltages)
-
     num_plungers = env.num_plunger_voltages
     plunger_v = voltages[:num_plungers]
     barrier_v = voltages[num_plungers:]
 
-    plunger_dists = np.abs(plunger_v - plunger_opt)
-    barrier_dists = np.abs(barrier_v - barrier_opt)
+    plunger_gt = env.device_state["gate_ground_truth"]
+    barrier_gt = env.device_state["barrier_ground_truth"]
+
+    plunger_dists = np.abs(plunger_v - plunger_gt)
+    barrier_dists = np.abs(barrier_v - barrier_gt)
 
     return plunger_dists, barrier_dists
 
