@@ -12,6 +12,8 @@ from swarm.voltage_model.algorithms import (
     CustomPPOCatalog,
     CustomSACCatalog,
     CustomSACTorchRLModule,
+    CustomTD3Catalog,
+    CustomTD3TorchRLModule,
 )
 
 
@@ -86,15 +88,26 @@ def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = No
     barrier_config = neural_networks_config['barrier_policy']
 
     # Add max_seq_len to plunger model_config if using LSTM or transformer
-    backbone = plunger_config['backbone']
-    memory_layer = backbone.get('memory_layer')
+    plunger_backbone = plunger_config['backbone']
+    plunger_memory_layer = plunger_backbone.get('memory_layer')
 
-    if memory_layer == 'lstm':
-        lstm_config = backbone['lstm']
+    if plunger_memory_layer == 'lstm':
+        lstm_config = plunger_backbone['lstm']
         plunger_config['max_seq_len'] = lstm_config['max_seq_len']
-    elif memory_layer == 'transformer':
-        transformer_config = backbone['transformer']
+    elif plunger_memory_layer == 'transformer':
+        transformer_config = plunger_backbone['transformer']
         plunger_config['max_seq_len'] = transformer_config['max_seq_len']
+
+    # Add max_seq_len to barrier model_config if using LSTM or transformer
+    barrier_backbone = barrier_config['backbone']
+    barrier_memory_layer = barrier_backbone.get('memory_layer')
+
+    if barrier_memory_layer == 'lstm':
+        lstm_config = barrier_backbone['lstm']
+        barrier_config['max_seq_len'] = lstm_config['max_seq_len']
+    elif barrier_memory_layer == 'transformer':
+        transformer_config = barrier_backbone['transformer']
+        barrier_config['max_seq_len'] = transformer_config['max_seq_len']
 
     # Select algorithm-specific classes
     if algo == "ppo":
@@ -104,9 +117,10 @@ def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = No
         module_class = CustomSACTorchRLModule
         catalog_class = CustomSACCatalog
     elif algo == "td3":
-        raise ValueError("TD3 not yet implemented. Use 'ppo' or 'sac'")
+        module_class = CustomTD3TorchRLModule
+        catalog_class = CustomTD3Catalog
     else:
-        raise ValueError(f"Unsupported algorithm: {algo}. Supported: 'ppo', 'sac'")
+        raise ValueError(f"Unsupported algorithm: {algo}. Supported: 'ppo', 'sac', 'td3'")
 
     # Create single agent RLModule specs
     plunger_spec = RLModuleSpec(

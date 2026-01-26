@@ -1,9 +1,9 @@
-# SAC + IMPALA Configuration
-# Ablation study: IMPALA backbone (no memory)
+# TD3 + SimpleCNN Configuration
+# Self-contained config for TD3 algorithm
 
 # Default training parameters
 defaults:
-  num_iterations: 1000
+  num_iterations: 200
   delete_old_checkpoints: true
   save_distance_data: true
 
@@ -42,7 +42,7 @@ ray:
 
 # Algorithm Configuration
 rl_config:
-  algorithm: "SAC"
+  algorithm: "TD3"
 
   env_runners:
     num_env_runners: 12
@@ -54,7 +54,7 @@ rl_config:
     num_learners: 1
     num_gpus_per_learner: 0.75
 
-  # SAC training hyperparameters
+  # TD3 training hyperparameters
   training:
     # Common params
     grad_clip: 40.0
@@ -64,25 +64,26 @@ rl_config:
     training_intensity: 4.0
 
     # Batch size for sampling from replay buffer
-    train_batch_size_per_learner: 2048
+    train_batch_size_per_learner: 256
 
-    # SAC-specific params
-    gamma: 0
-    reward_scale: 10.0  # Scale rewards for better learning signal (only relevant to SAC)
-    actor_lr: 0.0003 # 3e-5
-    critic_lr: 0.0003 # 3e-4
-    alpha_lr: 0.0003 # 3e-4
+    # TD3-specific params
+    exploration_noise: 0.1  # Gaussian noise stddev for exploration
+    policy_noise: 0.2       # Target policy smoothing noise
+    noise_clip: 0.5         # Clipping for target policy noise
+    policy_frequency: 2     # Update actor every N critic updates
+
+    # Off-policy params (shared with SAC)
+    actor_lr: 0.0003
+    critic_lr: 0.0003
     twin_q: true
     tau: 0.005
-    initial_alpha: 0.2
-    target_entropy: "auto"
     n_step: 1
     clip_actions: true
     target_network_update_freq: 1
     num_steps_sampled_before_learning_starts: 1000
     replay_buffer_config:
       type: "MultiAgentPrioritizedEpisodeReplayBuffer"
-      capacity: 50000
+      capacity: 1000000
       alpha: 0.6
       beta: 0.4
 
@@ -95,7 +96,7 @@ rl_config:
       - "barrier_policy"
     count_steps_by: "agent_steps"
     free_log_std: false
-    log_std_bounds: [-5, 2]
+    log_std_bounds: [-10, 2]
 
 # Checkpoint configuration
 checkpoints:
@@ -110,11 +111,11 @@ gif_config:
   save_dir: "/tmp/shared_gif_captures"
   fps: 0.5
 
-# Neural Network Architecture - IMPALA backbone
+# Neural Network Architecture
 neural_networks:
   plunger_policy:
     backbone:
-      type: "IMPALA"
+      type: "SimpleCNN"
       mobilenet_version: "small"
       feature_size: 256
       load_pretrained: true
@@ -149,7 +150,7 @@ neural_networks:
 
   barrier_policy:
     backbone:
-      type: "IMPALA"
+      type: "SimpleCNN"
       mobilenet_version: "small"
       feature_size: 256
       freeze_backbone: false
