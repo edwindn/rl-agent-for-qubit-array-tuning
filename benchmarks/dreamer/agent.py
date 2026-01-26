@@ -308,6 +308,8 @@ class Agent(embodied.jax.Agent):
 
       B, T, H, W, C = video.shape
       grid = video.transpose((1, 2, 0, 3, 4)).reshape((T, H, B * W, C))
+      if grid.shape[-1] == 1:
+        grid = jnp.repeat(grid, 3, axis=-1)
       metrics[f'openloop/{key}'] = grid
 
     carry = (*new_carry, {k: data[k][:, -1] for k in self.act_space})

@@ -40,6 +40,13 @@ import ninjax_patch  # Patch ninjax 3.6.2 debug print (see ninjax_patch.py)
 
 from wrapper import make_dreamer_env
 
+# reset distance logging race file
+race_file = folder / "distance_logging.lock"
+try:
+    race_file.unlink()
+except FileNotFoundError:
+    pass
+
 
 def main(argv=None):
     from agent import Agent

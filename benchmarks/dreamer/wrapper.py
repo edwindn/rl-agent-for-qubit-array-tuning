@@ -11,6 +11,7 @@ Key conversions:
 - Reward: dict -> scalar sum
 """
 
+import os
 import sys
 from pathlib import Path
 import numpy as np
@@ -57,6 +58,12 @@ class DreamerEnvWrapper(gym.Env):
         self.use_barriers = use_barriers
         self.max_steps = max_steps
         self._seed = seed
+        self.iteration = -1
+        self._step_in_iteration = 0
+        self._race_file = Path(__file__).parent / "distance_logging.lock"
+        self.save_distance_data = self._attempt_claim_logging()
+        self._plunger_history = []
+        self._barrier_history = []
 
         # Create underlying environment with correct parameters
         # (must pass to constructor since reset() is called during __init__)
@@ -106,10 +113,25 @@ class DreamerEnvWrapper(gym.Env):
             dtype=np.float32
         )
 
+    def _attempt_claim_logging(self):
+        try:
+            fd = os.open(self._race_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return False
+        else:
+            os.close(fd)
+            return True
+
     def reset(self, seed=None, options=None):
         """Reset environment and convert observation."""
         obs, info = self._env.reset(seed=seed or self._seed, options=options)
         converted_obs = self._convert_observation(obs)
+        if self.save_distance_data:
+            self.iteration += 1
+            self._step_in_iteration = 0
+            self._plunger_history = []
+            self._barrier_history = []
+            
         return converted_obs, info
 
     def step(self, action):
@@ -140,7 +162,85 @@ class DreamerEnvWrapper(gym.Env):
         # Aggregate reward: sum of all gate and barrier rewards
         reward = np.sum(reward_dict["gates"]) + np.sum(reward_dict["barriers"])
 
+        if self.save_distance_data:
+            self._save_distances(env_action)
+            if terminated or truncated:
+                self._log_distance_plots()
+
         return converted_obs, float(reward), terminated, truncated, info
+
+    def _save_distances(self, action):
+        device_state = self._env.device_state
+
+        plunger_ground_truth = np.asarray(device_state["gate_ground_truth"])
+        barrier_ground_truth = np.asarray(device_state["barrier_ground_truth"])
+
+        current_gate_voltages = action["action_gate_voltages"]
+        current_barrier_voltages = action["action_barrier_voltages"]
+
+        if plunger_ground_truth.size and current_gate_voltages.size:
+            plunger_distances = np.abs(plunger_ground_truth - current_gate_voltages)
+        else:
+            raise RuntimeError("plunger_ground_truth or current_gate_voltages not found")
+
+        if barrier_ground_truth.size and current_barrier_voltages.size:
+            barrier_distances = np.abs(barrier_ground_truth - current_barrier_voltages)
+        else:
+            raise RuntimeError("barrier_ground_truth or current_barrier_voltages not found")
+
+        self._plunger_history.append(plunger_distances)
+        self._barrier_history.append(barrier_distances)
+        self._step_in_iteration += 1
+
+    def _log_distance_plots(self):
+        try:
+            import wandb
+            import matplotlib.pyplot as plt
+        except Exception:
+            return
+
+        if not getattr(wandb, "run", None):
+            return
+
+        if self._plunger_history:
+            plunger_array = np.stack(self._plunger_history, axis=0)
+            steps = np.arange(1, plunger_array.shape[0] + 1)
+
+            fig, ax = plt.subplots(figsize=(10, 6))
+            for idx in range(plunger_array.shape[1]):
+                ax.plot(steps, plunger_array[:, idx], label=f"plunger_{idx}", alpha=0.7)
+            ax.set_xlabel("Episode Step")
+            ax.set_ylabel("Distance from Ground Truth")
+            ax.set_title("Plunger Agent Distances")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            wandb.log(
+                {
+                    "agent_vision/plunger_distances": wandb.Image(fig),
+                    "iteration": self.iteration,
+                }
+            )
+            plt.close(fig)
+
+        if self._barrier_history:
+            barrier_array = np.stack(self._barrier_history, axis=0)
+            steps = np.arange(1, barrier_array.shape[0] + 1)
+
+            fig, ax = plt.subplots(figsize=(10, 6))
+            for idx in range(barrier_array.shape[1]):
+                ax.plot(steps, barrier_array[:, idx], label=f"barrier_{idx}", alpha=0.7)
+            ax.set_xlabel("Episode Step")
+            ax.set_ylabel("Distance from Ground Truth")
+            ax.set_title("Barrier Agent Distances")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            wandb.log(
+                {
+                    "agent_vision/barrier_distances": wandb.Image(fig),
+                    "iteration": self.iteration,
+                }
+            )
+            plt.close(fig)
 
     def _convert_observation(self, obs):
         """
