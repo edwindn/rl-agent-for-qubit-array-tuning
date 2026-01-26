@@ -195,7 +195,7 @@ def interpolate_to_scans(scan_numbers: list, values: list, target_scans: np.ndar
 def plot_convergence_curves(
     results_dir: Path,
     output_path: Path = None,
-    max_scans: int = 2000,
+    max_scans: int = 500,
     num_dots_filter: int = None,
     threshold: float = 0.5,
 ):
@@ -395,7 +395,7 @@ def main():
                         help="Output file path (auto-generated if not specified)")
     parser.add_argument("--num-dots", "-n", type=int, default=None,
                         help="Filter convergence plot to specific num_dots")
-    parser.add_argument("--max-scans", type=int, default=2000,
+    parser.add_argument("--max-scans", type=int, default=500,
                         help="Max scans for convergence plot x-axis")
     parser.add_argument("--threshold", "-t", type=float, default=0.5,
                         help="Success threshold in volts")

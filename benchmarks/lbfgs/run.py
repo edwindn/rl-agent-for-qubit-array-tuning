@@ -8,10 +8,11 @@ Usage:
 import argparse
 import math
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
-from scipy.optimize import minimize
+from scipy.optimize import minimize, basinhopping
 
 # Add benchmarks directory to path
 benchmarks_dir = Path(__file__).parent.parent
@@ -96,6 +97,112 @@ def run_joint_optimization(
         "nfev": result.nfev,
         "success": result.success,
         "history": history,
+    }
+
+
+def run_basin_hopping_optimization(
+    env,
+    x0: np.ndarray,
+    max_scans: int,
+    tracker: ConvergenceTracker,
+    niter: int = 100,
+    T: float = 1.0,
+    stepsize: float = 5.0,
+    ftol: float = 1e-6,
+    gtol: float = 1e-5,
+    maxcor: int = 10,
+) -> dict:
+    """
+    Run basin hopping with L-BFGS-B local minimization.
+
+    Basin hopping combines local optimization with random perturbations
+    to escape local minima and explore the global landscape.
+
+    Args:
+        env: QuantumDeviceEnv instance
+        x0: Initial voltage array [plungers, barriers]
+        max_scans: Maximum function evaluations (scans)
+        tracker: ConvergenceTracker for recording distances
+        niter: Number of basin hopping iterations
+        T: Temperature for Metropolis acceptance criterion
+        stepsize: Maximum step size for random perturbations (in volts)
+        ftol: L-BFGS-B function value convergence tolerance
+        gtol: L-BFGS-B gradient convergence tolerance
+        maxcor: L-BFGS-B memory size
+
+    Returns:
+        dict with optimization results
+    """
+    objective = create_objective_fn(env)
+    num_pairs = env.num_plunger_voltages - 1
+
+    # Track history
+    global_history = []
+    voltage_history = []
+
+    # Record initial distances (scan 0)
+    plunger_dists, barrier_dists = get_distances(x0, env)
+    tracker.record(plunger_dists, barrier_dists, scan_number=0)
+
+    def tracked_objective(v):
+        """Objective with tracking and early stopping."""
+        if max_scans is not None and len(global_history) >= max_scans:
+            return 1e10
+
+        obj_val = objective(v)
+        global_history.append(obj_val)
+        voltage_history.append(v.tolist())
+
+        # Record distances
+        plunger_dists, barrier_dists = get_distances(v, env)
+        tracker.record(plunger_dists, barrier_dists, scan_number=len(global_history))
+
+        return obj_val
+
+    # Get bounds from voltage ranges
+    ranges = get_voltage_ranges(env)
+    bounds = []
+    for i in range(env.num_plunger_voltages):
+        bounds.append((float(ranges["plunger_min"][i]), float(ranges["plunger_max"][i])))
+    for i in range(env.num_barrier_voltages):
+        bounds.append((float(ranges["barrier_min"][i]), float(ranges["barrier_max"][i])))
+
+    # L-BFGS-B minimizer options
+    minimizer_kwargs = {
+        'method': 'L-BFGS-B',
+        'bounds': bounds,
+        'options': {
+            'ftol': ftol,
+            'gtol': gtol,
+            'maxcor': maxcor,
+            'maxiter': 50,  # Limit iterations per local minimization
+        }
+    }
+
+    # Callback to check early stopping
+    def callback(x, f, accept):
+        return max_scans is not None and len(global_history) >= max_scans
+
+    # Run basin hopping
+    result = basinhopping(
+        tracked_objective,
+        x0,
+        niter=niter,
+        T=T,
+        stepsize=stepsize,
+        minimizer_kwargs=minimizer_kwargs,
+        callback=callback,
+    )
+
+    return {
+        "x": result.x,
+        "fun": result.fun,
+        "nit": result.nit,
+        "nfev": len(global_history),
+        "success": result.lowest_optimization_result.success,
+        "history": [],  # Basin hopping doesn't have per-iteration history
+        "global_history": global_history,
+        "voltage_history": voltage_history,
     }
 
 
@@ -206,6 +313,10 @@ def run_sliding_window_optimization(
             w_cap = window_cap
 
             def sub_objective(subset_v):
+                # Check max_scans limit BEFORE doing work
+                if max_scans is not None and len(global_history) >= max_scans:
+                    return 1e10
+
                 # Build full voltage vector with updated subset
                 full_v = current_voltages.copy()
                 for idx, p in enumerate(p_idx):
@@ -304,6 +415,10 @@ def run_single_trial(
     ftol: float = 1e-6,
     gtol: float = 1e-5,
     maxcor: int = 10,
+    # Basin hopping parameters
+    bh_niter: int = 100,
+    bh_T: float = 1.0,
+    bh_stepsize: float = 5.0,
 ) -> TrialResult:
     """Run a single optimization trial."""
     rng = np.random.default_rng(seed)
@@ -320,7 +435,18 @@ def run_single_trial(
         # For joint mode: scans = ceil(num_plungers/2) * iterations
         num_pairs = math.ceil(env.num_plunger_voltages / 2)
         num_scans = num_pairs * opt_result["nit"]
-    else:
+    elif mode == "basin_hopping":
+        opt_result = run_basin_hopping_optimization(
+            env, x0, max_scans, tracker,
+            niter=bh_niter,
+            T=bh_T,
+            stepsize=bh_stepsize,
+            ftol=ftol,
+            gtol=gtol,
+            maxcor=maxcor,
+        )
+        num_scans = len(opt_result.get("global_history", []))
+    else:  # pairwise
         opt_result = run_sliding_window_optimization(
             env, x0, tracker,
             max_iter_per_set=max_iter,
@@ -334,8 +460,8 @@ def run_single_trial(
             gtol=gtol,
             maxcor=maxcor,
         )
-        # For pairwise mode: scans = function evaluations
-        num_scans = opt_result["nfev"]
+        # For pairwise mode: scans = actual evaluations recorded in global_history
+        num_scans = len(opt_result.get("global_history", []))
 
     # Get final distances
     plunger_dists, barrier_dists = get_distances(opt_result["x"], env)
@@ -367,9 +493,9 @@ def run_single_trial(
 
 def main():
     parser = argparse.ArgumentParser(description="L-BFGS-B benchmark for quantum dot tuning")
-    parser.add_argument("--mode", choices=["joint", "pairwise"], default="pairwise", help="Optimization mode")
+    parser.add_argument("--mode", choices=["joint", "pairwise", "basin_hopping"], default="pairwise", help="Optimization mode")
     parser.add_argument("--num_dots", type=int, default=2, help="Number of quantum dots")
-    parser.add_argument("--num_trials", type=int, default=10, help="Number of trials to run")
+    parser.add_argument("--num_trials", type=int, default=100, help="Number of trials to run")
     parser.add_argument("--max_iter", type=int, default=500, help="Maximum iterations per trial")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed")
     parser.add_argument("--use_barriers", action="store_true", default=True, help="Include barrier optimization")
@@ -384,6 +510,10 @@ def main():
     parser.add_argument("--ftol", type=float, default=1e-6, help="L-BFGS-B function value convergence tolerance")
     parser.add_argument("--gtol", type=float, default=1e-5, help="L-BFGS-B gradient convergence tolerance")
     parser.add_argument("--maxcor", type=int, default=10, help="L-BFGS-B memory size (number of corrections)")
+    # Basin hopping parameters
+    parser.add_argument("--bh_niter", type=int, default=100, help="Basin hopping iterations")
+    parser.add_argument("--bh_T", type=float, default=1.0, help="Basin hopping temperature")
+    parser.add_argument("--bh_stepsize", type=float, default=5.0, help="Basin hopping step size in volts")
     parser.add_argument("--output", type=str, default=None, help="Output file path")
     args = parser.parse_args()
 
@@ -400,6 +530,8 @@ def main():
         print(f"  Max sweeps: {args.max_sweeps}")
         print(f"  Cap: {args.cap_per_plunger} V^2/plunger, {args.cap_per_barrier} V^2/barrier")
         print(f"  Convergence: {args.threshold_per_plunger} V/plunger, {args.threshold_per_barrier} V/barrier")
+    if args.mode == "basin_hopping":
+        print(f"  Basin hopping: niter={args.bh_niter}, T={args.bh_T}, stepsize={args.bh_stepsize}V")
     print(f"  L-BFGS-B: ftol={args.ftol}, gtol={args.gtol}, maxcor={args.maxcor}")
     print()
 
@@ -430,6 +562,7 @@ def main():
     )
     tracker = ConvergenceTracker.from_env(temp_env)
 
+    start_time = time.time()
     for trial_idx in range(args.num_trials):
         trial_seed = base_rng.integers(0, 2**31)
 
@@ -457,6 +590,9 @@ def main():
             ftol=args.ftol,
             gtol=args.gtol,
             maxcor=args.maxcor,
+            bh_niter=args.bh_niter,
+            bh_T=args.bh_T,
+            bh_stepsize=args.bh_stepsize,
         )
 
         result.trials.append(trial_result)
@@ -466,8 +602,12 @@ def main():
               f"(obj={trial_result.final_objective:.4f}, scans={trial_result.num_scans})")
 
     # Compute and display stats
+    # Record total time
+    result.total_time_seconds = time.time() - start_time
+
     result.compute_stats()
     print_summary(result)
+    print(f"Total time: {result.total_time_seconds:.1f}s ({result.total_time_seconds/args.num_trials:.1f}s/trial)")
 
     # Save results
     output_path = save_results(result, args.output)

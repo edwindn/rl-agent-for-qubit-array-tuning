@@ -57,6 +57,9 @@ class BenchmarkResult:
     xatol: Optional[float] = None
     fatol: Optional[float] = None
 
+    # Timing
+    total_time_seconds: Optional[float] = None
+
     # Aggregated results
     success_rate: float = 0.0
     mean_iterations: float = 0.0

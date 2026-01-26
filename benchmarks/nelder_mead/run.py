@@ -8,6 +8,7 @@ Usage:
 import argparse
 import math
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -203,6 +204,11 @@ def run_sliding_window_optimization(
             w_cap = window_cap
 
             def sub_objective(subset_v):
+                # Check max_scans limit BEFORE doing work
+                if max_scans is not None and len(global_history) >= max_scans:
+                    # Return high value to stop optimization
+                    return 1e10
+
                 # Build full voltage vector with updated subset
                 full_v = current_voltages.copy()
                 for idx, p in enumerate(p_idx):
@@ -350,8 +356,8 @@ def run_single_trial(
             xatol=xatol,
             fatol=fatol,
         )
-        # For pairwise mode: scans = function evaluations
-        num_scans = opt_result["nfev"]
+        # For pairwise mode: scans = actual evaluations recorded in global_history
+        num_scans = len(opt_result.get("global_history", []))
 
     # Get final distances
     plunger_dists, barrier_dists = get_distances(opt_result["x"], env)
@@ -385,7 +391,7 @@ def main():
     parser = argparse.ArgumentParser(description="Nelder-Mead benchmark for quantum dot tuning")
     parser.add_argument("--mode", choices=["joint", "pairwise"], default="pairwise", help="Optimization mode")
     parser.add_argument("--num_dots", type=int, default=2, help="Number of quantum dots")
-    parser.add_argument("--num_trials", type=int, default=10, help="Number of trials to run")
+    parser.add_argument("--num_trials", type=int, default=100, help="Number of trials to run")
     parser.add_argument("--max_iter", type=int, default=500, help="Maximum iterations per trial")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed")
     parser.add_argument("--use_barriers", action="store_true", default=True, help="Include barrier optimization")
@@ -453,6 +459,7 @@ def main():
     )
     tracker = ConvergenceTracker.from_env(temp_env)
 
+    start_time = time.time()
     for trial_idx in range(args.num_trials):
         trial_seed = base_rng.integers(0, 2**31)
 
@@ -490,8 +497,12 @@ def main():
               f"(obj={trial_result.final_objective:.4f}, scans={trial_result.num_scans})")
 
     # Compute and display stats
+    # Record total time
+    result.total_time_seconds = time.time() - start_time
+
     result.compute_stats()
     print_summary(result)
+    print(f"Total time: {result.total_time_seconds:.1f}s ({result.total_time_seconds/args.num_trials:.1f}s/trial)")
 
     # Save results
     output_path = save_results(result, args.output)

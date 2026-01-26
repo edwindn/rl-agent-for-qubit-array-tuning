@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +24,7 @@ from botorch.fit import fit_gpytorch_mll
 from botorch.acquisition import LogExpectedImprovement, qLogExpectedImprovement
 from botorch.optim import optimize_acqf
 from gpytorch.mlls import ExactMarginalLogLikelihood
-from torch.quasirandom import SobolEngine
+from scipy.stats import qmc
 
 # Add benchmarks directory to path
 benchmarks_dir = Path(__file__).parent.parent
@@ -64,7 +65,7 @@ def generate_initial_points(
     seed: int = None,
 ) -> Tensor:
     """
-    Generate initial points using Sobol sequence.
+    Generate initial points using Latin Hypercube Sampling.
 
     Args:
         bounds: Tensor of shape (2, d) with [lower_bounds, upper_bounds]
@@ -75,9 +76,10 @@ def generate_initial_points(
         Tensor of shape (n_points, d) with initial points in original space
     """
     d = bounds.shape[1]
-    sobol = SobolEngine(dimension=d, scramble=True, seed=int(seed) if seed is not None else None)
+    sampler = qmc.LatinHypercube(d=d, seed=int(seed) if seed is not None else None)
     # Generate points in [0, 1]^d
-    unit_points = sobol.draw(n_points).to(dtype=bounds.dtype, device=bounds.device)
+    unit_points = sampler.random(n=n_points)
+    unit_points = torch.tensor(unit_points, dtype=bounds.dtype, device=bounds.device)
     # Scale to bounds
     return bounds[0] + (bounds[1] - bounds[0]) * unit_points
 
@@ -630,8 +632,8 @@ def run_single_trial(
             seed=seed,
             device=device,
         )
-        # For pairwise mode: scans = function evaluations
-        num_scans = opt_result["nfev"]
+        # For pairwise mode: scans = actual evaluations recorded in global_history
+        num_scans = len(opt_result.get("global_history", []))
 
     # Get final distances
     plunger_dists, barrier_dists = get_distances(opt_result["x"], env)
@@ -673,7 +675,7 @@ def main():
         "--mode", choices=["joint", "pairwise"], default="pairwise", help="Optimization mode"
     )
     parser.add_argument("--num_dots", type=int, default=2, help="Number of quantum dots")
-    parser.add_argument("--num_trials", type=int, default=10, help="Number of trials to run")
+    parser.add_argument("--num_trials", type=int, default=100, help="Number of trials to run")
     parser.add_argument(
         "--max_iter",
         type=int,
@@ -702,7 +704,7 @@ def main():
     parser.add_argument(
         "--n_calls_per_window",
         type=int,
-        default=30,
+        default=20,
         help="Function evaluations per window (pairwise mode)",
     )
     parser.add_argument(
@@ -754,7 +756,7 @@ def main():
     print(f"  Dots: {args.num_dots}, Barriers: {use_barriers}")
     print(f"  Trials: {args.num_trials}")
     print(f"  Seed: {args.seed}, Success threshold: {args.threshold}V")
-    print(f"  Sobol initial points: {args.n_initial}, Kernel: Matern 5/2")
+    print(f"  Latin Hypercube initial points: {args.n_initial}, Kernel: Matern 5/2")
     print(f"  Batch size: {args.batch_size} ({'sequential EI' if args.batch_size == 1 else 'q-EI'})")
     if args.max_scans:
         print(f"  Max scans: {args.max_scans}")
@@ -795,6 +797,7 @@ def main():
     )
     tracker = ConvergenceTracker.from_env(temp_env)
 
+    start_time = time.time()
     for trial_idx in range(args.num_trials):
         trial_seed = base_rng.integers(0, 2**31)
 
@@ -833,9 +836,13 @@ def main():
             f"(obj={trial_result.final_objective:.4f}, scans={trial_result.num_scans})"
         )
 
+    # Record total time
+    result.total_time_seconds = time.time() - start_time
+
     # Compute and display stats
     result.compute_stats()
     print_summary(result)
+    print(f"Total time: {result.total_time_seconds:.1f}s ({result.total_time_seconds/args.num_trials:.1f}s/trial)")
 
     # Save results
     output_path = save_results(result, args.output)

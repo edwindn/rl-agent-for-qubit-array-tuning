@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+import time
 from pathlib import Path
 import numpy as np
 
@@ -147,6 +148,7 @@ def main():
     tracker = ConvergenceTracker.from_env(first_env)
     print()
 
+    start_time = time.time()
     for trial_idx in range(args.num_trials):
         trial_seed = base_rng.integers(0, 2**31)
 
@@ -171,8 +173,12 @@ def main():
         print(f"Trial {trial_idx + 1}/{args.num_trials}: {status} "
               f"(obj={trial_result.final_objective:.4f}, samples={trial_result.num_scans})")
 
+    # Record total time
+    result.total_time_seconds = time.time() - start_time
+
     result.compute_stats()
     print_summary(result)
+    print(f"Total time: {result.total_time_seconds:.1f}s ({result.total_time_seconds/args.num_trials:.1f}s/trial)")
 
     output_path = save_results(result, args.output)
     print(f"Results saved to: {output_path}")
