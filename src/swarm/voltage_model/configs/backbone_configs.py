@@ -8,10 +8,17 @@ from ray.rllib.core.models.configs import CNNEncoderConfig
 
 @dataclass
 class SimpleCNNConfig(CNNEncoderConfig):
-    """CNN configuration for quantum charge stability diagrams."""
+    """CNN configuration based on DQN Nature paper (Mnih et al., 2015).
+
+    Default architecture matches the DeepMind DQN paper:
+    - Conv1: 32 filters, 8x8 kernel, stride 4, ReLU
+    - Conv2: 64 filters, 4x4 kernel, stride 2, ReLU
+    - Conv3: 64 filters, 3x3 kernel, stride 1, ReLU
+    - FC: 512 units, ReLU
+    """
 
     conv_layers: Optional[List[Dict]] = None
-    feature_size: int = 256
+    feature_size: int = 512
     adaptive_pooling: bool = True
 
     def __post_init__(self):
@@ -21,9 +28,10 @@ class SimpleCNNConfig(CNNEncoderConfig):
                 for layer in self.conv_layers
             ]
         else:
+            # DQN Nature paper architecture (Mnih et al., 2015)
             self.cnn_filter_specifiers = [
-                [16, [4, 4], 2],
-                [32, [3, 3], 2],
+                [32, [8, 8], 4],
+                [64, [4, 4], 2],
                 [64, [3, 3], 1],
             ]
 

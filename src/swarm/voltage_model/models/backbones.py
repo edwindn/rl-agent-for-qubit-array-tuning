@@ -25,7 +25,14 @@ if TYPE_CHECKING:
 # =============================================================================
 
 class SimpleCNN(TorchModel, Encoder):
-    """CNN encoder for quantum charge stability diagrams."""
+    """CNN encoder based on DQN Nature paper (Mnih et al., 2015).
+
+    Architecture:
+    - Conv1: 32 filters, 8x8 kernel, stride 4, ReLU (no padding)
+    - Conv2: 64 filters, 4x4 kernel, stride 2, ReLU (no padding)
+    - Conv3: 64 filters, 3x3 kernel, stride 1, ReLU (no padding)
+    - FC: 512 units, ReLU
+    """
 
     def __init__(self, config: "SimpleCNNConfig"):
         TorchModel.__init__(self, config)
@@ -36,9 +43,10 @@ class SimpleCNN(TorchModel, Encoder):
         cnn_layers = []
         in_channels = config.input_dims[-1]
 
+        # DQN Nature paper uses valid convolutions (no padding)
         for out_channels, kernel_size, stride in config.cnn_filter_specifiers:
             cnn_layers.extend([
-                nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding=1),
+                nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding=0),
                 nn.ReLU() if config.cnn_activation == "relu" else nn.Tanh(),
             ])
             in_channels = out_channels

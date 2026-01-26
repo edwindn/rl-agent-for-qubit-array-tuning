@@ -141,7 +141,13 @@ neural_networks:
       freeze_backbone: false
       adaptive_pooling: true
       num_res_blocks: 2
-      memory_layer: null
+      memory_layer: "lstm"
+      lstm:
+        hidden_dim: 128
+        num_layers: 1
+        max_seq_len: 10
+        store_voltages: false
+        voltage_hidden_dim: 16
     policy_head:
       hidden_layers: [32]
       activation: "relu"
