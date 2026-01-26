@@ -1,0 +1,62 @@
+# Env configuration
+# Contains all configs related to the environment and the rl algorithm
+
+simulator:
+  # Max steps in a single training rollout
+  max_steps: 50
+
+  num_dots: 4
+
+  use_barriers: true
+
+  use_deltas: false # Whether the plunger agents' output is a ΔV or V
+  
+  delta_max: 5.0 #only used if use_deltas is true
+
+  constant_voltage_offset: {"min": 0, "max": 0}
+  
+  full_plunger_range_width: {"min": 30, "max": 30} #range in V of plungers
+
+  window_delta_range: {"min": 1.5, "max": 2.0} #half range in V for a single scan/sweep (goes from -range to +range)
+
+  full_barrier_range_width: {"min": 5, "max": 5} #range in V of barriers
+
+  resolution: 100
+
+  # Radial noise: zero within zero_radius of ground truth, then linearly increasing
+  radial_noise:
+    enabled: false
+    lower: {"min": 20, "max": 30}
+    ramp_range: {"min": 5, "max": 10}
+    total_noise_range: {"min": 30, "max": 40}
+    # zero_radius: {"min": 10, "max": 10}      # No noise within this distance (V) from ground truth
+    # ramp_distance: {"min": 20, "max": 20}    # Distance (V) over which noise ramps from 0 to max_amplitude
+    # full_noise_distance: {"min": 30, "max": 40} # Distance beyond which we replace scans with white noise
+    max_amplitude: 0.05   # Cap on noise amplitude
+
+    # low: 35-40
+    # medium: 20-25
+    # high: 10-20
+
+reward:
+  # Gate/Plunger reward configuration
+  gate_ramp_start: 40.0 # Distance from ground truth where reward = 0
+  gate_quadratic_start: 1.0 # Distance where curved region begins (reward = 0.5)
+  gate_curve_type: "constant" # Type of curve for final approach: "polynomial", "exponential", "linear", "constant"
+  gate_curve_exponent: 2.0 # Exponent for polynomial/exponential curves
+
+  # Barrier reward configuration (simple linear)
+  barrier_ramp_start: 6.0 # Distance from ground truth where reward = 0 (linear to 1.0 at ground truth)
+
+
+capacitance_model:
+  update_method: "perfect"  # Options: null, "perfect", "fake", "ema", "bayesian", "kriging", "kalman"
+  nearest_neighbour: true # set to true if the ML model outputs two values per prediction (gate-dot RL and LR couplings in this order)
+  # note that the perfect method will also remove any cross-talk with and between the barriers
+  # Kalman filter settings (only used when update_method: "kalman")
+  variance_threshold: 0.05  # Reject predictions with variance > this (std > 0.22)
+  process_noise: 0.0  # Set > 0 for time-varying capacitance
+
+init:
+  debug: false
+  seed: 42

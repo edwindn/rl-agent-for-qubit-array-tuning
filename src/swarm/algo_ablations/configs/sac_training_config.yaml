@@ -1,0 +1,166 @@
+# SAC + IMPALA Configuration
+# Ablation study: IMPALA backbone (no memory)
+
+# Default training parameters
+defaults:
+  num_iterations: 200
+  delete_old_checkpoints: true
+  save_distance_data: true
+
+# Weights & Biases configuration
+wandb:
+  entity: "rl_agents_for_tuning"
+  project: "AlgorithmAblations"
+  ema_period: 20
+
+# Ray cluster configuration
+ray:
+  include_dashboard: false
+  log_to_driver: false
+  logging_level: 40
+
+  runtime_env:
+    excludes:
+      - "dataset"
+      - "dataset_v1"
+      - "wandb"
+      - "outputs"
+      - "test_outputs"
+      - "checkpoints"
+      - "weights*"
+      - "*dataset*"
+
+    env_vars:
+      JAX_PLATFORM_NAME: "cuda"
+      JAX_PLATFORMS: "cuda"
+      PYTHONWARNINGS: "ignore::DeprecationWarning,ignore::FutureWarning"
+      RAY_DISABLE_IMPORT_WARNING: "1"
+      RAY_METRICS_EXPORT_INTERVAL_MS: "0"
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+      XLA_PYTHON_CLIENT_MEM_FRACTION: "0.25"
+      JAX_ENABLE_X64: "true"
+
+# Algorithm Configuration
+rl_config:
+  algorithm: "SAC"
+
+  env_runners:
+    num_env_runners: 12
+    rollout_fragment_length: 50
+    sample_timeout_s: 600.0
+    num_gpus_per_env_runner: 0.45
+
+  learners:
+    num_learners: 1
+    num_gpus_per_learner: 0.75
+
+  # SAC training hyperparameters
+  training:
+    # Common params
+    grad_clip: 40.0
+    grad_clip_by: "norm"
+
+    # Training intensity: gradient updates per env step
+    training_intensity: 4.0
+
+    # Batch size for sampling from replay buffer
+    train_batch_size_per_learner: 2048
+
+    # SAC-specific params
+    gamma: 0
+    reward_scale: 10.0  # Scale rewards for better learning signal (only relevant to SAC)
+    actor_lr: 0.0003 # 3e-5
+    critic_lr: 0.0003 # 3e-4
+    alpha_lr: 0.0003 # 3e-4
+    twin_q: true
+    tau: 0.005
+    initial_alpha: 0.2
+    target_entropy: "auto"
+    n_step: 1
+    clip_actions: true
+    target_network_update_freq: 1
+    num_steps_sampled_before_learning_starts: 1000
+    replay_buffer_config:
+      type: "MultiAgentPrioritizedEpisodeReplayBuffer"
+      capacity: 50000
+      alpha: 0.6
+      beta: 0.4
+
+  multi_agent:
+    policies:
+      - "plunger_policy"
+      - "barrier_policy"
+    policies_to_train:
+      - "plunger_policy"
+      - "barrier_policy"
+    count_steps_by: "agent_steps"
+    free_log_std: false
+    log_std_bounds: [-5, 2]
+
+# Checkpoint configuration
+checkpoints:
+  save_dir: "./checkpoints"
+  upload_best_only: true
+
+# GIF capture configuration
+gif_config:
+  enabled: true
+  target_agent_type: "plunger"
+  target_agent_indices: [1]
+  save_dir: "/tmp/shared_gif_captures"
+  fps: 0.5
+
+# Neural Network Architecture - IMPALA backbone
+neural_networks:
+  plunger_policy:
+    backbone:
+      type: "IMPALA"
+      mobilenet_version: "small"
+      feature_size: 256
+      load_pretrained: true
+      freeze_backbone: false
+      adaptive_pooling: true
+      num_res_blocks: 2
+      memory_layer: null
+      lstm:
+        hidden_dim: 256
+        num_layers: 1
+        max_seq_len: 1
+        store_voltages: false
+        voltage_hidden_dim: 16
+      transformer:
+        latent_size: 128
+        num_attention_heads: 4
+        num_layers: 1
+        max_seq_len: 10
+        feedforward_dim: null
+        dropout: 0.1
+        pooling_mode: "mean"
+        use_ctlpe: true
+        add_pos_embeddings: false
+    policy_head:
+      hidden_layers: [64, 64, 32]
+      activation: "relu"
+      use_attention: false
+    value_head:
+      hidden_layers: [64, 64, 32]
+      activation: "relu"
+      use_attention: false
+
+  barrier_policy:
+    backbone:
+      type: "IMPALA"
+      mobilenet_version: "small"
+      feature_size: 256
+      freeze_backbone: false
+      adaptive_pooling: true
+      num_res_blocks: 2
+      memory_layer: null
+    policy_head:
+      hidden_layers: [32]
+      activation: "relu"
+      use_attention: false
+    value_head:
+      hidden_layers: [32]
+      activation: "relu"
+      use_attention: false
