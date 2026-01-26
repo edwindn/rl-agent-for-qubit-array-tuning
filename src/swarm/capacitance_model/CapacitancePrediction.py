@@ -199,13 +199,193 @@ class CapacitancePredictionModel(nn.Module):
         return values, log_vars
 
 
+# =============================================================================
+# Models with Separate NN and NNN Heads
+# =============================================================================
+
+class SeparateHeadMobileNet(nn.Module):
+    """
+    MobileNetV3-based model with SEPARATE heads for NN and NNN predictions.
+
+    This architecture addresses the scale mismatch between NN and NNN:
+    - NN values have std ~0.41
+    - NNN values have std ~0.14
+
+    With separate heads, each can learn at its own scale without gradient interference.
+    """
+
+    def __init__(self, mobilenet="small"):
+        super().__init__()
+
+        # Load pretrained MobileNetV3 backbone
+        if mobilenet == "small":
+            self.backbone = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
+            feature_dim = 576
+        elif mobilenet == "large":
+            self.backbone = models.mobilenet_v3_large(weights=models.MobileNet_V3_Large_Weights.DEFAULT)
+            feature_dim = 960
+
+        # Modify first conv layer to accept 1 channel instead of 3
+        original_conv1 = self.backbone.features[0][0]
+        self.backbone.features[0][0] = nn.Conv2d(
+            in_channels=1,
+            out_channels=original_conv1.out_channels,
+            kernel_size=original_conv1.kernel_size,
+            stride=original_conv1.stride,
+            padding=original_conv1.padding,
+            bias=original_conv1.bias
+        )
+
+        # Initialize new conv1 weights
+        with torch.no_grad():
+            self.backbone.features[0][0].weight = nn.Parameter(
+                original_conv1.weight[:, :1, :, :].clone()
+            )
+
+        # Remove the final classification layer
+        self.backbone.classifier = nn.Identity()
+
+        # NN head: 1 value + 1 log_var (nearest neighbor coupling)
+        self.nn_value_head = nn.Sequential(
+            nn.Linear(feature_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+        )
+        self.nn_confidence_head = nn.Sequential(
+            nn.Linear(feature_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+        )
+
+        # NNN head: 2 values + 2 log_vars (next-nearest neighbor couplings)
+        self.nnn_value_head = nn.Sequential(
+            nn.Linear(feature_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 2),
+        )
+        self.nnn_confidence_head = nn.Sequential(
+            nn.Linear(feature_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 2),
+        )
+
+    def forward(self, x):
+        """
+        Forward pass with separate NN and NNN outputs.
+
+        Returns:
+            dict with 'nn' and 'nnn' keys, each containing (values, log_vars)
+        """
+        features = self.backbone(x)
+
+        nn_values = self.nn_value_head(features)
+        nn_log_vars = self.nn_confidence_head(features)
+
+        nnn_values = self.nnn_value_head(features)
+        nnn_log_vars = self.nnn_confidence_head(features)
+
+        return {
+            'nn': (nn_values, nn_log_vars),
+            'nnn': (nnn_values, nnn_log_vars)
+        }
+
+    def forward_combined(self, x):
+        """
+        Forward pass returning combined outputs for backward compatibility.
+
+        Returns:
+            values: (batch_size, 3) - [NN, NNN_right, NNN_left]
+            log_vars: (batch_size, 3)
+        """
+        out = self.forward(x)
+        values = torch.cat([out['nn'][0], out['nnn'][0]], dim=1)
+        log_vars = torch.cat([out['nn'][1], out['nnn'][1]], dim=1)
+        return values, log_vars
+
+
+class SeparateHeadIMPALA(nn.Module):
+    """
+    IMPALA-based model with SEPARATE heads for NN and NNN predictions.
+
+    Lightweight version (~100-200K params) with the same separate head architecture.
+    """
+
+    def __init__(self, channels=None, num_res_blocks=2):
+        super().__init__()
+
+        self.backbone = IMPALABackbone(in_channels=1, channels=channels, num_res_blocks=num_res_blocks)
+        feature_dim = self.backbone.feature_dim
+
+        # NN head: 1 value + 1 log_var
+        self.nn_value_head = nn.Sequential(
+            nn.Linear(feature_dim, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, 1),
+        )
+        self.nn_confidence_head = nn.Sequential(
+            nn.Linear(feature_dim, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, 1),
+        )
+
+        # NNN head: 2 values + 2 log_vars
+        self.nnn_value_head = nn.Sequential(
+            nn.Linear(feature_dim, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, 2),
+        )
+        self.nnn_confidence_head = nn.Sequential(
+            nn.Linear(feature_dim, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, 2),
+        )
+
+    def forward(self, x):
+        """Forward pass with separate NN and NNN outputs."""
+        features = self.backbone(x)
+
+        nn_values = self.nn_value_head(features)
+        nn_log_vars = self.nn_confidence_head(features)
+
+        nnn_values = self.nnn_value_head(features)
+        nnn_log_vars = self.nnn_confidence_head(features)
+
+        return {
+            'nn': (nn_values, nn_log_vars),
+            'nnn': (nnn_values, nnn_log_vars)
+        }
+
+    def forward_combined(self, x):
+        """Forward pass returning combined outputs for backward compatibility."""
+        out = self.forward(x)
+        values = torch.cat([out['nn'][0], out['nnn'][0]], dim=1)
+        log_vars = torch.cat([out['nn'][1], out['nnn'][1]], dim=1)
+        return values, log_vars
+
+
 class CapacitanceLoss(nn.Module):
     """
     Combined loss function for capacitance prediction with uncertainty.
-    
+
     Combines MSE loss for values with negative log-likelihood loss for confidence.
     """
-    
+
     def __init__(self, mse_weight=1.0, nll_weight=1.0, beta=0.5):
         super(CapacitanceLoss, self).__init__()
         self.mse_weight = mse_weight
@@ -223,57 +403,168 @@ class CapacitanceLoss(nn.Module):
         if self.beta > 0:
             weights = var.detach() ** self.beta
             nll = nll * weights
-        
+
         return nll.mean(), errors
 
-    
+
     def forward(self, predictions, targets):
         """
         Compute combined loss
-        
+
         Args:
             predictions: Tuple of (values, log_vars) from model
             targets: Ground truth values (batch_size, 3)
-            
+
         Returns:
             total_loss: Combined loss
             mse_loss: MSE component
             nll_loss: Negative log-likelihood component
         """
         values, log_vars = predictions
-        
+
         # MSE loss for the predicted values
         mse_loss = F.mse_loss(values, targets)
-        
+
         # Negative log-likelihood loss with predicted uncertainty
         nll_loss, squared_errors = self._beta_nll_loss(values, log_vars, targets)
 
         # Combined loss
         total_loss = self.mse_weight * mse_loss + self.nll_weight * nll_loss
-        
+
         return total_loss, mse_loss, nll_loss, log_vars, squared_errors
 
 
-def create_model(output_size, backbone="mobilenet", mobilenet="small", impala_channels=None, num_res_blocks=2):
+class SeparateHeadLoss(nn.Module):
+    """
+    Loss function for models with separate NN and NNN heads.
+
+    Computes losses separately for NN (1 output) and NNN (2 outputs),
+    allowing each to learn at its own scale without gradient interference.
+    """
+
+    def __init__(self, mse_weight=1.0, nll_weight=1.0, beta=0.5, nnn_weight=1.0):
+        super(SeparateHeadLoss, self).__init__()
+        self.mse_weight = mse_weight
+        self.nll_weight = nll_weight
+        self.beta = beta
+        self.nnn_weight = nnn_weight  # Extra weight for NNN loss if needed
+
+    def _beta_nll_loss(self, mean, logvar, target):
+        """Beta NLL loss to improve variance prediction stability"""
+        var = torch.exp(logvar)
+        errors = (mean - target) ** 2
+
+        nll = 0.5 * (logvar + errors / var)
+
+        if self.beta > 0:
+            weights = var.detach() ** self.beta
+            nll = nll * weights
+
+        return nll.mean(), errors
+
+    def forward(self, predictions, targets):
+        """
+        Compute separate losses for NN and NNN heads.
+
+        Args:
+            predictions: Dict with 'nn' and 'nnn' keys, each containing (values, log_vars)
+                - nn: (batch_size, 1), (batch_size, 1)
+                - nnn: (batch_size, 2), (batch_size, 2)
+            targets: Ground truth values (batch_size, 3) - [NN, NNN_right, NNN_left]
+
+        Returns:
+            total_loss: Combined loss
+            loss_dict: Dictionary with individual loss components
+        """
+        nn_values, nn_log_vars = predictions['nn']
+        nnn_values, nnn_log_vars = predictions['nnn']
+
+        # Split targets
+        nn_targets = targets[:, 0:1]  # (batch_size, 1)
+        nnn_targets = targets[:, 1:3]  # (batch_size, 2)
+
+        # NN losses
+        nn_mse = F.mse_loss(nn_values, nn_targets)
+        nn_nll, nn_errors = self._beta_nll_loss(nn_values, nn_log_vars, nn_targets)
+        nn_loss = self.mse_weight * nn_mse + self.nll_weight * nn_nll
+
+        # NNN losses (computed separately, at its own scale)
+        nnn_mse = F.mse_loss(nnn_values, nnn_targets)
+        nnn_nll, nnn_errors = self._beta_nll_loss(nnn_values, nnn_log_vars, nnn_targets)
+        nnn_loss = self.mse_weight * nnn_mse + self.nll_weight * nnn_nll
+
+        # Combined loss
+        total_loss = nn_loss + self.nnn_weight * nnn_loss
+
+        # Combine for backward compatibility with training loop
+        all_values = torch.cat([nn_values, nnn_values], dim=1)
+        all_log_vars = torch.cat([nn_log_vars, nnn_log_vars], dim=1)
+        all_errors = torch.cat([nn_errors, nnn_errors], dim=1)
+
+        # Overall MSE and NLL for logging
+        mse_loss = (nn_mse + nnn_mse) / 2
+        nll_loss = (nn_nll + nnn_nll) / 2
+
+        # Store separate losses for detailed logging
+        self._last_nn_mse = nn_mse.item()
+        self._last_nn_nll = nn_nll.item()
+        self._last_nnn_mse = nnn_mse.item()
+        self._last_nnn_nll = nnn_nll.item()
+        self._last_nn_loss = nn_loss.item()
+        self._last_nnn_loss = nnn_loss.item()
+
+        return total_loss, mse_loss, nll_loss, all_log_vars, all_errors
+
+    def get_separate_losses(self):
+        """Return the last computed separate NN and NNN losses for logging."""
+        return {
+            'nn_mse': getattr(self, '_last_nn_mse', 0.0),
+            'nn_nll': getattr(self, '_last_nn_nll', 0.0),
+            'nn_loss': getattr(self, '_last_nn_loss', 0.0),
+            'nnn_mse': getattr(self, '_last_nnn_mse', 0.0),
+            'nnn_nll': getattr(self, '_last_nnn_nll', 0.0),
+            'nnn_loss': getattr(self, '_last_nnn_loss', 0.0),
+        }
+
+
+def create_model(output_size, backbone="mobilenet", mobilenet="small", impala_channels=None, num_res_blocks=2, separate_heads=False):
     """
     Factory function to create the model.
 
     Args:
-        output_size: Number of output values to predict
+        output_size: Number of output values to predict (ignored if separate_heads=True)
         backbone: "mobilenet" or "impala"
         mobilenet: "small" or "large" (only used if backbone="mobilenet")
         impala_channels: Channel list for IMPALA (default [16, 32, 32])
         num_res_blocks: Number of ResNet blocks per stage for IMPALA (default 2)
+        separate_heads: If True, use separate NN and NNN heads (recommended for NNN mode)
     """
-    if backbone == "impala":
-        return IMPALACapacitanceModel(output_size, channels=impala_channels, num_res_blocks=num_res_blocks)
+    if separate_heads:
+        if backbone == "impala":
+            return SeparateHeadIMPALA(channels=impala_channels, num_res_blocks=num_res_blocks)
+        else:
+            return SeparateHeadMobileNet(mobilenet=mobilenet)
     else:
-        return CapacitancePredictionModel(output_size, mobilenet=mobilenet)
+        if backbone == "impala":
+            return IMPALACapacitanceModel(output_size, channels=impala_channels, num_res_blocks=num_res_blocks)
+        else:
+            return CapacitancePredictionModel(output_size, mobilenet=mobilenet)
 
 
-def create_loss_function(mse_weight=1.0, nll_weight=0.1):
-    """Factory function to create the loss function"""
-    return CapacitanceLoss(mse_weight, nll_weight)
+def create_loss_function(mse_weight=1.0, nll_weight=0.1, separate_heads=False, nnn_weight=1.0):
+    """
+    Factory function to create the loss function.
+
+    Args:
+        mse_weight: Weight for MSE loss component
+        nll_weight: Weight for NLL loss component
+        separate_heads: If True, use SeparateHeadLoss for models with separate NN/NNN heads
+        nnn_weight: Extra weight for NNN loss (only used if separate_heads=True)
+    """
+    if separate_heads:
+        return SeparateHeadLoss(mse_weight, nll_weight, nnn_weight=nnn_weight)
+    else:
+        return CapacitanceLoss(mse_weight, nll_weight)
 
 
 # Example usage

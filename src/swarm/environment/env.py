@@ -567,6 +567,7 @@ class QuantumDeviceEnv(gym.Env):
             # Kalman filter: values are deltas, use variance gating
             # Note: negate predictions due to qarray sign convention
             if self.capacitance_model["nearest_neighbour"]:
+                # Legacy NN mode: 2 outputs [RL, LR]
                 for i in range(self.num_dots - 1):
                     ml_outputs = [
                         (-float(values_np[i, 0]), float(log_vars_np[i, 0])),  # RL (negated)
@@ -576,7 +577,16 @@ class QuantumDeviceEnv(gym.Env):
                         left_dot=i, ml_outputs=ml_outputs
                     )
             else:
-                raise NotImplementedError("Kalman update only supports nearest-neighbour mode")
+                # NNN mode: 3 outputs [NN, NNN_right, NNN_left]
+                for i in range(self.num_dots - 1):
+                    ml_outputs = [
+                        (-float(values_np[i, 0]), float(log_vars_np[i, 0])),  # NN (negated)
+                        (-float(values_np[i, 1]), float(log_vars_np[i, 1])),  # NNN_right (negated)
+                        (-float(values_np[i, 2]), float(log_vars_np[i, 2])),  # NNN_left (negated)
+                    ]
+                    self.capacitance_model["capacitance_predictor"].update_from_scan(
+                        left_dot=i, ml_outputs=ml_outputs
+                    )
 
             cgd_estimate = self.capacitance_model["capacitance_predictor"].get_full_matrix()
             self.array._update_virtual_gate_matrix(cgd_estimate)
@@ -671,7 +681,7 @@ class QuantumDeviceEnv(gym.Env):
                 swarm_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             
             if self.use_barriers:
-                weights_path = os.path.join(swarm_dir, "capacitance_model", "symmetric_weights", "mobilenet_barrier_weights.pth")
+                weights_path = os.path.join(swarm_dir, "capacitance_model", "mobilenet_final_epoch_8", "mobilenet_barrier_weights.pth")
             else:
                 weights_path = os.path.join(swarm_dir, "capacitance_model", "weights", "best_model_no_barriers.pth")
 
@@ -738,6 +748,8 @@ class QuantumDeviceEnv(gym.Env):
                     prior_variance=0.5,
                     variance_threshold=self.config["capacitance_model"].get("variance_threshold", 0.05),
                     process_noise=self.config["capacitance_model"].get("process_noise", 0.0),
+                    include_nnn=not nearest_neighbour,  # Include NNN when not in NN-only mode
+                    prior_mean_nnn=0.15,  # NNN couplings are typically weaker
                 )
             else:
                 raise ValueError(f"Unknown update method: {update_method}")

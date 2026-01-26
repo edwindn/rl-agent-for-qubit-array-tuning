@@ -12,7 +12,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from swarm.capacitance_model.capacitance_utils import get_channel_targets, get_nearest_targets
+from swarm.capacitance_model.capacitance_utils import get_channel_targets, get_nearest_targets, get_targets_with_nnn
 
 
 class CapacitanceDataset(data.Dataset):
@@ -164,7 +164,7 @@ class CapacitanceDataset(data.Dataset):
         if self.nearest_neighbours:
             targets = get_nearest_targets(channel_idx, cgd_matrix, num_dots) # size 2
         else:
-            targets = get_channel_targets(channel_idx, cgd_matrix, num_dots) # size 3
+            targets = get_targets_with_nnn(channel_idx, cgd_matrix, num_dots)  # size 3: [NN, NNN_right, NNN_left]
         
         # Convert to torch tensors
         image = torch.from_numpy(image).unsqueeze(0)  # Add channel dimension (1, H, W)

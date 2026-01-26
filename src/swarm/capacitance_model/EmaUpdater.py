@@ -78,6 +78,7 @@ class EmaCapacitancePredictor:
         """
         Directly update a capacitance element with ML model output.
         Uses exponential moving average if ema_length is specified, otherwise uses last value.
+        Automatically enforces symmetry by normalizing to upper triangular and mirroring.
 
         Args:
             i (int): gate index
@@ -92,8 +93,11 @@ class EmaCapacitancePredictor:
         if not (0 <= i < self.n_dots and 0 <= j < self.n_dots):
             raise ValueError(f"Invalid indices: ({i}, {j}). Must be in range [0, {self.n_dots})")
 
+        # Normalize to upper triangular (canonical form: row < col)
+        row, col = min(i, j), max(i, j)
+
         # In nearest neighbour mode, only allow updates to nearest neighbor pairs
-        if self.nearest_neighbour and abs(i - j) != 1:
+        if self.nearest_neighbour and abs(row - col) != 1:
             raise ValueError(f"In nearest neighbour mode, can only update adjacent pairs. Got (gate {i}, dot {j})")
 
         # Update the mean using EMA if ema_length is specified, otherwise use last value
@@ -106,18 +110,25 @@ class EmaCapacitancePredictor:
             alpha = base_alpha * confidence_scale
             # Clip alpha to [0, 1] to maintain stability
             alpha = np.clip(alpha, 0.0, 1.0)
-            self.means[i, j] = alpha * ml_estimate + (1 - alpha) * self.means[i, j]
+            new_mean = alpha * ml_estimate + (1 - alpha) * self.means[row, col]
         else:
             # Just use the last value
-            self.means[i, j] = ml_estimate
+            new_mean = ml_estimate
 
-        # Always directly set the variance
-        self.variances[i, j] = ml_variance
+        # Update upper triangular and mirror to lower (enforce symmetry)
+        self.means[row, col] = new_mean
+        self.means[col, row] = new_mean
+        self.variances[row, col] = ml_variance
+        self.variances[col, row] = ml_variance
 
 
     def update_from_scan(self, left_dot: int, ml_outputs: List[Tuple[float, float]]):
         """
         Process ML model output for a dot pair scan and update relevant capacitances.
+
+        In NN mode, both predictions (RL and LR) target the same symmetric coupling
+        Cgd[i, i+1]. direct_update() normalizes both to the canonical position, so
+        the second update overwrites the first (last value wins for non-EMA mode).
 
         Args:
             left_dot: left dot in the scan - we assume pair (i, i+1)
@@ -136,12 +147,12 @@ class EmaCapacitancePredictor:
 
         i = left_dot
 
-        # RL coupling: cgd[i+1, i]
+        # RL coupling: cgd[i+1, i] -> normalizes to cgd[i, i+1]
         estimate_RL, log_var_RL = ml_outputs[0]
         variance_RL = np.exp(log_var_RL)
         self.direct_update(i+1, i, estimate_RL, variance_RL)
 
-        # LR coupling: cgd[i, i+1]
+        # LR coupling: cgd[i, i+1] (already canonical)
         estimate_LR, log_var_LR = ml_outputs[1]
         variance_LR = np.exp(log_var_LR)
         self.direct_update(i, i+1, estimate_LR, variance_LR)

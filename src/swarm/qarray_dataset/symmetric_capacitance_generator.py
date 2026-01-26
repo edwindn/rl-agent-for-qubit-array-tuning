@@ -61,9 +61,12 @@ class GenerationConfig:
     config_path: str = "qarray_config.yaml"
     batch_size: int = 1000
     seed_base: int = 42
-    # Symmetric capacitance range
+    # Symmetric capacitance range for nearest neighbors
     coupling_min: float = -0.7
     coupling_max: float = 0.7
+    # Symmetric capacitance range for second-nearest neighbors (next-nearest)
+    nnn_coupling_min: float = -0.3
+    nnn_coupling_max: float = 0.3
     # These will be loaded from env_config.yaml if not overridden
     env_config: dict = None
 
@@ -133,30 +136,47 @@ def generate_sample(sample_id: int, config: GenerationConfig) -> Dict[str, Any]:
         # Note: qarray convention has effective_coupling = -target_matrix (off-diagonal)
         # So we negate when building target_matrix to make the saved label match the image
         target_matrix = np.eye(config.num_dots)
-        effective_couplings = []  # What we'll save as labels (matches image)
-        for i in range(config.num_dots - 1):
-            # Sample the desired effective coupling from [-0.7, +0.7]
-            effective_coupling = rng.uniform(config.coupling_min, config.coupling_max)
-            effective_couplings.append(effective_coupling)
-            # Negate for target matrix (due to qarray sign convention: eff = -T)
-            target_matrix[i, i + 1] = -effective_coupling
-            target_matrix[i + 1, i] = -effective_coupling  # Keep symmetric
+        num_dots = config.num_dots
+
+        # Nearest neighbor couplings (distance 1) - SYMMETRIC
+        # Cgd[c, c+1] = Cgd[c+1, c] for each channel c
+        nn_couplings = {}  # (dot, gate) -> coupling
+        for c in range(num_dots - 1):
+            coupling = rng.uniform(config.coupling_min, config.coupling_max)
+            nn_couplings[(c, c + 1)] = coupling
+            nn_couplings[(c + 1, c)] = coupling  # Same value (symmetric)
+            target_matrix[c, c + 1] = -coupling
+            target_matrix[c + 1, c] = -coupling
+
+        # Second-nearest neighbor couplings (distance 2) - SYMMETRIC with edge case handling
+        # For each pair (i, i+2), sample one value and set both positions
+        # Edge cases: positions where gate index is out of bounds stay at 0
+        nnn_couplings = {}  # (dot, gate) -> coupling
+        for i in range(num_dots - 2):
+            coupling = rng.uniform(config.nnn_coupling_min, config.nnn_coupling_max)
+            # Set both [i, i+2] and [i+2, i] to the same value (symmetric)
+            nnn_couplings[(i, i + 2)] = coupling
+            nnn_couplings[(i + 2, i)] = coupling
+            target_matrix[i, i + 2] = -coupling
+            target_matrix[i + 2, i] = -coupling
+        # Edge cases handled implicitly: positions like (2,4) and (1,-1) are never set,
+        # so they stay at 0 in cgd_matrix_format
 
         # Set VGM to achieve target effective coupling
         qarray._set_vgm_for_target_effective_coupling(target_matrix)
 
-        # Get ground truth voltages (in the new virtual space)
+        # Get ground truth voltages (pass initial zeros for gate/barrier voltages)
+        initial_gate_voltages = np.zeros(config.num_dots)
+        initial_barrier_voltages = np.zeros(config.num_dots - 1)
         if config.use_barriers:
-            gt_voltages, vb_optimal, _ = qarray.calculate_ground_truth()
+            gt_voltages, vb_optimal, _ = qarray.calculate_ground_truth(initial_gate_voltages, initial_barrier_voltages)
         else:
-            gt_voltages, _, _ = qarray.calculate_ground_truth()
+            gt_voltages, _, _ = qarray.calculate_ground_truth(initial_gate_voltages, initial_barrier_voltages)
 
         # Add random offset to ground truth for observation
-        voltage_offset = rng.uniform(
-            config.voltage_offset_min,
-            config.voltage_offset_max,
-            size=len(gt_voltages)
-        )
+        # Use ±40V to cover full voltage space and exceed radial_noise full_noise_distance (30-40V)
+        # This ensures a mix of clean honeycombs (offset < 30V) and white noise (offset > 30-40V)
+        voltage_offset = rng.uniform(-40, 40, size=len(gt_voltages))
         gate_voltages = gt_voltages + voltage_offset
 
         if config.use_barriers:
@@ -179,10 +199,15 @@ def generate_sample(sample_id: int, config: GenerationConfig) -> Dict[str, Any]:
         # Store effective_couplings (what's visible in image) in the positions that get_nearest_targets reads
         # get_nearest_targets extracts: cgd[i, i+1] and cgd[i+1, i] for channel i
         # Shape: (num_dots, num_dots + 1)
-        cgd_matrix_format = np.eye(config.num_dots, config.num_dots + 1, dtype=np.float32)
-        for i, eff_coupling in enumerate(effective_couplings):
-            cgd_matrix_format[i, i + 1] = eff_coupling
-            cgd_matrix_format[i + 1, i] = eff_coupling
+        cgd_matrix_format = np.eye(num_dots, num_dots + 1, dtype=np.float32)
+
+        # Store NN couplings (symmetric)
+        for (dot, gate), coupling in nn_couplings.items():
+            cgd_matrix_format[dot, gate] = coupling
+
+        # Store NNN couplings (edge cases handled - missing entries stay 0)
+        for (dot, gate), coupling in nnn_couplings.items():
+            cgd_matrix_format[dot, gate] = coupling
         # Sensor column stays as zeros (not used by get_nearest_targets)
 
         return {
@@ -258,7 +283,8 @@ def run_test_mode(config: GenerationConfig) -> None:
     Run test mode: generate samples with visualization to verify symmetric couplings.
     """
     print("Running test mode: generating 16 random samples with visualization...")
-    print(f"Coupling range: [{config.coupling_min}, {config.coupling_max}]")
+    print(f"NN coupling range: [{config.coupling_min}, {config.coupling_max}]")
+    print(f"NNN coupling range: [{config.nnn_coupling_min}, {config.nnn_coupling_max}]")
 
     import matplotlib
     matplotlib.use('Agg')
@@ -284,12 +310,17 @@ def run_test_mode(config: GenerationConfig) -> None:
     print(f"\nSuccessfully generated {len(test_samples)} samples")
 
     # Extract target couplings for histogram
-    all_couplings = []
+    nn_couplings = []
+    nnn_couplings = []
     for sample in test_samples:
         cgd = sample['cgd_matrix']
         num_dots = cgd.shape[0]
+        # Nearest neighbor couplings
         for i in range(num_dots - 1):
-            all_couplings.append(cgd[i, i + 1])
+            nn_couplings.append(cgd[i, i + 1])
+        # Second-nearest neighbor couplings
+        for i in range(num_dots - 2):
+            nnn_couplings.append(cgd[i, i + 2])
 
     def plot_images(channel):
         n_samples_to_plot = min(16, len(test_samples))
@@ -330,24 +361,40 @@ def run_test_mode(config: GenerationConfig) -> None:
     for channel in range(num_channels):
         plot_images(channel)
 
-    # Plot histogram of couplings
-    plt.figure(figsize=(8, 5))
-    plt.hist(all_couplings, bins=20, edgecolor='black', alpha=0.7)
-    plt.xlabel('Target Effective Coupling')
-    plt.ylabel('Count')
-    plt.title(f'Distribution of Target Couplings\n(Expected: Uniform [{config.coupling_min}, {config.coupling_max}])')
-    plt.axvline(x=0, color='r', linestyle='--', label='Zero')
-    plt.legend()
+    # Plot histogram of couplings (NN and NNN side by side)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # NN couplings histogram
+    axes[0].hist(nn_couplings, bins=20, edgecolor='black', alpha=0.7)
+    axes[0].set_xlabel('Target Effective Coupling')
+    axes[0].set_ylabel('Count')
+    axes[0].set_title(f'Nearest Neighbor Couplings\n(Expected: Uniform [{config.coupling_min}, {config.coupling_max}])')
+    axes[0].axvline(x=0, color='r', linestyle='--', label='Zero')
+    axes[0].legend()
+
+    # NNN couplings histogram
+    axes[1].hist(nnn_couplings, bins=20, edgecolor='black', alpha=0.7, color='orange')
+    axes[1].set_xlabel('Target Effective Coupling')
+    axes[1].set_ylabel('Count')
+    axes[1].set_title(f'Second-Nearest Neighbor Couplings\n(Expected: Uniform [{config.nnn_coupling_min}, {config.nnn_coupling_max}])')
+    axes[1].axvline(x=0, color='r', linestyle='--', label='Zero')
+    axes[1].legend()
+
     plt.tight_layout()
     plt.savefig('symmetric_coupling_distribution.png', dpi=150)
     print("Saved coupling distribution to: symmetric_coupling_distribution.png")
     plt.close()
 
     # Print statistics
-    print("\nSample Statistics:")
-    print(f"Coupling range: {min(all_couplings):.4f} to {max(all_couplings):.4f}")
-    print(f"Coupling mean: {np.mean(all_couplings):.4f} (should be ~0)")
-    print(f"Coupling std: {np.std(all_couplings):.4f}")
+    print("\nNearest Neighbor (NN) Statistics:")
+    print(f"  Range: {min(nn_couplings):.4f} to {max(nn_couplings):.4f}")
+    print(f"  Mean: {np.mean(nn_couplings):.4f} (should be ~0)")
+    print(f"  Std: {np.std(nn_couplings):.4f}")
+
+    print("\nSecond-Nearest Neighbor (NNN) Statistics:")
+    print(f"  Range: {min(nnn_couplings):.4f} to {max(nnn_couplings):.4f}")
+    print(f"  Mean: {np.mean(nnn_couplings):.4f} (should be ~0)")
+    print(f"  Std: {np.std(nnn_couplings):.4f}")
 
 
 def save_metadata(config: GenerationConfig, output_dir: Path,
@@ -361,7 +408,8 @@ def save_metadata(config: GenerationConfig, output_dir: Path,
             'batch_size': config.batch_size,
             'workers': config.workers,
             'num_dots': config.num_dots,
-            'coupling_range': [config.coupling_min, config.coupling_max],
+            'nn_coupling_range': [config.coupling_min, config.coupling_max],
+            'nnn_coupling_range': [config.nnn_coupling_min, config.nnn_coupling_max],
             'seed_base': config.seed_base
         },
         'generation_stats': generation_stats,
@@ -372,7 +420,8 @@ def save_metadata(config: GenerationConfig, output_dir: Path,
             'ground_truth': 'List of ground truth voltages and observation voltages per batch'
         },
         'notes': {
-            'symmetric_couplings': f'Off-diagonal elements in cgd_matrices are target effective couplings sampled from [{config.coupling_min}, {config.coupling_max}]',
+            'nn_couplings': f'Nearest neighbor couplings (positions [i,i+1]) sampled from [{config.coupling_min}, {config.coupling_max}]',
+            'nnn_couplings': f'Second-nearest neighbor couplings (positions [i,i+2]) sampled from [{config.nnn_coupling_min}, {config.nnn_coupling_max}]',
             'compatibility': 'Output format is compatible with standard CapacitanceDataset dataloader'
         }
     }
@@ -508,9 +557,13 @@ def main():
     parser.add_argument('--seed', type=int, default=42,
                        help='Base random seed for reproducibility')
     parser.add_argument('--coupling_min', type=float, default=-0.7,
-                       help='Minimum target effective coupling')
+                       help='Minimum target effective coupling for nearest neighbors')
     parser.add_argument('--coupling_max', type=float, default=0.7,
-                       help='Maximum target effective coupling')
+                       help='Maximum target effective coupling for nearest neighbors')
+    parser.add_argument('--nnn_coupling_min', type=float, default=-0.3,
+                       help='Minimum target effective coupling for second-nearest neighbors')
+    parser.add_argument('--nnn_coupling_max', type=float, default=0.3,
+                       help='Maximum target effective coupling for second-nearest neighbors')
     parser.add_argument('--test', action='store_true',
                        help='Run test mode with visualization')
 
@@ -518,7 +571,8 @@ def main():
 
     print(f"Symmetric Capacitance Generator")
     print(f"Using barriers: {args.use_barriers}")
-    print(f"Coupling range: [{args.coupling_min}, {args.coupling_max}]")
+    print(f"NN coupling range: [{args.coupling_min}, {args.coupling_max}]")
+    print(f"NNN coupling range: [{args.nnn_coupling_min}, {args.nnn_coupling_max}]")
 
     config = GenerationConfig(
         total_samples=args.total_samples,
@@ -530,6 +584,8 @@ def main():
         seed_base=args.seed,
         coupling_min=args.coupling_min,
         coupling_max=args.coupling_max,
+        nnn_coupling_min=args.nnn_coupling_min,
+        nnn_coupling_max=args.nnn_coupling_max,
     )
 
     try:

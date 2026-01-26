@@ -134,7 +134,7 @@ neural_networks:
   # chose between SimpleCNN, IMPALA, MobileNet
   plunger_policy:
     backbone:
-      type: "SimpleCNN"
+      type: "IMPALA"
       mobilenet_version: "small"
       feature_size: 256
       load_pretrained: true
@@ -177,7 +177,7 @@ neural_networks:
 
   barrier_policy:
     backbone:
-      type: "SimpleCNN"
+      type: "IMPALA"
       mobilenet_version: "small" # Required for MobileNet
       feature_size: 256
       freeze_backbone: false

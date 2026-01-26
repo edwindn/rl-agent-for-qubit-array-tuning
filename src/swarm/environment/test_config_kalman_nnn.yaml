@@ -1,4 +1,4 @@
-# Test config for Kalman filter comparison
+# Test config for Kalman filter with NNN mode
 simulator:
   max_steps: 50
   num_dots: 4
@@ -26,7 +26,7 @@ reward:
 
 capacitance_model:
   update_method: "kalman"
-  nearest_neighbour: false  # NNN mode (3 outputs)
+  nearest_neighbour: false  # Enable NNN mode (3 outputs)
   variance_threshold: 0.05
   process_noise: 0.0
 

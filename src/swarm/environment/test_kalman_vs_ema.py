@@ -115,22 +115,42 @@ def run_comparison(num_steps=10, seed=42):
         ml_predictions.append(values_k_np.flatten())
         ml_variances.append(np.exp(log_vars_k_np).flatten())
 
+        # Determine output mode from config
+        nn_mode = env_kalman.capacitance_model.get("nearest_neighbour", True)
+        num_outputs = 2 if nn_mode else 3
+
         # Update Kalman predictor with Kalman env's predictions
         for i in range(n_dots - 1):
-            ml_outputs = [
-                (float(values_k_np[i, 0]), float(log_vars_k_np[i, 0])),
-                (float(values_k_np[i, 1]), float(log_vars_k_np[i, 1])),
-            ]
+            if num_outputs == 3:
+                # NNN mode: [NN, NNN_right, NNN_left]
+                ml_outputs = [
+                    (float(values_k_np[i, 0]), float(log_vars_k_np[i, 0])),
+                    (float(values_k_np[i, 1]), float(log_vars_k_np[i, 1])),
+                    (float(values_k_np[i, 2]), float(log_vars_k_np[i, 2])),
+                ]
+            else:
+                # Legacy NN mode: [RL, LR]
+                ml_outputs = [
+                    (float(values_k_np[i, 0]), float(log_vars_k_np[i, 0])),
+                    (float(values_k_np[i, 1]), float(log_vars_k_np[i, 1])),
+                ]
             accepted, rejected = kalman_predictor.update_from_scan(left_dot=i, ml_outputs=ml_outputs)
             if step == 0:
                 print(f"  Pair {i}: accepted={accepted}, rejected={rejected}")
 
         # Update EMA predictor with EMA env's predictions
         for i in range(n_dots - 1):
-            ml_outputs = [
-                (float(values_e_np[i, 0]), float(log_vars_e_np[i, 0])),
-                (float(values_e_np[i, 1]), float(log_vars_e_np[i, 1])),
-            ]
+            if num_outputs == 3:
+                ml_outputs = [
+                    (float(values_e_np[i, 0]), float(log_vars_e_np[i, 0])),
+                    (float(values_e_np[i, 1]), float(log_vars_e_np[i, 1])),
+                    (float(values_e_np[i, 2]), float(log_vars_e_np[i, 2])),
+                ]
+            else:
+                ml_outputs = [
+                    (float(values_e_np[i, 0]), float(log_vars_e_np[i, 0])),
+                    (float(values_e_np[i, 1]), float(log_vars_e_np[i, 1])),
+                ]
             ema_predictor.update_from_scan(left_dot=i, ml_outputs=ml_outputs)
 
         # Apply VGM updates to both arrays (this is what happens in the real pipeline)
@@ -263,17 +283,19 @@ def run_scan_episode(num_steps=10, seed=42):
     device = env.capacitance_model["device"]
 
     print(f"True Cgd off-diagonals: {[f'{true_cgd[i+1,i]:.3f}' for i in range(n_dots-1)]}")
+    print(f"Ground truth voltages: {gt_voltages}")
 
     # Storage for scans and predictions
     all_scans = []  # Store scans at each step
     all_predictions = []
     all_variances = []
     vgm_history = []
+    kalman_variance_history = []  # Track Kalman variances for uncertainty labels
 
     np.random.seed(seed + 1000)
 
     for step in range(num_steps):
-        # Use fixed voltages near ground truth for consistent comparison
+        # Use ground truth voltages for scans (ideal conditions)
         gate_voltages = gt_voltages.copy()
 
         # Get observation
@@ -304,19 +326,31 @@ def run_scan_episode(num_steps=10, seed=42):
         all_predictions.append(values_np.flatten())
         all_variances.append(np.exp(log_vars_np).flatten())
 
-        # Store current VGM estimate
+        # Store current VGM estimate and variances
         vgm_history.append(kalman_predictor.get_full_matrix().copy())
+        kalman_variance_history.append(kalman_predictor.variances.copy())
 
         # Debug: print current VGM
         current_vgm = env.array.model.gate_voltage_composer.virtual_gate_matrix
         print(f"Step {step+1}: pred={values_np.flatten()[:2]}, VGM[1,0]={current_vgm[1,0]:.4f}")
 
         # Update Kalman predictor (negate predictions due to qarray sign convention)
+        nn_mode = env.capacitance_model.get("nearest_neighbour", True)
+        num_outputs = 2 if nn_mode else 3
         for i in range(n_dots - 1):
-            ml_outputs = [
-                (-float(values_np[i, 0]), float(log_vars_np[i, 0])),  # negated
-                (-float(values_np[i, 1]), float(log_vars_np[i, 1])),  # negated
-            ]
+            if num_outputs == 3:
+                # NNN mode: [NN, NNN_right, NNN_left]
+                ml_outputs = [
+                    (-float(values_np[i, 0]), float(log_vars_np[i, 0])),  # NN negated
+                    (-float(values_np[i, 1]), float(log_vars_np[i, 1])),  # NNN_right negated
+                    (-float(values_np[i, 2]), float(log_vars_np[i, 2])),  # NNN_left negated
+                ]
+            else:
+                # Legacy NN mode: [RL, LR]
+                ml_outputs = [
+                    (-float(values_np[i, 0]), float(log_vars_np[i, 0])),  # negated
+                    (-float(values_np[i, 1]), float(log_vars_np[i, 1])),  # negated
+                ]
             kalman_predictor.update_from_scan(left_dot=i, ml_outputs=ml_outputs)
 
         # Apply VGM update
@@ -328,61 +362,167 @@ def run_scan_episode(num_steps=10, seed=42):
     all_predictions = np.array(all_predictions)
     all_variances = np.array(all_variances)
 
-    # Extract true couplings
-    true_couplings = [true_cgd[i+1, i] for i in range(n_dots-1)]
+    # Extract true NN couplings (nearest neighbor)
+    true_nn_couplings = [true_cgd[i+1, i] for i in range(n_dots-1)]
 
-    # Extract VGM estimates over time
-    vgm_estimates = []
+    # Extract true NNN couplings (next-nearest neighbor)
+    # For channel i: NNN_right = Cgd[i, i+2], NNN_left = Cgd[i+1, i-1]
+    true_nnn_right = []
+    true_nnn_left = []
+    nnn_labels = []
+    for i in range(n_dots - 1):
+        # NNN_right: Cgd[i, i+2]
+        if i + 2 < n_dots:
+            true_nnn_right.append(true_cgd[i, i + 2])
+        else:
+            true_nnn_right.append(0.0)
+        # NNN_left: Cgd[i+1, i-1]
+        if i - 1 >= 0:
+            true_nnn_left.append(true_cgd[i + 1, i - 1])
+        else:
+            true_nnn_left.append(0.0)
+        nnn_labels.append(f'Ch{i}')
+
+    # Extract VGM estimates over time for NN
+    vgm_nn_estimates = []
     for vgm in vgm_history:
-        vgm_estimates.append([vgm[i+1, i] for i in range(n_dots-1)])
-    vgm_estimates = np.array(vgm_estimates)
+        vgm_nn_estimates.append([vgm[i+1, i] for i in range(n_dots-1)])
+    vgm_nn_estimates = np.array(vgm_nn_estimates)
 
-    # Plot: scans + predictions + VGM convergence
+    # Extract VGM estimates over time for NNN
+    vgm_nnn_right_estimates = []
+    vgm_nnn_left_estimates = []
+    for vgm in vgm_history:
+        nnn_r = []
+        nnn_l = []
+        for i in range(n_dots - 1):
+            if i + 2 < n_dots:
+                nnn_r.append(vgm[i, i + 2])
+            else:
+                nnn_r.append(0.0)
+            if i - 1 >= 0:
+                nnn_l.append(vgm[i + 1, i - 1])
+            else:
+                nnn_l.append(0.0)
+        vgm_nnn_right_estimates.append(nnn_r)
+        vgm_nnn_left_estimates.append(nnn_l)
+    vgm_nnn_right_estimates = np.array(vgm_nnn_right_estimates)
+    vgm_nnn_left_estimates = np.array(vgm_nnn_left_estimates)
+
+    # Extract Kalman variances over time for NN
+    kalman_nn_variances = []
+    for var_matrix in kalman_variance_history:
+        kalman_nn_variances.append([var_matrix[i+1, i] for i in range(n_dots-1)])
+    kalman_nn_variances = np.array(kalman_nn_variances)
+
+    # Extract Kalman variances over time for NNN
+    kalman_nnn_right_variances = []
+    kalman_nnn_left_variances = []
+    for var_matrix in kalman_variance_history:
+        nnn_r_var = []
+        nnn_l_var = []
+        for i in range(n_dots - 1):
+            if i + 2 < n_dots:
+                nnn_r_var.append(var_matrix[i, i + 2])
+            else:
+                nnn_r_var.append(0.0)
+            if i - 1 >= 0:
+                nnn_l_var.append(var_matrix[i + 1, i - 1])
+            else:
+                nnn_l_var.append(0.0)
+        kalman_nnn_right_variances.append(nnn_r_var)
+        kalman_nnn_left_variances.append(nnn_l_var)
+    kalman_nnn_right_variances = np.array(kalman_nnn_right_variances)
+    kalman_nnn_left_variances = np.array(kalman_nnn_left_variances)
+
+    # Plot: scans + predictions + NN bar chart + NNN bar chart
     n_channels = min(3, n_dots - 1)
-    fig, axes = plt.subplots(n_channels + 2, num_steps, figsize=(2.5 * num_steps, 2.5 * (n_channels + 2)))
+    fig, axes = plt.subplots(n_channels + 3, num_steps, figsize=(2.5 * num_steps, 2.5 * (n_channels + 3)))
 
     for step in range(num_steps):
         # Row 0 to n_channels-1: Scans
         for ch in range(n_channels):
             ax = axes[ch, step]
             ax.imshow(all_scans[step][ch], cmap='viridis', origin='lower', aspect='equal')
-            pred = all_predictions[step, ch*2]
-            ax.set_title(f'pred={pred:.2f}', fontsize=8)
+            pred = all_predictions[step, ch*3] if all_predictions.shape[1] >= n_channels*3 else all_predictions[step, ch*2]
+            ax.set_title(f'NN pred={pred:.2f}', fontsize=8)
             ax.axis('off')
             if step == 0:
                 ax.set_ylabel(f'Ch{ch}', fontsize=10)
 
-        # Row n_channels: Predictions over time
+        # Row n_channels: Predictions over time (all 3 outputs per channel)
         ax = axes[n_channels, step]
         for ch in range(n_channels):
-            ax.plot(range(1, step+2), all_predictions[:step+1, ch*2], 'o-', markersize=3, label=f'Ch{ch}')
+            base_idx = ch * 3 if all_predictions.shape[1] >= n_channels*3 else ch * 2
+            ax.plot(range(1, step+2), all_predictions[:step+1, base_idx], 'o-', markersize=3, label=f'Ch{ch} NN')
         ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
         ax.set_xlim(0.5, num_steps + 0.5)
         ax.set_ylim(-0.8, 0.5)
         ax.grid(True, alpha=0.3)
         if step == 0:
-            ax.set_ylabel('Predictions', fontsize=10)
+            ax.set_ylabel('NN Pred', fontsize=10)
             ax.legend(fontsize=6)
 
-        # Row n_channels+1: VGM estimates vs true Cgd
+        # Row n_channels+1: NN VGM estimates vs true Cgd (nearest neighbor)
         ax = axes[n_channels + 1, step]
         x = np.arange(n_channels)
         width = 0.35
-        ax.bar(x - width/2, true_couplings[:n_channels], width, label='True Cgd', color='green', alpha=0.7)
-        ax.bar(x + width/2, vgm_estimates[step, :n_channels], width, label='VGM Est', color='blue', alpha=0.7)
+        ax.bar(x - width/2, true_nn_couplings[:n_channels], width, label='True NN', color='green', alpha=0.7)
+        bars = ax.bar(x + width/2, vgm_nn_estimates[step, :n_channels], width, label='VGM Est', color='blue', alpha=0.7)
+        # Add uncertainty labels on VGM bars
+        for idx, bar in enumerate(bars):
+            var = kalman_nn_variances[step, idx]
+            std = np.sqrt(var)
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
+                   f'±{std:.2f}', ha='center', va='bottom', fontsize=6, color='blue')
         ax.set_xticks(x)
-        ax.set_xticklabels([f'C{i+1},{i}' for i in range(n_channels)], fontsize=7)
-        ax.set_ylim(-1, 1)
+        ax.set_xticklabels([f'C[{i+1},{i}]' for i in range(n_channels)], fontsize=7)
+        ax.set_ylim(0, 1.1)
         ax.grid(True, alpha=0.3, axis='y')
         if step == 0:
-            ax.set_ylabel('Cgd values', fontsize=10)
-            ax.legend(fontsize=6)
+            ax.set_ylabel('NN Cgd', fontsize=10)
+            ax.legend(fontsize=6, loc='upper right')
+
+        # Row n_channels+2: NNN VGM estimates vs true Cgd (next-nearest neighbor)
+        ax = axes[n_channels + 2, step]
+        x = np.arange(n_channels * 2)  # 2 NNN values per channel
+        width = 0.35
+        # Interleave NNN_right and NNN_left for each channel
+        true_nnn_all = []
+        vgm_nnn_all = []
+        nnn_variances_all = []
+        nnn_xlabels = []
+        for ch in range(n_channels):
+            true_nnn_all.append(true_nnn_right[ch])
+            true_nnn_all.append(true_nnn_left[ch])
+            vgm_nnn_all.append(vgm_nnn_right_estimates[step, ch])
+            vgm_nnn_all.append(vgm_nnn_left_estimates[step, ch])
+            nnn_variances_all.append(kalman_nnn_right_variances[step, ch])
+            nnn_variances_all.append(kalman_nnn_left_variances[step, ch])
+            i = ch
+            nnn_xlabels.append(f'C[{i},{i+2}]')  # NNN_right
+            nnn_xlabels.append(f'C[{i+1},{i-1}]')  # NNN_left
+        ax.bar(x - width/2, true_nnn_all, width, label='True NNN', color='orange', alpha=0.7)
+        bars = ax.bar(x + width/2, vgm_nnn_all, width, label='VGM Est', color='purple', alpha=0.7)
+        # Add uncertainty labels on VGM bars
+        for idx, bar in enumerate(bars):
+            var = nnn_variances_all[idx]
+            std = np.sqrt(var)
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                   f'±{std:.2f}', ha='center', va='bottom', fontsize=5, color='purple')
+        ax.set_xticks(x)
+        ax.set_xticklabels(nnn_xlabels, fontsize=6, rotation=45, ha='right')
+        ax.set_ylim(0, 0.6)
+        ax.grid(True, alpha=0.3, axis='y')
+        if step == 0:
+            ax.set_ylabel('NNN Cgd', fontsize=10)
+            ax.legend(fontsize=6, loc='upper right')
 
     # Column headers
     for step in range(num_steps):
-        axes[0, step].set_title(f'Step {step+1}\npred={all_predictions[step, 0]:.2f}', fontsize=8)
+        axes[0, step].set_title(f'Step {step+1}', fontsize=9)
 
-    plt.suptitle(f'Episode: True Cgd = {[f"{c:.2f}" for c in true_couplings]}\nPredictions should → 0, VGM should → True Cgd', fontsize=11)
+    plt.suptitle(f'Episode: True NN = {[f"{c:.2f}" for c in true_nn_couplings]}, NNN_R = {[f"{c:.2f}" for c in true_nnn_right]}\nPredictions should → 0, VGM should → True Cgd', fontsize=10)
     plt.tight_layout()
 
     output_path = Path(__file__).parent / 'scan_episode_convergence.png'

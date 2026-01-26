@@ -26,7 +26,7 @@ reward:
 
 capacitance_model:
   update_method: "ema"
-  nearest_neighbour: true
+  nearest_neighbour: false  # NNN mode (3 outputs)
 
 init:
   debug: false

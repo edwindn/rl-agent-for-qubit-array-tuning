@@ -2,6 +2,51 @@ import numpy as np
 from typing import List, Tuple
 
 
+def get_targets_with_nnn(channel_idx: int, cgd_matrix: np.ndarray, num_dots: int, has_sensor: bool = True) -> np.ndarray:
+    """
+    Extract 3 capacitance values: 1 NN (symmetric) + 2 NNN
+
+    For channel i (scanning dots i and i+1):
+    - NN: Cgd[i, i+1] (= Cgd[i+1, i] by symmetry, we just use one)
+    - NNN_right: Cgd[i, i+2] (0 if i+2 >= num_dots, edge case)
+    - NNN_left: Cgd[i+1, i-1] (0 if i-1 < 0, edge case)
+
+    Args:
+        channel_idx: index of leftmost dot (0 <= idx <= num_dots - 2)
+        cgd_matrix: CGD matrix of shape (num_dots, num_dots+1) or (num_dots, num_dots)
+        num_dots: Number of dots in the system
+        has_sensor: Whether cgd_matrix includes sensor column
+
+    Returns:
+        np.ndarray of shape (3,): [nn, nnn_right, nnn_left]
+    """
+    assert channel_idx in list(range(num_dots - 1)), f"Out-of-bounds channel index given for {num_dots} dots."
+
+    if has_sensor:
+        assert cgd_matrix.shape[0] == cgd_matrix.shape[1] - 1 == num_dots, f"CGD matrix must have shape ({num_dots}, {num_dots+1})"
+    else:
+        assert cgd_matrix.shape[0] == cgd_matrix.shape[1] == num_dots, f"CGD matrix must have shape ({num_dots}, {num_dots})"
+
+    i = channel_idx
+
+    # NN coupling: Cgd[i, i+1] (gate i+1 affects dot i)
+    nn = float(cgd_matrix[i, i + 1])
+
+    # NNN_right: Cgd[i, i+2] (gate i+2 affects dot i)
+    if i + 2 < num_dots:
+        nnn_right = float(cgd_matrix[i, i + 2])
+    else:
+        nnn_right = 0.0  # Edge case: no gate i+2
+
+    # NNN_left: Cgd[i+1, i-1] (gate i-1 affects dot i+1)
+    if i - 1 >= 0:
+        nnn_left = float(cgd_matrix[i + 1, i - 1])
+    else:
+        nnn_left = 0.0  # Edge case: no gate i-1
+
+    return np.array([nn, nnn_right, nnn_left], dtype=np.float32)
+
+
 def get_nearest_targets(channel_idx: int, cgd_matrix: np.ndarray, num_dots: int, has_sensor: bool  = True) -> np.ndarray:
     """
     Extract capacitance values for just nearest-neighbour couplings (two values)

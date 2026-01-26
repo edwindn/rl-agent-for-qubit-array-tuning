@@ -430,7 +430,7 @@ def train_epoch(model: nn.Module,
 
         # Log batch metrics to wandb
         if log_wandb and wandb.run is not None:
-            wandb.log({
+            log_dict = {
                 'train/step': global_train_step,
                 'train/loss': total_loss_batch.item(),
                 'train/mse': mse_loss.item(),
@@ -439,7 +439,17 @@ def train_epoch(model: nn.Module,
                 'train/var': np.exp(log_vars.mean().item()),
                 'train/pcc': pcc,
                 'train/epoch': epoch
-            })
+            }
+            # Log separate NN/NNN losses if using separate heads
+            if hasattr(loss_fn, 'get_separate_losses'):
+                sep_losses = loss_fn.get_separate_losses()
+                log_dict.update({
+                    'train/nn_mse': sep_losses['nn_mse'],
+                    'train/nn_nll': sep_losses['nn_nll'],
+                    'train/nnn_mse': sep_losses['nnn_mse'],
+                    'train/nnn_nll': sep_losses['nnn_nll'],
+                })
+            wandb.log(log_dict)
         
         global_train_step += 1
         
@@ -495,7 +505,7 @@ def validate_epoch(model: nn.Module,
 
             # Log batch metrics to wandb
             if log_wandb and wandb.run is not None:
-                wandb.log({
+                log_dict = {
                     'eval/step': global_val_step,
                     'eval/loss': total_loss_batch.item(),
                     'eval/mse': mse_loss.item(),
@@ -505,7 +515,17 @@ def validate_epoch(model: nn.Module,
                     'eval/var': np.exp(log_vars.mean().item()),
                     'eval/pcc': pcc,
                     'eval/epoch': epoch,
-                })
+                }
+                # Log separate NN/NNN losses if using separate heads
+                if hasattr(loss_fn, 'get_separate_losses'):
+                    sep_losses = loss_fn.get_separate_losses()
+                    log_dict.update({
+                        'eval/nn_mse': sep_losses['nn_mse'],
+                        'eval/nn_nll': sep_losses['nn_nll'],
+                        'eval/nnn_mse': sep_losses['nnn_mse'],
+                        'eval/nnn_nll': sep_losses['nnn_nll'],
+                    })
+                wandb.log(log_dict)
 
             global_val_step += 1
     
@@ -616,17 +636,23 @@ def train_func(config: dict):
     val_loader = prepare_data_loader(val_loader)
     
     # Create model and loss function
+    separate_heads = config.get('separate_heads', False)
     print(f"Creating model with {config['backbone']} backbone...")
+    if separate_heads:
+        print("Using SEPARATE NN and NNN heads")
     model = create_model(
         output_size=2 if not config.get('disable_nearest_neighbours', False) else 3,
         backbone=config['backbone'],
-        mobilenet=config['mobilenet']
+        mobilenet=config['mobilenet'],
+        separate_heads=separate_heads
     )
     model = prepare_model(model)  # Ray Train preparation
-    
+
     loss_fn = create_loss_function(
         mse_weight=config['mse_weight'],
-        nll_weight=config['nll_weight']
+        nll_weight=config['nll_weight'],
+        separate_heads=separate_heads,
+        nnn_weight=config.get('nnn_weight', 1.0)
     )
     
     # Create optimizer
@@ -736,7 +762,13 @@ def main():
                        help='CNN backbone: mobilenet (~2.5M params) or impala (~100K params)')
     parser.add_argument('--disable_nearest_neighbours', action='store_true',
                         help='Whether to only predict nearest-neighbour capacitances (disables)')
-    
+    parser.add_argument('--separate_heads', action='store_true',
+                        help='Use separate NN and NNN heads (recommended for NNN mode)')
+    parser.add_argument('--nnn_weight', type=float, default=1.0,
+                        help='Extra weight for NNN loss when using separate heads (default: 1.0)')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume training from')
+
     args = parser.parse_args()
     args.load_to_memory = not args.disable_data_loading
     
@@ -863,16 +895,21 @@ def main():
         
         # Create model and loss function
         print(f"Creating model with {args.backbone} backbone...")
+        if args.separate_heads:
+            print("Using SEPARATE NN and NNN heads")
         model = create_model(
             output_size=2 if not args.disable_nearest_neighbours else 3,
             backbone=args.backbone,
-            mobilenet=args.mobilenet
+            mobilenet=args.mobilenet,
+            separate_heads=args.separate_heads
         )
         model = model.to(device)
-        
+
         loss_fn = create_loss_function(
             mse_weight=args.mse_weight,
-            nll_weight=args.nll_weight
+            nll_weight=args.nll_weight,
+            separate_heads=args.separate_heads,
+            nnn_weight=args.nnn_weight
         )
         
         # Create optimizer
@@ -880,23 +917,34 @@ def main():
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=5
         )
-        
+
+        # Resume from checkpoint if specified
+        start_epoch = 1
+        best_val_loss = float('inf')
+        if args.resume:
+            print(f"Resuming from checkpoint: {args.resume}")
+            checkpoint = torch.load(args.resume, map_location=device)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            start_epoch = checkpoint['epoch'] + 1
+            best_val_loss = checkpoint.get('best_loss', float('inf'))
+            print(f"Resumed from epoch {checkpoint['epoch']}, best_val_loss={best_val_loss:.4f}")
+
         # Print model info
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"Total parameters: {total_params:,}")
         print(f"Trainable parameters: {trainable_params:,}")
-        
+
         if not args.no_wandb:
             wandb.watch(model, log_freq=100)
-        
+
         # Training loop
         print("Starting training...")
-        best_val_loss = float('inf')
         global_train_step = 0
         global_val_step = 0
-        
-        for epoch in range(1, args.epochs + 1):
+
+        for epoch in range(start_epoch, args.epochs + 1):
             start_time = time.time()
             
             # Train

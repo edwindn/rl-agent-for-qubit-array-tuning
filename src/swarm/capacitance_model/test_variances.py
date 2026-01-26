@@ -328,12 +328,12 @@ Individual Results:
     return results
 
 
-def load_trained_model(model_path: str, device: torch.device):
+def load_trained_model(model_path: str, device: torch.device, output_size: int = 3):
     """Load the trained model from checkpoint."""
     print(f"Loading model from: {model_path}")
-    
+
     # Create model
-    model = create_model(output_size=2)
+    model = create_model(output_size=output_size)
     
     # Load checkpoint
     if not os.path.exists(model_path):
@@ -356,14 +356,16 @@ def load_trained_model(model_path: str, device: torch.device):
 
 def main():
     # Configuration
-    root_data_dir = '/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/qarray_dataset/'
-    data_dirs = ['barrier_dataset_1', 'barrier_dataset_2']
-    model_path = '/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/weights/best_model_barriers.pth'
+    root_data_dir = '/home/rahul/rl-agent-for-qubit-array-tuning/data/'
+    data_dirs = ['symmetric_capacitance_dataset']
+    model_path = '/home/rahul/rl-agent-for-qubit-array-tuning/src/swarm/capacitance_model/symmetric_weights/best_model.pth'
     batch_size = 64
-    val_split = 0.2
+    val_split = 0.1
     num_workers = 4
     load_to_memory = False
-    num_samples = 1000
+    num_samples = 5000
+    output_size = 3  # NNN mode
+    nearest_neighbours = False  # NNN mode
     
     # Set random seed for reproducibility
     torch.manual_seed(42)
@@ -385,11 +387,12 @@ def main():
         val_split=val_split,
         num_workers=num_workers,
         load_to_memory=load_to_memory,
-        transform=transform
+        transform=transform,
+        nearest_neighbours=nearest_neighbours
     )
-    
+
     # Load trained model
-    model = load_trained_model(model_path, device)
+    model = load_trained_model(model_path, device, output_size=output_size)
     
     # Collect validation images and run inference
     all_predictions = []
