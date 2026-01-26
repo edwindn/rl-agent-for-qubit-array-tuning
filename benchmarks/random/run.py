@@ -34,13 +34,11 @@ def run_single_trial(
     num_barriers = env.num_barrier_voltages
     num_pairs = num_plungers - 1  # num_dots - 1, for scan counting
 
-    # Get optimal voltages for vectorized success check
-    from objective import PhysicalObjective
-    phys_obj = PhysicalObjective(env)
-    ref = np.concatenate([env.device_state['gate_ground_truth'],
-                          env.device_state['barrier_ground_truth']])
-    opt_plungers, opt_barriers = phys_obj.get_optimal_voltages(ref)
-    optimal = np.concatenate([opt_plungers, opt_barriers])
+    # Get optimal voltages for vectorized success check (use env's ground truth directly)
+    optimal = np.concatenate([
+        env.device_state['gate_ground_truth'],
+        env.device_state['barrier_ground_truth']
+    ])
 
     # Reset tracker for this trial
     tracker.reset()
@@ -119,7 +117,7 @@ def main():
     parser = argparse.ArgumentParser(description="Random sampling benchmark for quantum dot tuning")
     parser.add_argument("--num_dots", type=int, default=2, help="Number of quantum dots")
     parser.add_argument("--num_trials", type=int, default=100, help="Number of trials to run")
-    parser.add_argument("--max_scans", type=int, default=100000, help="Maximum samples per trial")
+    parser.add_argument("--max_scans", type=int, default=500, help="Maximum samples per trial")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed")
     parser.add_argument("--threshold", type=float, default=0.5, help="Success threshold in volts")
     parser.add_argument("--output", type=str, default=None, help="Output file path")
