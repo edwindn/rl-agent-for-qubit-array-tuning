@@ -36,8 +36,8 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
     episode.add('rewards', tran['reward'], agg='stack')
     for key, value in tran.items():
       if value.dtype == np.uint8 and value.ndim == 3:
-        if value.shape[-1] == 1:
-          value = np.repeat(value, 3, axis=-1)
+        if value.shape[-1] > 1:
+          value = value[..., :1]
         if worker == 0:
           episode.add(f'policy_{key}', value, agg='stack')
       elif key.startswith('log/'):

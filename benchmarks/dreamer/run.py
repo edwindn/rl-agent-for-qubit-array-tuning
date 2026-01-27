@@ -4,7 +4,7 @@ DreamerV3 evaluation benchmark for quantum dot array tuning.
 Evaluates a trained DreamerV3 agent and produces BenchmarkResult compatible output.
 
 Usage:
-    python run.py --checkpoint /path/to/logdir --num_dots 2 --num_trials 10 --gpu 5
+    python run.py --checkpoint /path/to/logdir --num_dots 2 --num_trials 10 --gpu 0
 """
 
 import argparse
@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Parse --gpu early before JAX imports
 _gpu_parser = argparse.ArgumentParser(add_help=False)
-_gpu_parser.add_argument('--gpu', type=int, default=5, help='GPU device index')
+_gpu_parser.add_argument('--gpu', type=int, default=0, help='GPU device index')
 _gpu_args, _ = _gpu_parser.parse_known_args()
 os.environ['CUDA_VISIBLE_DEVICES'] = str(_gpu_args.gpu)
 
@@ -39,7 +39,7 @@ import ruamel.yaml as yaml
 from env_init import create_benchmark_env, get_ground_truth
 from objective import get_distances, check_success
 from utils import BenchmarkResult, TrialResult, save_results, print_summary
-from wrapper import make_dreamer_env
+from wrapper import make_dreamer_env, DreamerEnvWrapper
 from convergence_tracker import ConvergenceTracker
 
 
@@ -138,7 +138,7 @@ def run_single_trial(
     import embodied
 
     # Create fresh evaluation environment
-    gym_env = make_dreamer_env(num_dots, use_barriers, max_steps, seed=seed)
+    gym_env = make_dreamer_env(num_dots, use_barriers, max_steps, seed=seed, eval=True)
     env = from_gym.FromGym(gym_env)
 
     # Apply wrappers (same as training)
@@ -256,6 +256,7 @@ def run_single_trial(
 
 
 def main():
+    DreamerEnvWrapper._global_iteration = 0
     parser = argparse.ArgumentParser(description="Evaluate DreamerV3 agent on quantum dots")
     parser.add_argument("--checkpoint", type=str, required=True,
                        help="Path to training logdir with checkpoint")
@@ -273,7 +274,7 @@ def main():
                        help="Output path for results JSON")
     parser.add_argument("--use_barriers", action="store_true", default=True,
                        help="Control barrier voltages")
-    parser.add_argument("--gpu", type=int, default=5,
+    parser.add_argument("--gpu", type=int, default=0,
                        help="GPU device (already applied)")
     args = parser.parse_args()
 

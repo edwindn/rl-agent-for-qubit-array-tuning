@@ -11,7 +11,6 @@ Key conversions:
 - Reward: dict -> scalar sum
 """
 
-import os
 import sys
 from pathlib import Path
 import numpy as np
@@ -39,8 +38,9 @@ class DreamerEnvWrapper(gym.Env):
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 30}
+    _global_iteration = 0
 
-    def __init__(self, num_dots=2, use_barriers=True, max_steps=50, seed=None, resolution=96, **kwargs):
+    def __init__(self, num_dots=2, use_barriers=True, max_steps=50, seed=None, resolution=96, eval=False, **kwargs):
         """
         Initialize DreamerV3 wrapper.
 
@@ -58,12 +58,18 @@ class DreamerEnvWrapper(gym.Env):
         self.use_barriers = use_barriers
         self.max_steps = max_steps
         self._seed = seed
-        self.iteration = -1
+        self.eval = eval
+        self.iteration = 0
         self._step_in_iteration = 0
-        self._race_file = Path(__file__).parent / "distance_logging.lock"
-        self.save_distance_data = self._attempt_claim_logging()
         self._plunger_history = []
         self._barrier_history = []
+        self._dreamer_dir = Path("/home/edn/rl-agent-for-qubit-array-tuning/benchmarks/dreamer")
+        self._local_plot_dir = None
+        if self.eval:
+            self._local_plot_dir = self._dreamer_dir / "eval_distance_plots"
+            self._local_plot_dir.mkdir(parents=True, exist_ok=True)
+            if not self._local_plot_dir.exists() or not self._local_plot_dir.is_dir():
+                raise RuntimeError(f"Eval plot directory is invalid: {self._local_plot_dir}")
 
         # Create underlying environment with correct parameters
         # (must pass to constructor since reset() is called during __init__)
@@ -113,21 +119,13 @@ class DreamerEnvWrapper(gym.Env):
             dtype=np.float32
         )
 
-    def _attempt_claim_logging(self):
-        try:
-            fd = os.open(self._race_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            return False
-        else:
-            os.close(fd)
-            return True
-
     def reset(self, seed=None, options=None):
         """Reset environment and convert observation."""
         obs, info = self._env.reset(seed=seed or self._seed, options=options)
         converted_obs = self._convert_observation(obs)
-        if self.save_distance_data:
-            self.iteration += 1
+        if self.eval:
+            DreamerEnvWrapper._global_iteration += 1
+            self.iteration = DreamerEnvWrapper._global_iteration
             self._step_in_iteration = 0
             self._plunger_history = []
             self._barrier_history = []
@@ -162,7 +160,7 @@ class DreamerEnvWrapper(gym.Env):
         # Aggregate reward: sum of all gate and barrier rewards
         reward = np.sum(reward_dict["gates"]) + np.sum(reward_dict["barriers"])
 
-        if self.save_distance_data:
+        if self.eval:
             self._save_distances(env_action)
             if terminated or truncated:
                 self._log_distance_plots()
@@ -175,8 +173,18 @@ class DreamerEnvWrapper(gym.Env):
         plunger_ground_truth = np.asarray(device_state["gate_ground_truth"])
         barrier_ground_truth = np.asarray(device_state["barrier_ground_truth"])
 
-        current_gate_voltages = action["action_gate_voltages"]
-        current_barrier_voltages = action["action_barrier_voltages"]
+        # Use device_state voltages (already rescaled to physical ranges).
+        if "current_gate_voltages" in device_state and "current_barrier_voltages" in device_state:
+            current_gate_voltages = np.asarray(device_state["current_gate_voltages"])
+            current_barrier_voltages = np.asarray(device_state["current_barrier_voltages"])
+        else:
+            # Fallback: rescale normalized action values to physical ranges.
+            current_gate_voltages = self._env._rescale_gate_voltages(
+                np.asarray(action["action_gate_voltages"], dtype=np.float32)
+            )
+            current_barrier_voltages = self._env._rescale_barrier_voltages(
+                np.asarray(action["action_barrier_voltages"], dtype=np.float32)
+            )
 
         if plunger_ground_truth.size and current_gate_voltages.size:
             plunger_distances = np.abs(plunger_ground_truth - current_gate_voltages)
@@ -193,14 +201,19 @@ class DreamerEnvWrapper(gym.Env):
         self._step_in_iteration += 1
 
     def _log_distance_plots(self):
-        try:
-            import wandb
-            import matplotlib.pyplot as plt
-        except Exception:
+        if not self.eval:
             return
+        if self._local_plot_dir is None:
+            raise RuntimeError("Eval plot directory is not configured.")
+        if not self._local_plot_dir.exists() or not self._local_plot_dir.is_dir():
+            raise RuntimeError(f"Eval plot directory does not exist: {self._local_plot_dir}")
 
-        if not getattr(wandb, "run", None):
-            return
+        import matplotlib.pyplot as plt
+
+        if not self._plunger_history:
+            raise RuntimeError("No plunger distance history available for plotting.")
+        if self.use_barriers and not self._barrier_history:
+            raise RuntimeError("No barrier distance history available for plotting.")
 
         if self._plunger_history:
             plunger_array = np.stack(self._plunger_history, axis=0)
@@ -214,13 +227,12 @@ class DreamerEnvWrapper(gym.Env):
             ax.set_title("Plunger Agent Distances")
             ax.legend()
             ax.grid(True, alpha=0.3)
-            wandb.log(
-                {
-                    "agent_vision/plunger_distances": wandb.Image(fig),
-                    "iteration": self.iteration,
-                }
-            )
+            filename = f"plunger_distances_iter_{self.iteration:04d}.png"
+            output_path = self._local_plot_dir / filename
+            fig.savefig(output_path, bbox_inches="tight")
             plt.close(fig)
+            if not output_path.exists():
+                raise RuntimeError(f"Failed to create plunger distance plot: {output_path}")
 
         if self._barrier_history:
             barrier_array = np.stack(self._barrier_history, axis=0)
@@ -234,13 +246,12 @@ class DreamerEnvWrapper(gym.Env):
             ax.set_title("Barrier Agent Distances")
             ax.legend()
             ax.grid(True, alpha=0.3)
-            wandb.log(
-                {
-                    "agent_vision/barrier_distances": wandb.Image(fig),
-                    "iteration": self.iteration,
-                }
-            )
+            filename = f"barrier_distances_iter_{self.iteration:04d}.png"
+            output_path = self._local_plot_dir / filename
+            fig.savefig(output_path, bbox_inches="tight")
             plt.close(fig)
+            if not output_path.exists():
+                raise RuntimeError(f"Failed to create barrier distance plot: {output_path}")
 
     def _convert_observation(self, obs):
         """
@@ -289,7 +300,7 @@ class DreamerEnvWrapper(gym.Env):
         return self._env.device_state
 
 
-def make_dreamer_env(num_dots=2, use_barriers=True, max_steps=50, seed=None, resolution=96):
+def make_dreamer_env(num_dots=2, use_barriers=True, max_steps=50, seed=None, resolution=96, eval=False):
     """
     Factory function to create DreamerV3-compatible environment.
 
@@ -299,6 +310,7 @@ def make_dreamer_env(num_dots=2, use_barriers=True, max_steps=50, seed=None, res
         max_steps: Maximum steps per episode
         seed: Random seed
         resolution: Image resolution (must be divisible by 16 for encoder pooling)
+        eval: Whether this environment is used for evaluation
 
     Returns:
         DreamerEnvWrapper instance
@@ -308,7 +320,8 @@ def make_dreamer_env(num_dots=2, use_barriers=True, max_steps=50, seed=None, res
         use_barriers=use_barriers,
         max_steps=max_steps,
         seed=seed,
-        resolution=resolution
+        resolution=resolution,
+        eval=eval,
     )
 
 

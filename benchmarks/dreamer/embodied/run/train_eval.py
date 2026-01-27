@@ -51,6 +51,8 @@ def train_eval(
     episode.add('rewards', tran['reward'], agg='stack')
     for key, value in tran.items():
       if value.dtype == np.uint8 and value.ndim == 3:
+        if value.shape[-1] > 1:
+          value = value[..., :1]
         if worker == 0:
           episode.add(f'policy_{key}', value, agg='stack')
       elif key.startswith('log/'):

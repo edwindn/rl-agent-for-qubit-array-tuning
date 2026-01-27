@@ -15,7 +15,7 @@ from functools import partial as bind
 
 # Parse --gpu early before JAX imports (must be done first)
 _gpu_parser = argparse.ArgumentParser(add_help=False)
-_gpu_parser.add_argument('--gpu', type=int, default=5, help='GPU device index')
+_gpu_parser.add_argument('--gpu', type=int, default=0, help='GPU device index')
 _gpu_args, _ = _gpu_parser.parse_known_args()
 
 # Restrict JAX to single GPU (must be set before importing JAX)
@@ -59,7 +59,7 @@ def main(argv=None):
     parser.add_argument('--max_steps', type=int, default=50, help='Max steps per episode')
     parser.add_argument('--steps', type=int, default=None, help='Total training steps')
     parser.add_argument('--seed', type=int, default=None, help='Random seed')
-    parser.add_argument('--gpu', type=int, default=5, help='GPU device (already applied)')
+    parser.add_argument('--gpu', type=int, default=0, help='GPU device (already applied)')
     custom_args, remaining = parser.parse_known_args(argv)
 
     # Load configs

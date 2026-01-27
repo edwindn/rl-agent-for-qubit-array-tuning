@@ -32,6 +32,9 @@ def eval_only(make_agent, make_env, make_logger, args):
     episode.add('rewards', tran['reward'], agg='stack')
     for key, value in tran.items():
       isimage = (value.dtype == np.uint8) and (value.ndim == 3)
+      if isimage:
+        if value.shape[-1] > 1:
+          value = value[..., :1]
       if isimage and worker == 0:
         episode.add(f'policy_{key}', value, agg='stack')
       elif key.startswith('log/'):
