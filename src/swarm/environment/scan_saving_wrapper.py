@@ -31,8 +31,10 @@ class ScanSavingWrapper(MultiAgentEnvWrapper):
         gif_config: dict = None,
         distance_data_dir: str = None,
         env_config_path: str = None,
+        capacitance_model_checkpoint: str = None,
         scan_save_dir: str = None,
         scan_save_enabled: bool = True,
+        is_collecting_data: bool = False,
     ):
         """
         Initialize scan saving wrapper with same signature as MultiAgentEnvWrapper.
@@ -43,6 +45,7 @@ class ScanSavingWrapper(MultiAgentEnvWrapper):
             gif_config: Configuration for GIF capture
             distance_data_dir: Path to directory for saving distance data
             env_config_path: Optional path to custom env config file
+            capacitance_model_checkpoint: Path to capacitance model weights checkpoint
             scan_save_dir: Directory to save scan images (new parameter)
             scan_save_enabled: Whether to enable scan saving (new parameter)
         """
@@ -53,10 +56,17 @@ class ScanSavingWrapper(MultiAgentEnvWrapper):
             gif_config=gif_config,
             distance_data_dir=distance_data_dir,
             env_config_path=env_config_path,
+            capacitance_model_checkpoint=capacitance_model_checkpoint,
+            is_collecting_data=is_collecting_data,
         )
 
         # Scan saving specific attributes
-        self.scan_save_dir = Path(scan_save_dir) if scan_save_dir else None
+        if scan_save_dir is None:
+            eval_runs_dir = os.environ.get("EVAL_RUNS_DIR")
+            if eval_runs_dir:
+                scan_save_dir = str(Path(eval_runs_dir) / "scan_captures")
+
+        self.scan_save_dir = Path(scan_save_dir).resolve() if scan_save_dir else None
         self.scan_save_enabled = scan_save_enabled and (scan_save_dir is not None)
         self.step_count = 0
         self.episode_count = 0

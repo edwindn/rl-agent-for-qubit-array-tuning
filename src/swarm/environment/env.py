@@ -41,6 +41,7 @@ class QuantumDeviceEnv(gym.Env):
         config_path="env_config.yaml",
         num_dots=None,
         use_barriers=None,
+        capacitance_model_checkpoint=None,
     ):
 
         super().__init__()
@@ -50,6 +51,7 @@ class QuantumDeviceEnv(gym.Env):
         self.training = training  # if we are training or not
         self.num_dots = num_dots if num_dots is not None else self.config['simulator']['num_dots']
         self.use_barriers = use_barriers if use_barriers is not None else self.config['simulator']['use_barriers']
+        self.capacitance_model_checkpoint = capacitance_model_checkpoint
         self.use_deltas = self.config['simulator']['use_deltas']
         self.max_steps = self.config["simulator"]["max_steps"]
         self.num_plunger_voltages = self.num_dots
@@ -71,6 +73,11 @@ class QuantumDeviceEnv(gym.Env):
         self.plunger_delta_min = -delta_max
 
         #reward parameters
+        self.sparse_reward = self.config["reward"]["sparse_reward"]
+        self.plunger_radius = self.config["reward"]["plunger_radius"]
+        self.barrier_radius = self.config["reward"]["barrier_radius"]
+        self.outer_plunger_radius = self.config["reward"]["outer_plunger_radius"]
+        self.outer_plunger_reward_max = self.config["reward"]["outer_plunger_reward_max"]
         self.gate_ramp_start = self.config["reward"]["gate_ramp_start"]
         self.gate_quadratic_start = self.config["reward"]["gate_quadratic_start"]
         self.gate_curve_type = self.config["reward"]["gate_curve_type"]
@@ -344,7 +351,14 @@ class QuantumDeviceEnv(gym.Env):
         """
         Get the reward for the current state using a piecewise reward function.
 
-        Gate rewards use a configurable piecewise function:
+        If sparse_reward is enabled:
+        - Plunger reward zones:
+          * distance <= plunger_radius: reward = 1.0
+          * plunger_radius < distance <= outer_plunger_radius: reward linearly decreases from outer_plunger_reward_max to 0.0
+          * distance > outer_plunger_radius: reward = 0.0
+        - Barrier reward = 1.0 if distance <= barrier_radius, 0.0 otherwise
+
+        Otherwise, gate rewards use a configurable piecewise function:
         - Region 1 (distance > ramp_start): reward = 0
         - Region 2 (quadratic_start < distance <= ramp_start): linear from 0 to 0.5
         - Region 3 (0 < distance <= quadratic_start): configurable curve (polynomial/exponential/linear) from 0.5 to 1.0
@@ -379,6 +393,29 @@ class QuantumDeviceEnv(gym.Env):
         if self.use_barriers and self.array.barrier_alpha is not None:
             barrier_alpha = np.array(self.array.barrier_alpha)
             barrier_distances = barrier_distances * barrier_alpha
+
+        # Sparse reward mode: binary reward based on plunger_radius and barrier_radius
+        # with outer plunger zone for linearly scaled rewards
+        if self.sparse_reward:
+            gate_rewards = np.zeros_like(gate_distances)
+
+            # Inner radius: full reward
+            inner_mask = gate_distances <= self.plunger_radius
+            gate_rewards[inner_mask] = 1.0
+
+            # Outer radius zone: linear scaling from outer_plunger_reward_max (at plunger_radius) to 0 (at outer_plunger_radius)
+            outer_mask = (gate_distances > self.plunger_radius) & (gate_distances <= self.outer_plunger_radius)
+            if np.any(outer_mask):
+                # Linear interpolation: reward = max_reward * (1 - (dist - inner_r) / (outer_r - inner_r))
+                normalized_dist = (gate_distances[outer_mask] - self.plunger_radius) / (self.outer_plunger_radius - self.plunger_radius)
+                gate_rewards[outer_mask] = self.outer_plunger_reward_max * (1.0 - normalized_dist)
+
+            # Beyond outer radius: zero reward (already initialized to zero)
+
+            barrier_rewards = np.where(barrier_distances <= self.barrier_radius, 1.0, 0.0)
+
+            rewards = {"gates": gate_rewards, "barriers": barrier_rewards}
+            return rewards
 
         # Calculate gate rewards using piecewise function
         gate_rewards = np.zeros_like(gate_distances)
@@ -659,6 +696,13 @@ class QuantumDeviceEnv(gym.Env):
                 self.capacitance_model = update_method
                 return
 
+            if not self.capacitance_model_checkpoint:
+                raise ValueError(
+                    "Capacitance model weights must be provided via "
+                    "capacitance_model_checkpoint when using update_method "
+                    f"'{update_method}'."
+                )
+
             # Determine device (GPU if available, otherwise CPU)
             if torch.cuda.is_available():
                 device = torch.device("cuda")
@@ -676,14 +720,15 @@ class QuantumDeviceEnv(gym.Env):
             if "SWARM_PROJECT_ROOT" in os.environ:
                 # Ray distributed mode: use environment variable set by training script
                 swarm_dir = os.environ["SWARM_PROJECT_ROOT"]
+                src_dir = os.path.dirname(swarm_dir)
             else:
                 # Local development mode: find Swarm directory from current file
                 swarm_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            
-            if self.use_barriers:
-                weights_path = os.path.join(swarm_dir, "capacitance_model", "mobilenet_final_epoch_8", "mobilenet_barrier_weights.pth")
-            else:
-                weights_path = os.path.join(swarm_dir, "capacitance_model", "weights", "best_model_no_barriers.pth")
+                src_dir = os.path.dirname(swarm_dir)
+
+            weights_path = self.capacitance_model_checkpoint
+            if not os.path.isabs(weights_path):
+                weights_path = os.path.join(src_dir, weights_path)
 
             if not os.path.exists(weights_path):
                 raise FileNotFoundError(f"Model weights not found at: {weights_path}")

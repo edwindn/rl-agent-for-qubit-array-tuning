@@ -7,6 +7,7 @@ and handles the conversion between single-agent actions and global environment a
 
 import sys
 import glob
+import json
 import random
 from typing import Dict
 
@@ -46,6 +47,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         gif_config: dict = None,
         distance_data_dir: str = None,
         env_config_path: str = None,
+        capacitance_model_checkpoint: str = None,
+        is_collecting_data: bool = False,
+        base_env_class = None,
     ):
         """
         Initialize multi-agent wrapper.
@@ -58,11 +62,13 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                           If False, returns only the image array.
             distance_data_dir: Path to directory for saving distance data (if enabled)
             env_config_path: Optional path to custom env config file (defaults to env_config.yaml)
+            capacitance_model_checkpoint: Path to capacitance model weights checkpoint
         """
         super().__init__()
 
         self.return_voltage = return_voltage
         self.distance_data_dir = distance_data_dir
+        self.is_collecting_data = is_collecting_data
 
         self.distance_history = None
 
@@ -70,11 +76,21 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         if self.gif_config is not None:
             self._init_gif_capture()
 
+        # Use provided base_env_class or default to QuantumDeviceEnv
+        env_class = base_env_class if base_env_class is not None else QuantumDeviceEnv
+
         # Pass custom config path if provided
         if env_config_path:
-            self.base_env = QuantumDeviceEnv(training=training, config_path=env_config_path)
+            self.base_env = env_class(
+                training=training,
+                config_path=env_config_path,
+                capacitance_model_checkpoint=capacitance_model_checkpoint,
+            )
         else:
-            self.base_env = QuantumDeviceEnv(training=training)
+            self.base_env = env_class(
+                training=training,
+                capacitance_model_checkpoint=capacitance_model_checkpoint,
+            )
 
         self.num_gates = self.base_env.num_dots
         self.use_barriers = self.base_env.use_barriers
@@ -98,6 +114,12 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                     os.chmod(agent_folder, 0o777)
                 except:
                     pass  # Directory may not exist or permissions may not be settable
+            cgd_folder = distance_data_path / "cgd"
+            cgd_folder.mkdir(parents=True, exist_ok=True, mode=0o777)
+            try:
+                os.chmod(cgd_folder, 0o777)
+            except:
+                pass
 
         # Setup channel assignments for agents
         self._setup_channel_assignments()
@@ -395,7 +417,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         """
         global_obs, global_info = self.base_env.reset(seed=seed, options=options)
 
-        if self.distance_history is not None:
+        if self.distance_history is not None and not self.is_collecting_data:
             self._save_agent_histories(self.distance_history)
 
         if self.distance_data_dir is not None:
@@ -458,6 +480,8 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         # Save distance history when episode ends
         if (terminated or truncated) and self.distance_history is not None:
             self._save_agent_histories(self.distance_history)
+            if self.is_collecting_data:
+                self._save_cgd_matrix()
             # Clear history after saving
             self.distance_history = {_id: [] for _id in self.all_agent_ids}
 
@@ -547,6 +571,46 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
 
             # Save the array
             np.save(filepath, dists)
+
+    def _save_cgd_matrix(self):
+        if self.distance_data_dir is None:
+            return
+
+        model = getattr(self.base_env, "array", None)
+        model = getattr(model, "model", None)
+        if model is None:
+            return
+
+        if self.use_barriers and hasattr(model, "cgd_full"):
+            cgd = model.cgd_full
+        elif hasattr(model, "cgd"):
+            cgd = model.cgd
+        elif hasattr(model, "Cgd"):
+            cgd = model.Cgd
+        else:
+            return
+
+        cgd_matrix = np.array(cgd)
+        distance_data_path = Path(self.distance_data_dir)
+        cgd_folder = distance_data_path / "cgd"
+
+        existing_files = glob.glob(str(cgd_folder / "*.json"))
+        if len(existing_files) == 0:
+            next_count = 1
+        else:
+            counts = []
+            for filepath in existing_files:
+                filename = Path(filepath).stem
+                count_str = filename.split('_')[0]
+                counts.append(int(count_str))
+            next_count = max(counts) + 1
+
+        random_suffix = random.randint(0, 999999)
+        filename = f"{next_count:04d}_{random_suffix:06d}.json"
+        filepath = cgd_folder / filename
+
+        with open(filepath, "w") as f:
+            json.dump(cgd_matrix.tolist(), f)
 
 
     # def _get_obs_images(self, obs: Dict[str, Union[np.ndarray, torch.tensor]]):

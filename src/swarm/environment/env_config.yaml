@@ -39,6 +39,14 @@ simulator:
     # high: 10-20
 
 reward:
+  sparse_reward: False # use sparse for gamma > 0
+  outer_plunger_radius: 10
+  outer_plunger_reward_max: 0.5
+  plunger_radius: 2
+  barrier_radius: 2
+
+  # The below gets activated when reward is not sparse
+
   # Gate/Plunger reward configuration
   gate_ramp_start: 40.0 # Distance from ground truth where reward = 0
   gate_quadratic_start: 1.0 # Distance where curved region begins (reward = 0.5)
