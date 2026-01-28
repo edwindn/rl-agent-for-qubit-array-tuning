@@ -111,6 +111,12 @@ def parse_arguments():
         help='Load training_config.yaml and env_config.yaml from checkpoint directory instead of default config files'
     )
 
+    parser.add_argument(
+        '--deterministic',
+        action='store_true',
+        help='Use deterministic simple environment instead of standard environment'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -122,7 +128,7 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None):
+def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None, base_env_class=None):
     """Create multi-agent quantum environment with JAX safety."""
     import os
     import jax
@@ -146,7 +152,13 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     # Wrap in multi-agent wrapper (config unused but required by RLlib)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
     # RLlib handles temporal sequences via ConnectorV2, not via environment
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=env_config_path)
+    return MultiAgentEnvWrapper(
+        return_voltage=True,
+        gif_config=gif_config,
+        distance_data_dir=distance_data_dir,
+        env_config_path=env_config_path,
+        base_env_class=base_env_class
+    )
 
 
 def load_config(config_path=None, checkpoint_path=None):
@@ -162,7 +174,7 @@ def load_config(config_path=None, checkpoint_path=None):
         if not config_file.exists():
             raise FileNotFoundError(f"Must provide config files within checkpoint: training_config.yaml not found in {checkpoint_path}")
     elif config_path is None:
-        config_file = Path(__file__).parent / "training_config.yaml"
+        config_file = Path(__file__).parent / "configs" / "sac_training_config.yaml"
     else:
         config_file = Path(config_path)
         # Handle relative paths from training directory
@@ -296,11 +308,19 @@ def main():
             print(f"Written env config to temporary file: {temp_env_config_path}")
             env_config_path_for_env = temp_env_config_path
 
+        # Determine which base environment class to use
+        base_env_class = None
+        if args.deterministic:
+            from swarm.algo_ablations.simple_env import QuantumDeviceEnv as DeterministicEnv
+            base_env_class = DeterministicEnv
+            print("\nUsing deterministic simple environment\n")
+
         create_env_fn = partial(
             create_env,
             gif_config=gif_config,
             distance_data_dir=distance_data_dir,
             env_config_path=env_config_path_for_env,
+            base_env_class=base_env_class,
         )
         register_env("qarray_multiagent_env", create_env_fn)
 
