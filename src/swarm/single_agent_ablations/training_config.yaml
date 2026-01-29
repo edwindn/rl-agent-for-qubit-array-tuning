@@ -3,7 +3,7 @@
 
 # Default training parameters
 defaults:
-  num_iterations: 100        # Total training iterations
+  num_iterations: 50        # Total training iterations
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
   save_distance_data: true # Not used in single-agent benchmark
 
@@ -23,13 +23,18 @@ ray:
   runtime_env:
     excludes:
       - "dataset"
-      - "dataset_v1" 
-      - "wandb"
+      - "dataset_v1"
+      - "**/wandb/**"
       - "outputs"
       - "test_outputs"
-      - "checkpoints"
-      - "weights*"
+      - "**/checkpoints/**"
+      - "**/weights/**"
       - "*dataset*"
+      - "**/data/**"
+      - "**/artifacts/**"
+      - "**/*.png"
+      - "**/*.pth"
+      - "**/*.pkl"
     
     env_vars:
       JAX_PLATFORM_NAME: "cuda"
@@ -49,13 +54,14 @@ ray:
 # Algorithm Configuration
 rl_config:
   algorithm: "PPO" # PPO only for single-agent
+  train_barriers: false
 
   # Environment runners configuration
   env_runners:
-    num_env_runners: 12               # Number of parallel environment runners
-    rollout_fragment_length: 50     # Steps per rollout fragment
+    num_env_runners: 16               # Number of parallel environment runners
+    rollout_fragment_length: 100     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
-    num_gpus_per_env_runner: 0.3
+    num_gpus_per_env_runner: 0.25
 
   # Learner configuration  
   learners:
@@ -65,7 +71,7 @@ rl_config:
   # Training hyperparameters
   training:
     train_batch_size: 8192          # Total batch size for training
-    minibatch_size: 512             # Size of minibatches for SGD
+    minibatch_size: 256             # Size of minibatches for SGD
     num_epochs: 10                   # Number of SGD epochs per training iteration
     grad_clip: 40.0                 # Amount of gradient clipping (set to null to disable) ~40.0 is the default
     grad_clip_by: "norm"            # Gradient clipping method

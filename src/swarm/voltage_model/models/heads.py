@@ -196,6 +196,7 @@ class QValueHead(TorchModel):
         self.config = config
 
         voltage_embedding_dim = 16  # VOLTAGE DIM HARDCODED FOR NOW (same as other heads)
+        voltage_dim = getattr(config, "voltage_dim", 1)
 
         layers = []
         in_dim = config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims
@@ -209,7 +210,7 @@ class QValueHead(TorchModel):
 
         self.mlp = nn.Sequential(*layers)
 
-        self.voltage_layer = nn.Linear(1, voltage_embedding_dim)
+        self.voltage_layer = nn.Linear(voltage_dim, voltage_embedding_dim)
 
         # Final layer: mlp_output + voltage_embedding + action
         self.final_layer = nn.Linear(in_dim + voltage_embedding_dim + config.action_dim, 1)

@@ -7,11 +7,10 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
     # QArray
     "qarray==1.6.0",
-    "qarray-latched @ git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@fd344d7a47d88444c7db658346cf59fc22af493a",
     # Core ML/RL - pinned to match working conda env
     "torch==2.8.0",
     "torchvision==0.23.0",
-    "ray[rllib]==2.49.0",
+    "ray[rllib]==2.51",
     "wandb[media]",
     "gymnasium==1.1.1",
     "jax[cuda12]==0.7.2",
@@ -25,6 +24,8 @@ dependencies = [
     "scienceplots",
     "gputil>=1.4.0",
     "modal>=1.3.0.post1",
+    "stable-baselines3>=2.7.1",
+    "cleanrl>=0.4.8",
 ]
 
 [project.optional-dependencies]

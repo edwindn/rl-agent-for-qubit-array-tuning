@@ -600,8 +600,8 @@ class QuantumDeviceEnv(gym.Env):
 
         update_method = self.config["capacitance_model"]["update_method"]
 
-        if update_method == "kalman":
-            # Kalman filter: values are deltas, use variance gating
+        if update_method in ["kalman", "direct"]:
+            # Kalman filter or direct updater: values are deltas, use variance gating
             # Note: negate predictions due to qarray sign convention
             if self.capacitance_model["nearest_neighbour"]:
                 # Legacy NN mode: 2 outputs [RL, LR]
@@ -784,10 +784,16 @@ class QuantumDeviceEnv(gym.Env):
                 capacitance_predictor = EmaCapacitancePredictor(
                     n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
                 )
-            elif update_method == "kalman":
-                # Initialize Kalman filter with variance gating
-                from swarm.capacitance_model.KalmanUpdater import KalmanCapacitanceUpdater
-                capacitance_predictor = KalmanCapacitanceUpdater(
+            elif update_method in ["kalman", "direct"]:
+                # Initialize Kalman filter or direct updater with variance gating
+                if update_method == "kalman":
+                    from swarm.capacitance_model.KalmanUpdater import KalmanCapacitanceUpdater
+                    updater_cls = KalmanCapacitanceUpdater
+                else:
+                    from swarm.capacitance_model.DirectUpdater import DirectCapacitanceUpdater
+                    updater_cls = DirectCapacitanceUpdater
+
+                capacitance_predictor = updater_cls(
                     n_dots=self.num_dots,
                     prior_mean=0.3,
                     prior_variance=0.5,

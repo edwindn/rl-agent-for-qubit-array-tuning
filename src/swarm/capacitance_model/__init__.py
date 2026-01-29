@@ -10,6 +10,7 @@ from .BayesianUpdater import BayesianCapacitancePredictor
 from .KrigingUpdater import KrigingCapacitancePredictor
 from .EmaUpdater import EmaCapacitancePredictor
 from .KalmanUpdater import KalmanCapacitanceUpdater
+from .DirectUpdater import DirectCapacitanceUpdater
 
 __all__ = [
     'CapacitancePredictionModel',
@@ -19,4 +20,5 @@ __all__ = [
     'KrigingCapacitancePredictor',
     'EmaCapacitancePredictor',
     'KalmanCapacitanceUpdater',
+    'DirectCapacitanceUpdater',
 ]

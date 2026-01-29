@@ -33,8 +33,13 @@ def eval_only(make_agent, make_env, make_logger, args):
     for key, value in tran.items():
       isimage = (value.dtype == np.uint8) and (value.ndim == 3)
       if isimage:
-        if value.shape[-1] > 1:
-          value = value[..., :1]
+        channels = value.shape[-1]
+        if channels == 1:
+          value = np.repeat(value, 3, axis=-1)
+        elif channels == 2:
+          value = np.repeat(value[..., :1], 3, axis=-1)
+        elif channels > 3:
+          value = value[..., :3]
       if isimage and worker == 0:
         episode.add(f'policy_{key}', value, agg='stack')
       elif key.startswith('log/'):

@@ -115,7 +115,7 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None):
+def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None, use_barriers=True):
     """Create single-agent quantum environment with JAX safety."""
     import os
     import jax
@@ -142,6 +142,7 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
         training=True,
         config_path=env_config_path,
         distance_data_dir=distance_data_dir,
+        use_barriers=use_barriers,
     )
 
 
@@ -276,6 +277,9 @@ def main():
         # Load env config directly from YAML (no GPU initialization needed on driver)
         env_config = load_env_config(checkpoint_path)
 
+        # Get train_barriers setting from training config
+        train_barriers = config['rl_config']['train_barriers']
+
         # Write env_config to a temporary file so workers can load it
         temp_env_config_path = None
         if checkpoint_path:
@@ -292,6 +296,7 @@ def main():
             create_env,
             env_config_path=temp_env_config_path,
             distance_data_dir=distance_data_dir,
+            use_barriers=train_barriers,
         )
         register_env("qarray_singleagent_env", create_env_fn)
 
@@ -327,7 +332,7 @@ def main():
         
         algo = config['rl_config']['algorithm'].lower()
 
-        rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
+        rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config, train_barriers=train_barriers)
 
         if algo != "ppo":
             raise ValueError("Single-agent benchmark currently supports PPO only.")

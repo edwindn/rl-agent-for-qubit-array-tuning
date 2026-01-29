@@ -78,7 +78,7 @@ class CustomSingleAgentCatalog(PPOCatalog):
         return config.build(framework=framework)
 
 
-def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = None) -> RLModuleSpec:
+def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = None, train_barriers: bool = True) -> RLModuleSpec:
     """Create a single-agent RLModuleSpec based on env_config."""
     import numpy as np
     from gymnasium import spaces
@@ -89,10 +89,9 @@ def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = No
 
     resolution = env_config["simulator"]["resolution"]
     num_dots = env_config["simulator"]["num_dots"]
-    use_barriers = env_config["simulator"]["use_barriers"]
     num_channels = num_dots - 1
 
-    num_barriers = num_dots - 1 if use_barriers else 0
+    num_barriers = num_dots - 1 if train_barriers else 0
     num_actions = num_dots + num_barriers
 
     image_space = spaces.Box(

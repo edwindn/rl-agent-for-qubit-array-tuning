@@ -69,6 +69,7 @@ class QValueHeadConfig(MLPHeadConfig):
     hidden_layers: Optional[List[int]] = None
     activation: str = "relu"
     action_dim: int = 1  # Dimension of action space
+    voltage_dim: int = 1  # Number of voltage inputs (1 for multi-agent, N for single-agent)
 
     def __post_init__(self):
         if self.hidden_layers:

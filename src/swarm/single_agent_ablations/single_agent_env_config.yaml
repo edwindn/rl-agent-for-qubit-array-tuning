@@ -15,7 +15,7 @@ simulator:
 
   constant_voltage_offset: {"min": 0, "max": 0}
   
-  full_plunger_range_width: {"min": 80, "max": 100} #range in V of plungers
+  full_plunger_range_width: {"min": 30, "max": 40} #range in V of plungers
 
   window_delta_range: {"min": 1.5, "max": 2.0} #half range in V for a single scan/sweep (goes from -range to +range)
 
@@ -25,7 +25,7 @@ simulator:
 
   # Radial noise: zero within zero_radius of ground truth, then linearly increasing
   radial_noise:
-    enabled: true
+    enabled: false
     lower: {"min": 20, "max": 30}
     ramp_range: {"min": 5, "max": 10}
     total_noise_range: {"min": 30, "max": 40}
@@ -50,7 +50,7 @@ reward:
 
 
 capacitance_model:
-  update_method: null  # Options: null, "perfect", "fake", "ema", "bayesian", "kriging", "kalman"
+  update_method: "perfect"  # Options: null, "perfect", "fake", "ema", "bayesian", "kriging", "kalman"
   nearest_neighbour: false # set to true if the ML model outputs two values per prediction (gate-dot RL and LR couplings in this order)
   # note that the perfect method will also remove any cross-talk with and between the barriers
   # Kalman filter settings (only used when update_method: "kalman")

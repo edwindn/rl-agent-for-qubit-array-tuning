@@ -430,27 +430,29 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
                 for agent_folder in plunger_folders:
                     # Get all .npy files and find the one with highest count
                     npy_files = glob.glob(str(agent_folder / "*.npy"))
-                    if npy_files:
-                        # Extract counts and find max
-                        max_count = 0
-                        latest_file = None
-                        for filepath in npy_files:
-                            filename = Path(filepath).stem
-                            count_str = filename.split('_')[0]
-                            count = int(count_str)
-                            if count > max_count:
-                                max_count = count
-                                latest_file = filepath
+                    if not npy_files:
+                        raise FileNotFoundError(f"No distance data files found for {agent_folder}")
+                    # Extract counts and find max
+                    max_count = 0
+                    latest_file = None
+                    for filepath in npy_files:
+                        filename = Path(filepath).stem
+                        count_str = filename.split('_')[0]
+                        count = int(count_str)
+                        if count > max_count:
+                            max_count = count
+                            latest_file = filepath
 
-                        if latest_file is not None:
-                            # Load and plot the data
-                            distances = np.load(latest_file)
-                            # Validate that the loaded data is not empty
-                            assert distances.size > 0, f"Loaded empty distance data from {latest_file}"
-                            plunger_distances_all.extend(distances)
-                            steps = np.arange(1, len(distances) + 1)
-                            ax.plot(steps, distances, label=agent_folder.name, alpha=0.7)
-
+                    if latest_file is not None:
+                        # Load and plot the data
+                        distances = np.load(latest_file)
+                        if not np.isfinite(distances).all():
+                            raise ValueError(f"Distance data contains non-finite values: {latest_file}")
+                        # Validate that the loaded data is not empty
+                        assert distances.size > 0, f"Loaded empty distance data from {latest_file}"
+                        plunger_distances_all.extend(distances)
+                        steps = np.arange(1, len(distances) + 1)
+                        ax.plot(steps, distances, label=agent_folder.name, alpha=0.7)
                 ax.set_xlabel("Episode Step")
                 ax.set_ylabel("Distance from Ground Truth")
                 ax.set_title("Plunger Agent Distances")
@@ -459,6 +461,7 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
 
                 wandb.log({"agent_vision/plunger_distances": wandb.Image(fig)})
                 plt.close(fig)
+                # Continue to barrier loop
 
             # Calculate and log mean distance magnitude for plungers
             if plunger_distances_all:
@@ -472,25 +475,29 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
                 for agent_folder in barrier_folders:
                     # Get all .npy files and find the one with highest count
                     npy_files = glob.glob(str(agent_folder / "*.npy"))
-                    if npy_files:
-                        # Extract counts and find max
-                        max_count = 0
-                        latest_file = None
-                        for filepath in npy_files:
-                            filename = Path(filepath).stem
-                            count_str = filename.split('_')[0]
-                            count = int(count_str)
-                            if count > max_count:
-                                max_count = count
-                                latest_file = filepath
+                    if not npy_files:
+                        raise FileNotFoundError(f"No distance data files found for {agent_folder}")
 
-                        if latest_file is not None:
-                            # Load and plot the data
-                            distances = np.load(latest_file)
-                            # Validate that the loaded data is not empty
-                            assert distances.size > 0, f"Loaded empty distance data from {latest_file}"
-                            steps = np.arange(1, len(distances) + 1)
-                            ax.plot(steps, distances, label=agent_folder.name, alpha=0.7)
+                    # Extract counts and find max
+                    max_count = 0
+                    latest_file = None
+                    for filepath in npy_files:
+                        filename = Path(filepath).stem
+                        count_str = filename.split('_')[0]
+                        count = int(count_str)
+                        if count > max_count:
+                            max_count = count
+                            latest_file = filepath
+
+                    if latest_file is not None:
+                        # Load and plot the data
+                        distances = np.load(latest_file)
+                        if not np.isfinite(distances).all():
+                            raise ValueError(f"Distance data contains non-finite values: {latest_file}")
+                        # Validate that the loaded data is not empty
+                        assert distances.size > 0, f"Loaded empty distance data from {latest_file}"
+                        steps = np.arange(1, len(distances) + 1)
+                        ax.plot(steps, distances, label=agent_folder.name, alpha=0.7)
 
                 ax.set_xlabel("Episode Step")
                 ax.set_ylabel("Distance from Ground Truth")
@@ -500,9 +507,9 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
 
                 wandb.log({"agent_vision/barrier_distances": wandb.Image(fig)})
                 plt.close(fig)
-
         except Exception as e:
             print(f"Error plotting distance data: {e}")
+            raise
 
     # Log to wandb (don't specify step since we're logging iteration explicitly)
     wandb.log(log_dict)
@@ -568,4 +575,3 @@ def setup_wandb_metrics(ema_period: int = 20):
     wandb.define_metric("barrier_policy_loss", step_metric="iteration", summary="min")
     wandb.define_metric("plunger_lr", step_metric="iteration")
     wandb.define_metric("barrier_lr", step_metric="iteration")
-

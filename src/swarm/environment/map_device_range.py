@@ -10,149 +10,203 @@ import matplotlib.pyplot as plt
 from env import QuantumDeviceEnv
 
 
-def map_device_range(output_path="device_range_map.png",
-                     v0_min=None, v0_max=None, v1_min=None, v1_max=None):
+def map_device_range(output_path="device_range_map.png", n_grid=11, percentile=None):
     """
-    Generate one large scan covering the entire device voltage range.
+    Generate a grid of scans sampling the device voltage range.
+
+    Creates an n_grid × n_grid grid of scans centered at ground truth,
+    with symmetric voltage range of ±60V on both axes.
 
     Args:
         output_path: Path to save the output image
-        v0_min, v0_max: Override min/max voltage for gate 0 (default: use env range)
-        v1_min, v1_max: Override min/max voltage for gate 1 (default: use env range)
+        n_grid: Number of scans per axis (default: 11)
+        percentile: Optional percentile (0-100) to cap values after normalization
     """
     # Initialize environment
     env = QuantumDeviceEnv(training=True)
     obs, info = env.reset()
 
-    # Get voltage ranges for first two plunger gates
-    plunger_min = env.plunger_min[:2].copy()  # First two gates
-    plunger_max = env.plunger_max[:2].copy()  # First two gates
-
-    print(f"Environment voltage ranges:")
-    print(f"  Gate 0: [{plunger_min[0]:.2f}, {plunger_max[0]:.2f}] V")
-    print(f"  Gate 1: [{plunger_min[1]:.2f}, {plunger_max[1]:.2f}] V")
-
-    # Override with user-specified ranges if provided
-    if v0_min is not None:
-        plunger_min[0] = v0_min
-        print(f"  Overriding gate 0 min: {v0_min} V")
-    if v0_max is not None:
-        plunger_max[0] = v0_max
-        print(f"  Overriding gate 0 max: {v0_max} V")
-    if v1_min is not None:
-        plunger_min[1] = v1_min
-        print(f"  Overriding gate 1 min: {v1_min} V")
-    if v1_max is not None:
-        plunger_max[1] = v1_max
-        print(f"  Overriding gate 1 max: {v1_max} V")
-
-    print(f"\nUsing voltage ranges:")
-    print(f"  Gate 0: [{plunger_min[0]:.2f}, {plunger_max[0]:.2f}] V")
-    print(f"  Gate 1: [{plunger_min[1]:.2f}, {plunger_max[1]:.2f}] V")
-
     # Get ground truth for all gates and barriers
     gt_gates = info['current_device_state']['gate_ground_truth']
     gt_barriers = info['current_device_state']['barrier_ground_truth']
 
-    print(f"  Ground truth gates: {gt_gates}")
-    print(f"  Ground truth barriers: {gt_barriers}")
+    print(f"Ground truth gates: {gt_gates}")
+    print(f"Ground truth barriers: {gt_barriers}")
 
-    # Calculate voltage range
-    v0_range = plunger_max[0] - plunger_min[0]
-    v1_range = plunger_max[1] - plunger_min[1]
+    # Set symmetric voltage range centered at ground truth
+    v0_min = gt_gates[0] - 20
+    v0_max = gt_gates[0] + 20
+    v1_min = gt_gates[1] - 20
+    v1_max = gt_gates[1] + 20
 
-    # Get the observation window size
-    obs_v_min = env.array.obs_voltage_min
-    obs_v_max = env.array.obs_voltage_max
-    obs_window_size = obs_v_max - obs_v_min  # Should be ~3V
+    print(f"\nVoltage ranges (centered at ground truth):")
+    print(f"  Gate 0: [{v0_min:.2f}, {v0_max:.2f}] V")
+    print(f"  Gate 1: [{v1_min:.2f}, {v1_max:.2f}] V")
 
-    print(f"\nObservation window size: {obs_window_size:.2f} V")
+    # Set scan window size to 3V
+    scan_window_size = 3.0
+    print(f"\nScan window size: {scan_window_size:.2f} V")
 
-    # Calculate how many scans we'd need to cross the voltage space
-    n_scans_x = int(np.ceil(v0_range / obs_window_size))
-    n_scans_y = int(np.ceil(v1_range / obs_window_size))
+    # Calculate how many scans needed to tile the space without gaps
+    v0_range = v0_max - v0_min
+    v1_range = v1_max - v1_min
 
-    print(f"Number of scans needed to cover range: {n_scans_x} x {n_scans_y}")
+    n_scans_x = int(np.ceil(v0_range / scan_window_size))
+    n_scans_y = int(np.ceil(v1_range / scan_window_size))
 
-    # Use base resolution of 100
-    base_resolution = 100
-    print(f"Base resolution: {base_resolution}")
+    print(f"Number of scans to tile the range: {n_scans_x} × {n_scans_y} = {n_scans_x * n_scans_y} total scans")
 
-    # Multiply resolution to cover the entire range in one scan
-    new_resolution_x = base_resolution * n_scans_x
-    new_resolution_y = base_resolution * n_scans_y
+    # Calculate step size to evenly tile the space
+    # Scans are positioned edge-to-edge with no gaps
+    step_x = scan_window_size
+    step_y = scan_window_size
 
-    print(f"New resolution for full range scan: {new_resolution_x} x {new_resolution_y}")
+    print(f"Step size between scans: ({step_x:.2f}, {step_y:.2f}) V")
 
-    # Temporarily modify the environment's resolution and voltage range
-    original_image_size = env.array.obs_image_size
-    original_v_min = env.array.obs_voltage_min
-    original_v_max = env.array.obs_voltage_max
+    # Store all scans and their positions
+    all_scans = []
+    scan_positions = []
 
-    env.array.obs_image_size = new_resolution_x  # Assuming square images
-    env.array.obs_voltage_min = plunger_min[0]
-    env.array.obs_voltage_max = plunger_max[0]
+    # Use standard resolution
+    resolution = env.array.obs_image_size
+    print(f"Scan resolution: {resolution}x{resolution}")
 
-    # Get the large scan with all voltages set to ground truth
-    raw_obs = env.array._get_obs(gt_gates, gt_barriers)
-    scan = raw_obs["image"][:, :, 0]  # First channel
+    # Generate scans at grid positions that tile the space
+    scan_count = 0
+    for i in range(n_scans_x):
+        for j in range(n_scans_y):
+            scan_count += 1
 
-    # Restore original settings
-    env.array.obs_image_size = original_image_size
-    env.array.obs_voltage_min = original_v_min
-    env.array.obs_voltage_max = original_v_max
+            # Calculate scan boundaries - scans tile edge-to-edge
+            scan_min_v0 = v0_min + i * step_x
+            scan_max_v0 = scan_min_v0 + scan_window_size
+            scan_min_v1 = v1_min + j * step_y
+            scan_max_v1 = scan_min_v1 + scan_window_size
 
-    # Normalize for visualization
-    p_low = np.percentile(scan, 0.5)
-    p_high = np.percentile(scan, 99.5)
-    if p_high > p_low:
-        scan_norm = (scan - p_low) / (p_high - p_low)
-    else:
-        scan_norm = np.zeros_like(scan)
-    scan_norm = np.clip(scan_norm, 0, 1)
+            # Center of this scan
+            center_v0 = (scan_min_v0 + scan_max_v0) / 2
+            center_v1 = (scan_min_v1 + scan_max_v1) / 2
 
-    # Create figure with single large scan
-    fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+            # Temporarily set the environment's observation range for this scan
+            env.array.obs_voltage_min = scan_min_v0
+            env.array.obs_voltage_max = scan_max_v0
 
-    ax.imshow(scan_norm, cmap='viridis', origin='lower', aspect='auto',
-             extent=[plunger_min[0], plunger_max[0], plunger_min[1], plunger_max[1]])
+            # Get the scan with plunger gates at (center_v0, center_v1)
+            temp_gates = gt_gates.copy()
+            temp_gates[0] = center_v0
+            temp_gates[1] = center_v1
 
-    # Plot ground truth as red dot
-    ax.plot(gt_gates[0], gt_gates[1], 'ro', markersize=8, markeredgewidth=1,
-           markeredgecolor='white', zorder=10, label='Ground Truth')
+            raw_obs = env.array._get_obs(temp_gates, gt_barriers)
+            scan = raw_obs["image"][:, :, 0]  # First channel
 
-    ax.set_xlabel('Gate 0 Voltage (V)', fontsize=12)
-    ax.set_ylabel('Gate 1 Voltage (V)', fontsize=12)
-    ax.set_title(f'Full Device Range Scan ({new_resolution_x}x{new_resolution_y} pixels)', fontsize=14)
-    ax.legend()
+            all_scans.append(scan)
+            scan_positions.append((center_v0, center_v1, scan_min_v0, scan_max_v0, scan_min_v1, scan_max_v1))
+
+            print(f"  Scan {scan_count}/{n_scans_x * n_scans_y}: "
+                  f"v0=[{scan_min_v0:.1f}, {scan_max_v0:.1f}], "
+                  f"v1=[{scan_min_v1:.1f}, {scan_max_v1:.1f}]")
+
+    # Save scan data
+    import pickle
+
+    data_path = output_path.replace('.png', '_data.pkl')
+    scan_data = {
+        'scans': all_scans,
+        'positions': scan_positions,
+        'n_scans_x': n_scans_x,
+        'n_scans_y': n_scans_y,
+        'resolution': resolution,
+        'v0_min': v0_min,
+        'v0_max': v0_max,
+        'v1_min': v1_min,
+        'v1_max': v1_max,
+        'scan_window_size': scan_window_size,
+        'step_x': step_x,
+        'step_y': step_y,
+        'gt_gates': gt_gates,
+        'gt_barriers': gt_barriers
+    }
+
+    with open(data_path, 'wb') as f:
+        pickle.dump(scan_data, f)
+    print(f"\nSaved scan data to: {data_path}")
+
+    # Normalize each scan individually
+    normalized_scans = []
+    for scan in all_scans:
+        # Calculate percentiles for this scan
+        p_low = np.percentile(scan, 0.5)
+        p_high = np.percentile(scan, 99.5)
+
+        if p_high > p_low:
+            scan_norm = (scan - p_low) / (p_high - p_low)
+        else:
+            scan_norm = np.zeros_like(scan)
+        scan_norm = np.clip(scan_norm, 0, 1)
+        normalized_scans.append(scan_norm)
+
+    # Optionally cap values at specified percentile (computed globally across all scans)
+    if percentile is not None:
+        all_normalized = np.array(normalized_scans)
+        p_cap = np.percentile(all_normalized, percentile)
+        normalized_scans = [np.clip(scan, 0, p_cap) / p_cap for scan in normalized_scans]
+        print(f"Capping values at {percentile}th percentile: {p_cap:.4f}")
+
+    # Stitch scans together into a single continuous image
+    # Organize scans into a 2D grid structure
+    scan_grid = [[None for _ in range(n_scans_x)] for _ in range(n_scans_y)]
+
+    for idx, scan_norm in enumerate(normalized_scans):
+        i = idx // n_scans_y  # x index
+        j = idx % n_scans_y   # y index
+        scan_grid[n_scans_y - 1 - j][i] = scan_norm  # Flip j for correct orientation
+
+    # Concatenate scans: first horizontally within each row, then vertically
+    stitched_rows = []
+    for row in scan_grid:
+        stitched_row = np.hstack(row)
+        stitched_rows.append(stitched_row)
+
+    stitched_image = np.vstack(stitched_rows)
+
+    # Create figure with stitched image
+    fig, ax = plt.subplots(figsize=(12, 12 * n_scans_y / n_scans_x))
+
+    # Plot the stitched image with correct extent
+    im = ax.imshow(stitched_image, cmap='viridis', origin='lower', aspect='auto',
+                   extent=[v0_min, v0_max, v1_min, v1_max])
+
+    # Mark ground truth
+    ax.plot(gt_gates[0], gt_gates[1], 'r*', markersize=15, markeredgewidth=2,
+            markeredgecolor='white', zorder=10, label='Ground Truth')
+
+    # Add labels
+    ax.set_xlabel('Gate 0 Voltage (V)', fontsize=14)
+    ax.set_ylabel('Gate 1 Voltage (V)', fontsize=14)
+
+    ax.legend(loc='upper right')
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"\nSaved device range map to: {output_path}")
+    print(f"\nSaved stitched device range map to: {output_path}")
     plt.close()
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Map quantum device voltage range")
+    parser = argparse.ArgumentParser(description="Map quantum device voltage range with grid of scans")
     parser.add_argument("--output", type=str, default="device_range_map.png",
                         help="Output image path (default: device_range_map.png)")
-    parser.add_argument("--v0-min", type=float, default=None,
-                        help="Minimum voltage for gate 0")
-    parser.add_argument("--v0-max", type=float, default=None,
-                        help="Maximum voltage for gate 0")
-    parser.add_argument("--v1-min", type=float, default=None,
-                        help="Minimum voltage for gate 1")
-    parser.add_argument("--v1-max", type=float, default=None,
-                        help="Maximum voltage for gate 1")
+    parser.add_argument("--n-grid", type=int, default=11,
+                        help="Number of scans per axis (default: 11)")
+    parser.add_argument("--percentile", type=int, default=None,
+                        help="Cap values at this percentile after normalization (0-100)")
 
     args = parser.parse_args()
 
     map_device_range(
         output_path=args.output,
-        v0_min=args.v0_min,
-        v0_max=args.v0_max,
-        v1_min=args.v1_min,
-        v1_max=args.v1_max
+        n_grid=args.n_grid,
+        percentile=args.percentile
     )

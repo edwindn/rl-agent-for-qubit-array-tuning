@@ -17,6 +17,13 @@ from pathlib import Path
 script_dir = Path(__file__).parent
 project_root = script_dir.parent
 
+# Checkpoint path (relative to project root)
+CHECKPOINT_PATH = "src/swarm/inference/checkpoints/run_418"
+
+# Derived paths
+LOCAL_CHECKPOINT_PATH = project_root / CHECKPOINT_PATH
+REMOTE_CHECKPOINT_PATH = f"/root/quantum-rl-project/{CHECKPOINT_PATH}"
+
 # Read ignore patterns from .modalignore file
 modalignore_path = project_root / ".modalignore"
 ignore_patterns = []
@@ -40,16 +47,18 @@ image = (
         ignore=ignore_patterns,
         copy=True
     )
-    .run_commands(
-        "cd /root/quantum-rl-project && uv sync --frozen"
-    )
     .add_local_file(
-        str(project_root / "src/eval_runs/mobilenet_barrier_weights.pth"),
-        remote_path="/root/quantum-rl-project/src/eval_runs/mobilenet_barrier_weights.pth"
+        str(project_root / "src/swarm/capacitance_model/symmetric_weights/mobilenet_barrier_weights.pth"),
+        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/symmetric_weights/mobilenet_barrier_weights.pth",
+        copy=True
     )
     .add_local_dir(
-        str(project_root / "src/eval_runs/weights/run_473"),
-        remote_path="/root/quantum-rl-project/src/eval_runs/weights/run_473"
+        str(LOCAL_CHECKPOINT_PATH),
+        remote_path=REMOTE_CHECKPOINT_PATH,
+        copy=True
+    )
+    .run_commands(
+        "cd /root/quantum-rl-project && uv sync --frozen"
     )
 )
 
@@ -76,13 +85,7 @@ def train():
     # Run the training script using uv to use the virtual environment
     # You can add any command-line arguments here
     subprocess.run(
-        #["uv", "run", "python", "src/swarm/barrier_training/train.py", "--config", "./training_config.yaml"],
-        ["uv", "run", "python", "src/swarm/training/train.py", "--config", "configs/ppo_impala.yaml",
-        "--load-checkpoint", "src/eval_runs/weights/run_473"],
-        #["uv", "run", "python", "src/swarm/training/train.py", "--config", "configs/ppo_impala_lstm.yaml",
-        # "--load-checkpoint", "src/eval_runs/weights/run_477"],
-        #["uv", "run", "python", "src/swarm/algo_ablations/sac_train.py", "--deterministic"],
-        #["uv", "run", "python", "src/swarm/algo_ablations/ddpg_train.py", "--config", "configs/ddpg_training_config.yaml"],
+        ["uv", "run", "python", "src/swarm/training/train_inference.py", "--load-checkpoint", CHECKPOINT_PATH, "--load-configs"],
         check=True
     )
 

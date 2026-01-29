@@ -1,16 +1,16 @@
-# Training Configuration for Multi-Agent RL Quantum Device Tuning
+# Training Configuration for Single-Agent RL Quantum Device Tuning
 # This file contains all configurable parameters for the training pipeline
 
 # Default training parameters
 defaults:
-  num_iterations: 400        # Total training iterations
+  num_iterations: 100        # Total training iterations
   delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
-  save_distance_data: true # Save per-agent diagnostic state info
+  save_distance_data: true # Not used in single-agent benchmark
 
 # Weights & Biases configuration
 wandb:
   entity: "rl_agents_for_tuning"
-  project: "RLModel"
+  project: "SingleAgentBenchmark"
   ema_period: 20          # EMA smoothing length
 
 # Ray cluster configuration
@@ -48,30 +48,29 @@ ray:
 
       # Memory contention
       XLA_PYTHON_CLIENT_PREALLOCATE: "false"
-      XLA_PYTHON_CLIENT_MEM_FRACTION: "0.25"
+      XLA_PYTHON_CLIENT_MEM_FRACTION: "0.9"
       JAX_ENABLE_X64: "true"
 
 # Algorithm Configuration
 rl_config:
-  algorithm: "PPO" # PPO or SAC
+  algorithm: "PPO" # PPO only for single-agent
 
   # Environment runners configuration
   env_runners:
-    num_env_runners: 6              # Number of parallel environment runners
-
+    num_env_runners: 21               # Number of parallel environment runners
     rollout_fragment_length: 50     # Steps per rollout fragment
     sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
-    num_gpus_per_env_runner: 0.45
+    num_gpus_per_env_runner: 0.3
 
   # Learner configuration  
   learners:
     num_learners: 1                 # Number of learner workers
-    num_gpus_per_learner: 0.95       # GPU allocation per learner
+    num_gpus_per_learner: 0.9        # GPU allocation per learner
 
   # Training hyperparameters
   training:
-    train_batch_size: 16384          # Total batch size for training
-    minibatch_size: 2048             # Size of minibatches for SGD
+    train_batch_size_per_learner: 512   # Reduced back
+    minibatch_size: 128                  # Reduced back
     num_epochs: 10                   # Number of SGD epochs per training iteration
     grad_clip: 40.0                 # Amount of gradient clipping (set to null to disable) ~40.0 is the default
     grad_clip_by: "norm"            # Gradient clipping method
@@ -87,39 +86,11 @@ rl_config:
     vf_loss_coeff: 0.5              # Value function loss coefficient
     kl_target: 0.01                 # Target size of KL penalty on policy updates
 
-    # SAC-specific config
-    actor_lr: 0.0003
-    critic_lr: 0.0003
-    alpha_lr: 0.0003
-    twin_q: true                   # Whether to use twin Q-networks
-    tau: 0.005                     # Target network update rate
-    initial_alpha: 1.0              # Initial entropy coefficient 
-    target_entropy: "auto"       # Target entropy ("auto" to use default based on action space)
-    n_step: 1                # Number of steps to look ahead for multi-step returns
-    clip_actions: true          # Whether to clip actions to the action space bounds
-    target_network_update_freq: 1  # Frequency of target network updates (in training steps)
-    num_steps_sampled_before_learning_starts: 1000  # Number of steps to sample before starting learning
-    replay_buffer_config: {
-      "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
-      "capacity": 1000000,                        # Replay buffer capacity
-      "alpha": 0.6,                               # Prioritization exponent
-      "beta": 0.4,                                # Importance sampling exponent
-    }
-
-
-  # Multi-agent configuration
-  multi_agent:
-    policies:
-      - "plunger_policy"
-      - "barrier_policy"
-    policies_to_train:
-      - "plunger_policy" 
-      - "barrier_policy"
-    count_steps_by: "agent_steps"
-
+  # Single-agent configuration
+  single_agent:
     free_log_std: false         # Whether to predict the std (better exploration) or not (more stable)
                                 # Note this will affect how we extract the log std for logging
-    log_std_bounds: [-10, 2]    # Ranges within which to clip predicted log_std for the policy head
+    log_std_bounds: [-5, 2]     # Match multi-agent (was [-10, 2] which killed exploration)
 
 # Checkpoint configuration
 checkpoints:
@@ -130,14 +101,14 @@ checkpoints:
 gif_config:
   enabled: true                     # Enable/disable GIF capture
   target_agent_type: "plunger"     # Agent type to capture: "plunger" or "barrier"
-  target_agent_indices: [1]        # Which agents of that type (0-indexed list, e.g., [0, 1, 2])
+  target_agent_indices: [0]        # Which agents of that type (0-indexed list)
   save_dir: "/tmp/shared_gif_captures"  # Absolute path accessible to both main process and workers
   fps: 0.5                          # Frame rate for GIFs (slower = easier to see)
 
 # Neural Network Architecture Configuration
 neural_networks:
   # chose between SimpleCNN, IMPALA, MobileNet
-  plunger_policy:
+  single_agent_policy:
     backbone:
       type: "IMPALA"
       mobilenet_version: "small"
@@ -177,23 +148,5 @@ neural_networks:
       use_attention: false
     value_head:
       hidden_layers: [64, 64, 32]
-      activation: "relu"
-      use_attention: false
-
-  barrier_policy:
-    backbone:
-      type: "IMPALA"
-      mobilenet_version: "small" # Required for MobileNet
-      feature_size: 256
-      freeze_backbone: false
-      adaptive_pooling: true  # Required for SimpleCNN/IMPALA
-      num_res_blocks: 2  # Required for IMPALA
-      memory_layer: null # Barrier policy is not configured to use memory
-    policy_head:
-      hidden_layers: [32]
-      activation: "relu"
-      use_attention: false
-    value_head:
-      hidden_layers: [32]
       activation: "relu"
       use_attention: false

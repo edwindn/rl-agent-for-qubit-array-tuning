@@ -48,16 +48,11 @@ sys.path.insert(0, str(src_dir))
 from swarm.training.patches.ray_episode_patch import apply_patch  # noqa: E402
 apply_patch()
 
-from swarm.training.utils import (  # noqa: E402
+from utils.metrics_logger import (  # noqa: E402
     log_to_wandb,
     print_training_progress,
     setup_wandb_metrics,
     upload_checkpoint_artifact,
-    policy_mapping_fn,
-    cleanup_gif_files,
-    process_and_log_gifs,
-    CustomFrameStackingEnvToModule,
-    CustomFrameStackingLearner,
 )
 
 from swarm.training.train_utils import (  # noqa: E402
@@ -71,14 +66,14 @@ from swarm.training.train_utils import (  # noqa: E402
     create_env_to_module_connector,
 )
 
-from swarm.voltage_model import create_rl_module_spec
-from swarm.training.utils.custom_ppo_learner import PPOLearnerWithValueStats  # for logging
+from utils.factory import create_rl_module_spec
+from utils.custom_ppo_learner import PPOLearnerWithValueStats  # for logging
 from swarm.training.utils.custom_sac_learner import SACLearnerWithRewardScaling  # for reward scaling
 
 
 def parse_arguments():
     """Parse command line arguments for checkpoint loading and config overrides."""
-    parser = argparse.ArgumentParser(description='Multi-agent RL training for quantum device tuning')
+    parser = argparse.ArgumentParser(description='Single-agent RL training for quantum device tuning')
     
     parser.add_argument(
         '--load-checkpoint', 
@@ -111,6 +106,19 @@ def parse_arguments():
         help='Load training_config.yaml and env_config.yaml from checkpoint directory instead of default config files'
     )
 
+    parser.add_argument(
+        '--num-dots',
+        type=int,
+        default=None,
+        help='Number of quantum dots (overrides env_config.yaml)'
+    )
+
+    parser.add_argument(
+        '--sac',
+        action='store_true',
+        help='Use SAC instead of PPO (overrides config rl_config.algorithm)'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -122,8 +130,13 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None):
-    """Create multi-agent quantum environment with JAX safety."""
+def create_env(config=None, env_config_path=None, distance_data_dir=None, num_dots_override=None):
+    """Create multi-agent wrapped single-agent environment with JAX safety.
+
+    Note: We wrap the single-agent env as multi-agent because RLlib's
+    single-agent PPO code path has issues with continuous action spaces.
+    Using multi-agent config with a single agent uses the correct code path.
+    """
     import os
     import jax
 
@@ -132,8 +145,6 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.1")
     os.environ.setdefault("JAX_ENABLE_X64", "true")
 
-    assert gif_config is not None, "Gif config dict required to set up rollout visualisation"
-
     # Try to clear any existing JAX state
     try:
         # Force JAX to use a fresh backend in each worker
@@ -141,21 +152,25 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     except:
         pass
 
-    from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
+    from swarm.single_agent_sac.utils.multiagent_wrapper import SingleAsMultiAgentWrapper
 
-    # Path to capacitance model weights (hardcoded)
-    capacitance_model_checkpoint = "eval_runs/mobilenet_barrier_weights.pth"
+    # Default config path
+    if env_config_path is None:
+        env_config_path = str(Path(__file__).parent / "single_agent_env_config.yaml")
 
-    # Wrap in multi-agent wrapper (config unused but required by RLlib)
-    # need return_voltage=True if we are using deltas + LSTM/Transformer
-    # RLlib handles temporal sequences via ConnectorV2, not via environment
-    return MultiAgentEnvWrapper(
-        return_voltage=True,
-        gif_config=gif_config,
-        distance_data_dir=distance_data_dir,
-        env_config_path=env_config_path,
-        capacitance_model_checkpoint=capacitance_model_checkpoint
-    )
+    # Path to capacitance model weights (required for kalman update method)
+    capacitance_model_checkpoint = str(project_root / "src" / "eval_runs" / "mobilenet_barrier_weights.pth")
+
+    # Create multi-agent wrapped environment
+    wrapper_config = {
+        "config_path": env_config_path,
+        "training": True,
+        "distance_data_dir": distance_data_dir,
+        "num_dots_override": num_dots_override,
+        "capacitance_model_checkpoint": capacitance_model_checkpoint,
+    }
+
+    return SingleAsMultiAgentWrapper(config=wrapper_config)
 
 
 def load_config(config_path=None, checkpoint_path=None):
@@ -194,9 +209,11 @@ def load_env_config(checkpoint_path=None):
         # Load from checkpoint directory
         config_file = Path(checkpoint_path) / "env_config.yaml"
         if not config_file.exists():
-            raise FileNotFoundError(f"Must provide config files within checkpoint: env_config.yaml not found in {checkpoint_path}")
+            raise FileNotFoundError(
+                f"Must provide config files within checkpoint: env_config.yaml not found in {checkpoint_path}"
+            )
     else:
-        config_file = Path(__file__).parent.parent / "environment" / "env_config.yaml"
+        config_file = Path(__file__).parent / "single_agent_env_config.yaml"
 
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)
@@ -224,6 +241,10 @@ def main():
     # Apply command line overrides to config
     if hasattr(args, 'config_overrides') and args.config_overrides:
         config = apply_config_overrides(config, args.config_overrides)
+
+    # Override algorithm if --sac flag is provided
+    if args.sac:
+        config['rl_config']['algorithm'] = "SAC"
 
     # Create timestamped data folder if save_distance_data is enabled
     distance_data_dir = None
@@ -278,12 +299,18 @@ def main():
     ray.init(**ray_config)
 
     try:
-        gif_config = config["gif_config"]
-        # Clean up any previous GIF capture lock files
-        cleanup_gif_files(gif_config['save_dir'])
+        gif_config = config.get("gif_config")
+        if gif_config:
+            # Clean up any previous GIF capture lock files
+            from utils.gif_logger import cleanup_gif_files
+            cleanup_gif_files(gif_config['save_dir'])
 
         # Load env config directly from YAML (no GPU initialization needed on driver)
         env_config = load_env_config(checkpoint_path)
+
+        # Override num_dots if specified via command line
+        if args.num_dots is not None:
+            env_config['simulator']['num_dots'] = args.num_dots
 
         # Write env_config to a temporary file so workers can load it
         temp_env_config_path = None
@@ -297,8 +324,17 @@ def main():
             temp_env_config_file.close()
             print(f"Written env config to temporary file: {temp_env_config_path}")
 
-        create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=temp_env_config_path)
-        register_env("qarray_multiagent_env", create_env_fn)
+        # Log num_dots override if specified
+        if args.num_dots is not None:
+            print(f"Overriding num_dots to: {args.num_dots}")
+
+        create_env_fn = partial(
+            create_env,
+            env_config_path=temp_env_config_path,
+            distance_data_dir=distance_data_dir,
+            num_dots_override=args.num_dots,
+        )
+        register_env("qarray_singleagent_env", create_env_fn)
 
         # Merge with training config for wandb logging
         if use_wandb:
@@ -325,16 +361,9 @@ def main():
 
         # Optionally update the rl module config to allow log_std clamping, shared log_std vector etc.
         rl_module_config = {
-            "plunger_policy": {
-                **config['neural_networks']['plunger_policy'],
-                "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
-                "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
-            },
-            "barrier_policy": {
-                **config['neural_networks']['barrier_policy'],
-                "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
-                "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
-            }
+            **config['neural_networks']['single_agent_policy'],
+            "free_log_std": config['rl_config']['single_agent']['free_log_std'],
+            "log_std_bounds": config['rl_config']['single_agent']['log_std_bounds'],
         }
         
         algo = config['rl_config']['algorithm'].lower()
@@ -343,25 +372,43 @@ def main():
 
         # Filter training parameters based on algorithm
         # PPO-specific parameters that should NOT be passed to SAC
-        ppo_only_params = {'lr', 'lambda_', 'clip_param', 'entropy_coeff', 'vf_loss_coeff', 'kl_target', 'num_epochs', 'minibatch_size'}
+        ppo_only_params = {
+            'lr', 'lambda_', 'clip_param', 'entropy_coeff', 'vf_loss_coeff',
+            'kl_target', 'num_epochs', 'minibatch_size',
+        }
         # SAC-specific parameters that should NOT be passed to PPO
-        sac_only_params = {'actor_lr', 'critic_lr', 'alpha_lr', 'twin_q', 'tau', 'initial_alpha', 'target_entropy', 'n_step',
-                          'clip_actions', 'target_network_update_freq', 'num_steps_sampled_before_learning_starts', 'replay_buffer_config',
-                          'reward_scale'}  # reward_scale used by custom SAC learner
+        sac_only_params = {
+            'actor_lr', 'critic_lr', 'alpha_lr', 'twin_q', 'tau', 'initial_alpha',
+            'target_entropy', 'n_step', 'clip_actions', 'target_network_update_freq',
+            'num_steps_sampled_before_learning_starts', 'replay_buffer_config', 'reward_scale',
+        }
 
         training_params = config['rl_config']['training'].copy()
-
         # Extract reward_scale for SAC (not a native SACConfig param, handled by custom learner)
         reward_scale = training_params.pop('reward_scale', 1.0)
 
-        if algo == 'sac':
-            # Remove PPO-only parameters when using SAC
+        if algo == "sac":
             for param in ppo_only_params:
                 training_params.pop(param, None)
-        elif algo == 'ppo':
-            # Remove SAC-only parameters when using PPO
+        elif algo == "ppo":
             for param in sac_only_params:
                 training_params.pop(param, None)
+        else:
+            raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, sac")
+
+        if algo == "sac":
+            replay_buffer_config = training_params.get("replay_buffer_config")
+            if replay_buffer_config is None:
+                training_params["replay_buffer_config"] = {
+                    "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
+                    "capacity": 200000,
+                    "alpha": 0.6,
+                    "beta": 0.4,
+                }
+            else:
+                replay_buffer_config = dict(replay_buffer_config)
+                replay_buffer_config["type"] = "MultiAgentPrioritizedEpisodeReplayBuffer"
+                training_params["replay_buffer_config"] = replay_buffer_config
 
         # Configure custom callbacks for logging to Wandb
         # log_images = config['wandb']['log_images']
@@ -375,50 +422,31 @@ def main():
         else:
             raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, sac")
 
-        # Handle voltage parsing to memory manually
+        # Handle voltage parsing to memory manually (no frame stacking in single-agent)
         use_deltas = env_config['simulator']['use_deltas']
-        memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
+        memory_layer = config['neural_networks']['single_agent_policy']['backbone'].get('memory_layer')
         has_lstm = memory_layer == 'lstm'
-        has_transformer = memory_layer == 'transformer'
 
-        # Determine if we need frame stacking for temporal models (transformer)
-        use_frame_stacking = has_transformer
-        num_frames = 1
-        if use_frame_stacking:
-            num_frames = config['neural_networks']['plunger_policy']['backbone']['transformer']['max_seq_len']
-            print(f"\n[Frame Stacking] Enabled with {num_frames} frames for transformer\n")
-
-        # Build env-to-module connector
-        # Note: We prioritize frame stacking over custom LSTM connector when both are applicable
-        if use_frame_stacking:
-            # Note: RLlib expects signature (env, spaces, device) - spaces and device are optional
-            env_to_module_connector = lambda env, spaces=None, device=None: CustomFrameStackingEnvToModule(
-                num_frames=num_frames,
-                multi_agent=True
-            )
-        elif use_deltas and has_lstm:
+        if use_deltas and has_lstm:
             env_to_module_connector = partial(create_env_to_module_connector, use=True)
         else:
             env_to_module_connector = None
 
-        # Build learner connector for frame stacking
         learner_connector = None
-        if use_frame_stacking:
-            learner_connector = lambda obs_space, act_space: CustomFrameStackingLearner(
-                num_frames=num_frames,
-                multi_agent=True
-            )
+
+        # Policy mapping function for multi-agent setup
+        def policy_mapping_fn(agent_id, episode, **kwargs):
+            return "agent_0"
 
         algo_config = (
             algo_config_builder()
             .environment(
-                env="qarray_multiagent_env",
+                env="qarray_singleagent_env",
             )
             .multi_agent(
                 policy_mapping_fn=policy_mapping_fn,
-                policies=config['rl_config']['multi_agent']['policies'],
-                policies_to_train=config['rl_config']['multi_agent']['policies_to_train'],
-                count_steps_by=config['rl_config']['multi_agent']['count_steps_by'],
+                policies={"agent_0"},
+                policies_to_train=["agent_0"],
             )
             .rl_module(
                 rl_module_spec=rl_module_spec,
@@ -534,7 +562,7 @@ def main():
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
         
         # Also save environment config to checkpoint directory for inference
-        env_config_src = Path(__file__).parent.parent / "environment" / "env_config.yaml"
+        env_config_src = Path(__file__).parent / "single_agent_env_config.yaml"
         if env_config_src.exists():
             env_config_dst = checkpoint_base_dir / "env_config.yaml"
             import shutil
@@ -559,7 +587,8 @@ def main():
             log_to_wandb(result, i, distance_data_dir)
 
             # Process and log GIFs if enabled
-            if config['gif_config']['enabled'] and use_wandb:
+            if gif_config and gif_config.get('enabled') and use_wandb:
+                from utils.gif_logger import process_and_log_gifs
                 process_and_log_gifs(i + 1, config, use_wandb)
 
             # Save checkpoint using modern RLlib API
@@ -585,13 +614,6 @@ def main():
                     upload_checkpoint_artifact(checkpoint_path, i + 1, 0.0)
 
             print(f"\nIteration {i+1} completed. Checkpoint saved to: {checkpoint_path}\n")
-
-        # Force log the final checkpoint to wandb before shutdown
-        if use_wandb:
-            print("\nForce logging final checkpoint to wandb...")
-            final_reward = result.get("env_runners", {}).get("episode_return_mean", 0.0)
-            upload_checkpoint_artifact(checkpoint_path, i + 1, final_reward if final_reward is not None else 0.0)
-            print(f"Final checkpoint uploaded to wandb: iteration {i+1}")
 
     finally:
         if ray.is_initialized():

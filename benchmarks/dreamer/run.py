@@ -8,8 +8,12 @@ Usage:
 """
 
 import argparse
+import glob
 import os
+import random
 import sys
+from datetime import datetime
+from typing import Dict
 from pathlib import Path
 
 # Parse --gpu early before JAX imports
@@ -108,6 +112,63 @@ def load_agent_from_checkpoint(checkpoint_path: str, env):
     return agent
 
 
+def _ensure_distance_dirs(distance_dir: Path, num_dots: int, use_barriers: bool) -> None:
+    distance_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
+    try:
+        os.chmod(distance_dir, 0o777)
+    except Exception:
+        pass
+    for i in range(num_dots):
+        agent_dir = distance_dir / f"plunger_{i}"
+        agent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
+        try:
+            os.chmod(agent_dir, 0o777)
+        except Exception:
+            pass
+    if use_barriers:
+        for i in range(num_dots - 1):
+            agent_dir = distance_dir / f"barrier_{i}"
+            agent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
+            try:
+                os.chmod(agent_dir, 0o777)
+            except Exception:
+                pass
+
+
+def _save_distance_rollout(
+    distance_dir: Path,
+    num_dots: int,
+    use_barriers: bool,
+    distance_history: Dict[str, list],
+) -> None:
+    for i in range(num_dots):
+        agent_id = f"plunger_{i}"
+        _save_agent_distances(distance_dir, agent_id, distance_history.get(agent_id, []))
+    if use_barriers:
+        for i in range(num_dots - 1):
+            agent_id = f"barrier_{i}"
+            _save_agent_distances(distance_dir, agent_id, distance_history.get(agent_id, []))
+
+
+def _save_agent_distances(distance_dir: Path, agent_id: str, distances: list) -> None:
+    agent_folder = distance_dir / agent_id
+    existing_files = glob.glob(str(agent_folder / "*.npy"))
+    if len(existing_files) == 0:
+        next_count = 1
+    else:
+        counts = []
+        for filepath in existing_files:
+            filename = Path(filepath).stem
+            count_str = filename.split('_')[0]
+            counts.append(int(count_str))
+        next_count = max(counts) + 1
+
+    random_suffix = random.randint(0, 999999)
+    filename = f"{next_count:04d}_{random_suffix:06d}.npy"
+    filepath = agent_folder / filename
+    np.save(filepath, np.asarray(distances))
+
+
 def run_single_trial(
     agent,
     num_dots: int,
@@ -117,6 +178,8 @@ def run_single_trial(
     seed: int,
     success_threshold: float,
     tracker: ConvergenceTracker,
+    collect_distance_data: bool = False,
+    distance_save_dir: Path | None = None,
 ) -> TrialResult:
     """
     Evaluate trained DreamerV3 agent on a single trial.
@@ -172,6 +235,15 @@ def run_single_trial(
     global_objective_history = []
     step_count = 0
 
+    distance_history = None
+    if collect_distance_data:
+        distance_history = {}
+        for i in range(num_dots):
+            distance_history[f"plunger_{i}"] = []
+        if use_barriers:
+            for i in range(num_dots - 1):
+                distance_history[f"barrier_{i}"] = []
+
     # Reset tracker for this trial
     tracker.reset()
 
@@ -207,6 +279,22 @@ def run_single_trial(
             # Record distances for convergence tracking
             # In RL mode, each step = 1 scan
             tracker.record(plunger_dists, barrier_dists, scan_number=step_count)
+
+            if collect_distance_data and distance_history is not None:
+                gate_ground_truth = np.asarray(device_state["gate_ground_truth"])
+                barrier_ground_truth = np.asarray(device_state["barrier_ground_truth"])
+                current_gates_arr = np.asarray(current_gates)
+                current_barriers_arr = np.asarray(current_barriers)
+
+                for i in range(num_dots):
+                    distance_history[f"plunger_{i}"].append(
+                        float(current_gates_arr[i] - gate_ground_truth[i])
+                    )
+                if use_barriers:
+                    for i in range(num_dots - 1):
+                        distance_history[f"barrier_{i}"].append(
+                            float(current_barriers_arr[i] - barrier_ground_truth[i])
+                        )
         except:
             voltage_history.append([])
             global_objective_history.append(float('inf'))
@@ -232,6 +320,9 @@ def run_single_trial(
         final_objective = float('inf')
 
     benchmark_env.close()
+
+    if collect_distance_data and distance_save_dir is not None and distance_history is not None:
+        _save_distance_rollout(distance_save_dir, num_dots, use_barriers, distance_history)
 
     return TrialResult(
         trial_idx=trial_idx,
@@ -276,11 +367,18 @@ def main():
                        help="Control barrier voltages")
     parser.add_argument("--gpu", type=int, default=0,
                        help="GPU device (already applied)")
+    parser.add_argument(
+        "--save-data",
+        action="store_true",
+        help="Run 100 inference rollouts and save distance data to dreamer/dreamer_rollouts",
+    )
     args = parser.parse_args()
 
     print(f"=== DreamerV3 Evaluation ===")
     print(f"Checkpoint: {args.checkpoint}")
     print(f"Dots: {args.num_dots}, Barriers: {args.use_barriers}")
+    if args.save_data:
+        args.num_trials = 100
     print(f"Trials: {args.num_trials}, Max steps: {args.max_steps}")
     print()
 
@@ -320,6 +418,13 @@ def main():
     tracker = ConvergenceTracker.from_env(temp_env)
     temp_env.close()
 
+    distance_save_dir = None
+    if args.save_data:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        distance_save_dir = Path(__file__).parent / "dreamer_rollouts" / timestamp
+        _ensure_distance_dirs(distance_save_dir, args.num_dots, args.use_barriers)
+        print(f"Saving distance rollouts to: {distance_save_dir}")
+
     for trial_idx in range(args.num_trials):
         trial_seed = int(base_rng.integers(0, 2**31))
 
@@ -334,6 +439,8 @@ def main():
             seed=trial_seed,
             success_threshold=args.threshold,
             tracker=tracker,
+            collect_distance_data=args.save_data,
+            distance_save_dir=distance_save_dir,
         )
 
         result.trials.append(trial_result)

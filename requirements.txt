@@ -1,6 +1,6 @@
 # QArray
 # Note: qarray-latched is installed via Modal's pip_install_private_repos() in modal_train.py
-# git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@fcc472276f27e7633bb3aafc6f0d6c92966875d7
+# git+ssh://git@github.com/b-vanstraaten/qarray-latched.git@fd344d7a47d88444c7db658346cf59fc22af493a
 qarray
 
 

@@ -47,7 +47,7 @@ app = modal.App("quantum-rl-single-agent")
 
 
 @app.function(
-    gpu="A100",  # Single A100 GPU (JAX+PyTorch conflict prevents multi-env-runner)
+    gpu="A100:5",  # Single A100 GPU (JAX+PyTorch conflict prevents multi-env-runner)
     image=image,
     timeout=86400,  # 24 hour timeout
     secrets=[modal.Secret.from_name("wandb-secret")],
@@ -58,21 +58,14 @@ def train(num_dots: int = 2, num_iterations: int = 150):
     import os
 
     os.chdir("/root/quantum-rl-project")
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     # Configuration for single A100:
     # - 1 env runner (JAX/PyTorch conflict prevents multiple env runners sharing GPU)
     # - 0.4 GPUs per env runner
     # - 0.5 GPUs per learner
     # Total: 0.9 GPUs, fits in 1 A100
-    cmd = [
-        "uv", "run", "python", "benchmarks/single_agent/train.py",
-        "--num-dots", str(num_dots),
-        "--num-iterations", str(num_iterations),
-        "--rl_config.env_runners.num_env_runners", "1",
-        "--rl_config.env_runners.num_gpus_per_env_runner", "0.4",
-        "--rl_config.learners.num_gpus_per_learner", "0.5",
-        "--rl_config.env_runners.sample_timeout_s", "1800",
-    ]
+    cmd = ["uv", "run", "python", "src/swarm/single_agent_ablations/train.py"]
 
     print(f"Running single-agent PPO with {num_dots} dots on A100")
     print(f"Command: {' '.join(cmd)}")

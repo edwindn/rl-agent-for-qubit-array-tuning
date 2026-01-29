@@ -13,6 +13,11 @@ from pathlib import Path
 import gymnasium as gym
 from gymnasium.envs.registration import register
 
+# Monkey-patch gym imports in cleanrl before it loads
+sys.modules['gym'] = gym
+sys.modules['gym.wrappers'] = gym.wrappers
+sys.modules['gym.spaces'] = gym.spaces
+
 # Add src directory to path for clean imports
 current_dir = Path(__file__).parent
 src_dir = current_dir.parent.parent

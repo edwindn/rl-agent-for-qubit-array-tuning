@@ -126,6 +126,7 @@ saved_models/
 # Data directories
 data/
 datasets/
+collected_data/
 raw_data/
 processed_data/
 
