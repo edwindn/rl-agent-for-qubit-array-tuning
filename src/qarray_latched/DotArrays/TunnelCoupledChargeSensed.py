@@ -1,8 +1,3 @@
-"""
-Author: b-vanstraaten
-Date: 16/06/2025
-"""
-
 
 """
 A class that represents a charge sensed dot array. The class has methods to compute the ground state of the dot array

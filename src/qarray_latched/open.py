@@ -1,7 +1,3 @@
-"""
-Author: b-vanstraaten
-Date: 31/03/2025
-"""
 
 import jax.numpy as jnp
 import numpy as np

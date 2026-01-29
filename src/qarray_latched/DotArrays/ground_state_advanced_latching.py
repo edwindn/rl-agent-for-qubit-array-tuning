@@ -1,8 +1,3 @@
-"""
-Author: b-vanstraaten
-Date: 17/06/2025
-"""
-
 
 import time
 from pathlib import Path

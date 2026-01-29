@@ -1,8 +1,3 @@
-"""
-Author: b-vanstraaten
-Date: 01/04/2025
-"""
-
 
 def thermal_density_matrix(w, v, T):
     """

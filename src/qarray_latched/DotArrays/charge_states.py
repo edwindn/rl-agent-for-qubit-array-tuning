@@ -42,8 +42,6 @@ def compute_continuous_ground_state_open(v_extended: jnp.ndarray,
                                          ) -> jnp.ndarray:
     """
     Computes the continuous ground state for a single set of voltages and their corresponding capacitance matrices.
-    Identical to the single-step solver in https://github.com/pranavjv/QArray/blob/voltage_dependence/qarray/jax_implementations/voltage_dependent_capacitance.py
-    (as of 11/09/25)
 
     Parameters:
     -----------

@@ -1,7 +1,3 @@
-"""
-Author: b-vanstraaten
-Date: 02/04/2025
-"""
 
 import time
 import jax
