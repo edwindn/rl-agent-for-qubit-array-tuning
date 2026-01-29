@@ -148,12 +148,6 @@ def parse_arguments():
         action='store_true',
         help='Disable Weights & Biases logging'
     )
-    
-    parser.add_argument(
-        '--collect-data',
-        action='store_true',
-        help='Collect distance data only (100 rollouts, no wandb logging)'
-    )
 
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
@@ -246,7 +240,7 @@ def main():
     # Parse command line arguments
     args = parse_arguments()
 
-    use_wandb = not args.disable_wandb and not args.collect_data
+    use_wandb = not args.disable_wandb
 
     # Resolve checkpoint path to absolute path
     args.load_checkpoint = str(Path(args.load_checkpoint).resolve())
@@ -259,47 +253,24 @@ def main():
         config = apply_config_overrides(config, args.config_overrides)
 
     # Create timestamped data folder if save_distance_data is enabled
-    distance_data_dir = None
-    if args.collect_data:
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        checkpoint_name = Path(checkpoint_path).name
-        data_parent_dir = Path("/home/edn/rl-agent-for-qubit-array-tuning/src/eval_runs/collected_data")
-        distance_data_dir = data_parent_dir / f"{timestamp}_{checkpoint_name}"
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    checkpoint_name = Path(checkpoint_path).name
+    data_parent_dir = Path("/home/edn/rl-agent-for-qubit-array-tuning/src/eval_runs/collected_data")
+    distance_data_dir = data_parent_dir / f"{timestamp}_{checkpoint_name}"
 
-        data_parent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
-        try:
-            os.chmod(data_parent_dir, 0o777)
-        except:
-            pass
+    data_parent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
+    try:
+        os.chmod(data_parent_dir, 0o777)
+    except:
+        pass
 
-        distance_data_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
-        try:
-            os.chmod(distance_data_dir, 0o777)
-        except:
-            pass
-        print(f"\nDistance data will be saved to: {distance_data_dir}\n")
-    elif config['defaults']['save_distance_data']:
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        data_parent_dir = Path(__file__).parent / "data"
-        distance_data_dir = data_parent_dir / timestamp
-
-        # Create parent data directory first with proper permissions
-        data_parent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
-        try:
-            os.chmod(data_parent_dir, 0o777)
-        except:
-            pass
-
-        # Create timestamped subdirectory with proper permissions
-        distance_data_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
-        # Ensure permissions are set correctly even if directory already existed
-        try:
-            os.chmod(distance_data_dir, 0o777)
-        except:
-            pass  # Directory may not exist or permissions may not be settable
-        print(f"\nDistance data will be saved to: {distance_data_dir}\n")
+    distance_data_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
+    try:
+        os.chmod(distance_data_dir, 0o777)
+    except:
+        pass
+    print(f"\nDistance data will be saved to: {distance_data_dir}\n")
 
     # Initialize Weights & Biases
     if use_wandb:
@@ -366,7 +337,7 @@ def main():
             env_config_path=temp_env_config_path,
             capacitance_model_checkpoint=capacitance_weights_path,
             scan_save_dir=str(scan_save_dir),
-            is_collecting_data=args.collect_data,
+            is_collecting_data=True,
         )
         register_env("qarray_multiagent_env", create_env_fn)
 
@@ -568,8 +539,6 @@ def main():
                 
         if not checkpoint_loaded:
             print("\nStarting fresh training from iteration 1...")
-        elif args.collect_data:
-            print("\nCheckpoint loaded. Starting data collection...\n")
         else:
             print(f"Training will continue from iteration {start_iteration + 1} to {config['defaults']['num_iterations']}")
             # Validate that we haven't already completed training
@@ -578,95 +547,77 @@ def main():
                       f"but max iterations is {config['defaults']['num_iterations']}.")
                 return
 
-        if args.collect_data:
-            training_start_time = time.time()
-            print("\nCollecting distance data for 100 rollouts...\n")
+        # Save training config to checkpoint directory for easy reference
+        checkpoint_base_dir = Path(config['checkpoints']['save_dir'])
+        checkpoint_base_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Clean old checkpoints if delete_old_checkpoints is enabled and starting fresh training
+        if config['defaults']['delete_old_checkpoints'] and not checkpoint_loaded:
+            clean_checkpoint_folder(checkpoint_base_dir)
+        
+        config_save_path = checkpoint_base_dir / "training_config.yaml"
+        with open(config_save_path, 'w') as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        
+        # Also save environment config to checkpoint directory for inference
+        env_config_src = swarm_package_dir / "environment" / "env_config.yaml"
+        if env_config_src.exists():
+            env_config_dst = checkpoint_base_dir / "env_config.yaml"
+            import shutil
+            shutil.copy2(env_config_src, env_config_dst)
+            print(f"Environment config saved to: {env_config_dst}")
 
-            for i in range(100):
-                # Use evaluate() instead of train() to skip gradient updates
-                result = algo.evaluate()
+        remaining_iterations = config['defaults']['num_iterations'] - start_iteration
+        print(f"\nStarting training for {remaining_iterations} iterations (from iteration {start_iteration + 1} to {config['defaults']['num_iterations']})...\n")
+        print(f"Training config saved to: {config_save_path}\n")
 
-                # Clean console output (no wandb logging)
-                print_training_progress(result, i, training_start_time)
+        training_start_time = time.time()
+        best_reward = float("-inf")  # Track best performance for artifact upload
 
-                # Save scans to iteration folder if enabled
-                if config['gif_config']['enabled']:
-                    # Wait briefly for async worker processes to finish writing data to disk
-                    time.sleep(0.5)
-                    save_scans_to_iteration_folder(i + 1, config)
+        for i in range(start_iteration, config['defaults']['num_iterations']):
+            # Use evaluate() instead of train() to skip gradient updates
+            result = algo.evaluate()
 
-            print(f"\nData collection complete. Distance data saved to: {distance_data_dir}\n")
-        else:
-            # Save training config to checkpoint directory for easy reference
-            checkpoint_base_dir = Path(config['checkpoints']['save_dir'])
-            checkpoint_base_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Clean old checkpoints if delete_old_checkpoints is enabled and starting fresh training
-            if config['defaults']['delete_old_checkpoints'] and not checkpoint_loaded:
-                clean_checkpoint_folder(checkpoint_base_dir)
-            
-            config_save_path = checkpoint_base_dir / "training_config.yaml"
-            with open(config_save_path, 'w') as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-            
-            # Also save environment config to checkpoint directory for inference
-            env_config_src = swarm_package_dir / "environment" / "env_config.yaml"
-            if env_config_src.exists():
-                env_config_dst = checkpoint_base_dir / "env_config.yaml"
-                import shutil
-                shutil.copy2(env_config_src, env_config_dst)
-                print(f"Environment config saved to: {env_config_dst}")
+            # Clean console output and wandb logging
+            print_training_progress(result, i, training_start_time)
 
-            remaining_iterations = config['defaults']['num_iterations'] - start_iteration
-            print(f"\nStarting training for {remaining_iterations} iterations (from iteration {start_iteration + 1} to {config['defaults']['num_iterations']})...\n")
-            print(f"Training config saved to: {config_save_path}\n")
-
-            training_start_time = time.time()
-            best_reward = float("-inf")  # Track best performance for artifact upload
-
-            for i in range(start_iteration, config['defaults']['num_iterations']):
-                # Use evaluate() instead of train() to skip gradient updates
-                result = algo.evaluate()
-
-                # Clean console output and wandb logging
-                print_training_progress(result, i, training_start_time)
-
-                # Log metrics to wandb (EMA is calculated automatically in metrics_logger)
+            # Log metrics to wandb (EMA is calculated automatically in metrics_logger)
+            if use_wandb:
                 log_to_wandb(result, i, distance_data_dir)
 
-                # Save scans to iteration folder if enabled
-                if config['gif_config']['enabled']:
-                    # Wait briefly for async worker processes to finish writing data to disk
-                    time.sleep(0.5)
-                    save_scans_to_iteration_folder(i + 1, config)
+            # Save scans to iteration folder if enabled
+            if config['gif_config']['enabled']:
+                # Wait briefly for async worker processes to finish writing data to disk
+                time.sleep(0.5)
+                save_scans_to_iteration_folder(i + 1, config)
 
-                # Process and log GIFs if enabled (uses gif_captures, not scan_captures)
-                if config['gif_config']['enabled'] and use_wandb:
-                    process_and_log_gifs(i + 1, config, use_wandb)
+            # Process and log GIFs if enabled (uses gif_captures, not scan_captures)
+            if config['gif_config']['enabled'] and use_wandb:
+                process_and_log_gifs(i + 1, config, use_wandb)
 
-                # Save checkpoint using modern RLlib API
-                local_checkpoint_dir = Path(config['checkpoints']['save_dir']) / f"iteration_{i+1}"
-                local_checkpoint_dir.mkdir(parents=True, exist_ok=True)
-                checkpoint_path = algo.save_to_path(str(local_checkpoint_dir.absolute()))
+            # Save checkpoint using modern RLlib API
+            local_checkpoint_dir = Path(config['checkpoints']['save_dir']) / f"iteration_{i+1}"
+            local_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            checkpoint_path = algo.save_to_path(str(local_checkpoint_dir.absolute()))
 
-                # Delete old checkpoints if enabled (keep only latest)
-                if config['defaults']['delete_old_checkpoints']:
-                    delete_old_checkpoint_if_needed(Path(config['checkpoints']['save_dir']))
+            # Delete old checkpoints if enabled (keep only latest)
+            if config['defaults']['delete_old_checkpoints']:
+                delete_old_checkpoint_if_needed(Path(config['checkpoints']['save_dir']))
 
-                # Upload checkpoint as wandb artifact if performance improved
-                if config['checkpoints']['upload_best_only']:
-                    current_reward = result.get("env_runners", {}).get(
-                        "episode_return_mean", float("-inf")
-                    )
-                    if current_reward is not None and current_reward > best_reward:
-                        best_reward = current_reward
-                        upload_checkpoint_artifact(checkpoint_path, i + 1, current_reward)
-                else:
-                    # Upload only at every 25 iterations (25, 50, 75, etc.)
-                    if (i + 1) % 25 == 0:
-                        upload_checkpoint_artifact(checkpoint_path, i + 1, 0.0)
+            # Upload checkpoint as wandb artifact if performance improved
+            if config['checkpoints']['upload_best_only']:
+                current_reward = result.get("env_runners", {}).get(
+                    "episode_return_mean", float("-inf")
+                )
+                if current_reward is not None and current_reward > best_reward:
+                    best_reward = current_reward
+                    upload_checkpoint_artifact(checkpoint_path, i + 1, current_reward)
+            else:
+                # Upload only at every 25 iterations (25, 50, 75, etc.)
+                if (i + 1) % 25 == 0:
+                    upload_checkpoint_artifact(checkpoint_path, i + 1, 0.0)
 
-                print(f"\nIteration {i+1} completed. Checkpoint saved to: {checkpoint_path}\n")
+            print(f"\nIteration {i+1} completed. Checkpoint saved to: {checkpoint_path}\n")
 
     finally:
         if ray.is_initialized():

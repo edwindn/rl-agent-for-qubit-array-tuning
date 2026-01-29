@@ -3,9 +3,9 @@
 
 simulator:
   # Max steps in a single training rollout
-  max_steps: 50
+  max_steps: 100
 
-  num_dots: 4
+  num_dots: 8
 
   use_barriers: true
 
