@@ -5,7 +5,7 @@ simulator:
   # Max steps in a single training rollout
   max_steps: 50
 
-  num_dots: 4
+  num_dots: 2
 
   use_barriers: true
 
@@ -15,7 +15,7 @@ simulator:
 
   constant_voltage_offset: {"min": 0, "max": 0}
   
-  full_plunger_range_width: {"min": 30, "max": 30} #range in V of plungers
+  full_plunger_range_width: {"min": 60, "max": 60} #range in V of plungers
 
   window_delta_range: {"min": 1.5, "max": 2.0} #half range in V for a single scan/sweep (goes from -range to +range)
 
@@ -25,7 +25,7 @@ simulator:
 
   # Radial noise: zero within zero_radius of ground truth, then linearly increasing
   radial_noise:
-    enabled: false
+    enabled: true
     lower: {"min": 20, "max": 30}
     ramp_range: {"min": 5, "max": 10}
     total_noise_range: {"min": 30, "max": 40}

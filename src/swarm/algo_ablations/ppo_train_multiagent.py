@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-TD3 multi-agent RL training for quantum device tuning using Ray RLlib 2.49.0.
-Based on sac_train.py pattern.
+Simplified multi-agent RL training for quantum device tuning using Ray RLlib 2.49.0.
+Enhanced with comprehensive memory usage logging.
 """
 import os
 import sys
@@ -27,6 +27,7 @@ import ray
 import torch
 import wandb
 from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.algorithms.sac import SACConfig
 from ray.tune.registry import register_env
 
 # Set logging level to reduce verbosity
@@ -72,22 +73,21 @@ from swarm.training.train_utils import (  # noqa: E402
 
 from swarm.voltage_model import create_rl_module_spec
 from swarm.training.utils.custom_ppo_learner import PPOLearnerWithValueStats  # for logging
-from swarm.training.utils.td3_config import TD3Config  # for TD3
-from swarm.training.utils.td3_learner import TD3TorchLearner  # for TD3
+from swarm.training.utils.custom_sac_learner import SACLearnerWithRewardScaling  # for reward scaling
 
 
 def parse_arguments():
     """Parse command line arguments for checkpoint loading and config overrides."""
-    parser = argparse.ArgumentParser(description='TD3 multi-agent RL training for quantum device tuning')
-
+    parser = argparse.ArgumentParser(description='Multi-agent RL training for quantum device tuning')
+    
     parser.add_argument(
-        '--load-checkpoint',
-        type=str,
+        '--load-checkpoint', 
+        type=str, 
         help='Path to specific checkpoint directory to load'
     )
-
+    
     parser.add_argument(
-        '--resume-latest',
+        '--resume-latest', 
         action='store_true',
         help='Resume training from the most recent checkpoint in the default checkpoints directory'
     )
@@ -102,7 +102,7 @@ def parse_arguments():
         '--config',
         type=str,
         default=None,
-        help='Path to training config YAML file (default: configs/td3_training_config.yaml)'
+        help='Path to training config YAML file (default: training_config.yaml)'
     )
 
     parser.add_argument(
@@ -113,11 +113,11 @@ def parse_arguments():
 
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
-
+    
     # Parse config overrides from remaining arguments
     config_overrides = parse_config_overrides(unknown)
     args.config_overrides = config_overrides
-
+    
     return args
 
 
@@ -143,17 +143,26 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
 
     from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
 
+    # Path to capacitance model weights (hardcoded)
+    capacitance_model_checkpoint = "eval_runs/mobilenet_barrier_weights.pth"
+
     # Wrap in multi-agent wrapper (config unused but required by RLlib)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
     # RLlib handles temporal sequences via ConnectorV2, not via environment
-    return MultiAgentEnvWrapper(return_voltage=True, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=env_config_path)
+    return MultiAgentEnvWrapper(
+        return_voltage=True,
+        gif_config=gif_config,
+        distance_data_dir=distance_data_dir,
+        env_config_path=env_config_path,
+        capacitance_model_checkpoint=capacitance_model_checkpoint
+    )
 
 
 def load_config(config_path=None, checkpoint_path=None):
     """Load training configuration from YAML file.
 
     Args:
-        config_path: Path to config file. If None, uses default td3_training_config.yaml
+        config_path: Path to config file. If None, uses default training_config.yaml
         checkpoint_path: Path to checkpoint directory. If provided, loads from checkpoint instead of default location
     """
     if checkpoint_path:
@@ -162,7 +171,7 @@ def load_config(config_path=None, checkpoint_path=None):
         if not config_file.exists():
             raise FileNotFoundError(f"Must provide config files within checkpoint: training_config.yaml not found in {checkpoint_path}")
     elif config_path is None:
-        config_file = Path(__file__).parent / "configs" / "td3_training_config.yaml"
+        config_file = Path(__file__).parent / "training_config_single.yaml"
     else:
         config_file = Path(config_path)
         # Handle relative paths from training directory
@@ -249,7 +258,7 @@ def main():
         # Note: We'll update wandb config with merged config later after env creation
         setup_wandb_metrics(config['wandb']['ema_period'])
 
-
+    
     # Initialize Ray with runtime environment from config
     ray_config = {
         "include_dashboard": config['ray']['include_dashboard'],
@@ -276,15 +285,7 @@ def main():
         # Load env config directly from YAML (no GPU initialization needed on driver)
         env_config = load_env_config(checkpoint_path)
 
-        # Determine which env config file was loaded so workers can re-use it
-        if checkpoint_path:
-            env_config_file_path = Path(checkpoint_path) / "env_config.yaml"
-        else:
-            env_config_file_path = Path(__file__).parent / "configs" / "env_config.yaml"
-
-        # Write env_config to a temporary file so workers can load it if needed
-        temp_env_config_path = None
-        env_config_path_for_env = str(env_config_file_path)
+        # Write env_config to a temporary file so workers can load it
         if checkpoint_path:
             import tempfile
             temp_env_config_file = tempfile.NamedTemporaryFile(
@@ -294,14 +295,10 @@ def main():
             temp_env_config_path = temp_env_config_file.name
             temp_env_config_file.close()
             print(f"Written env config to temporary file: {temp_env_config_path}")
-            env_config_path_for_env = temp_env_config_path
+        else:
+            temp_env_config_path = str(Path(__file__).parent / "configs" / "env_config.yaml")
 
-        create_env_fn = partial(
-            create_env,
-            gif_config=gif_config,
-            distance_data_dir=distance_data_dir,
-            env_config_path=env_config_path_for_env,
-        )
+        create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=temp_env_config_path)
         register_env("qarray_multiagent_env", create_env_fn)
 
         # Merge with training config for wandb logging
@@ -340,43 +337,44 @@ def main():
                 "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
             }
         }
-
+        
         algo = config['rl_config']['algorithm'].lower()
 
         rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
 
         # Filter training parameters based on algorithm
-        # PPO-specific parameters that should NOT be passed to TD3
+        # PPO-specific parameters that should NOT be passed to SAC
         ppo_only_params = {'lr', 'lambda_', 'clip_param', 'entropy_coeff', 'vf_loss_coeff', 'kl_target', 'num_epochs', 'minibatch_size'}
-        # SAC-specific parameters (alpha-related) that should NOT be passed to TD3
-        sac_only_params = {'alpha_lr', 'initial_alpha', 'target_entropy', 'reward_scale'}
-        # TD3-specific parameters
-        td3_only_params = {'exploration_noise', 'policy_noise', 'noise_clip', 'policy_frequency'}
+        # SAC-specific parameters that should NOT be passed to PPO
+        sac_only_params = {'actor_lr', 'critic_lr', 'alpha_lr', 'twin_q', 'tau', 'initial_alpha', 'target_entropy', 'n_step',
+                          'clip_actions', 'target_network_update_freq', 'num_steps_sampled_before_learning_starts', 'replay_buffer_config',
+                          'reward_scale'}  # reward_scale used by custom SAC learner
 
         training_params = config['rl_config']['training'].copy()
 
-        if algo == 'td3':
-            # Remove PPO-only and SAC-only parameters when using TD3
-            for param in ppo_only_params | sac_only_params:
+        # Extract reward_scale for SAC (not a native SACConfig param, handled by custom learner)
+        reward_scale = training_params.pop('reward_scale', 1.0)
+
+        if algo == 'sac':
+            # Remove PPO-only parameters when using SAC
+            for param in ppo_only_params:
                 training_params.pop(param, None)
         elif algo == 'ppo':
-            # Remove TD3-only and SAC-only parameters when using PPO
-            for param in td3_only_params | sac_only_params:
+            # Remove SAC-only parameters when using PPO
+            for param in sac_only_params:
                 training_params.pop(param, None)
-            # Also remove off-policy params
-            off_policy_params = {'actor_lr', 'critic_lr', 'twin_q', 'tau', 'n_step',
-                                'clip_actions', 'target_network_update_freq', 'num_steps_sampled_before_learning_starts',
-                                'replay_buffer_config'}
-            for param in off_policy_params:
-                training_params.pop(param, None)
+
+        # Configure custom callbacks for logging to Wandb
+        # log_images = config['wandb']['log_images']
+        # custom_callbacks = partial(CustomCallbacks, log_images=log_images)
 
         # Select algorithm config builder
         if algo == "ppo":
             algo_config_builder = PPOConfig
-        elif algo == "td3":
-            algo_config_builder = TD3Config
+        elif algo == "sac":
+            algo_config_builder = SACConfig
         else:
-            raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, td3")
+            raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, sac")
 
         # Handle voltage parsing to memory manually
         use_deltas = env_config['simulator']['use_deltas']
@@ -445,10 +443,15 @@ def main():
                 learner_connector=learner_connector,
                 # Algorithm-specific learner classes
                 **({"learner_class": PPOLearnerWithValueStats} if algo == "ppo"
-                   else {"learner_class": TD3TorchLearner} if algo == "td3"
+                   else {"learner_class": SACLearnerWithRewardScaling} if algo == "sac"
                    else {}),
             )
+            # .callbacks([custom_callbacks] if use_wandb else [])
         )
+
+        # Set reward_scale on config for SAC learner to access
+        if algo == "sac":
+            algo_config.reward_scale = reward_scale
 
         # Build the algorithm
         print(f"\nBuilding {algo} algorithm...\n")
@@ -458,7 +461,7 @@ def main():
         # Handle checkpoint loading if requested
         start_iteration = 0
         checkpoint_loaded = False
-
+        
         if args.load_checkpoint:
             # Load specific checkpoint
             checkpoint_path = Path(args.load_checkpoint)
@@ -468,26 +471,31 @@ def main():
             print(f"\nLoading checkpoint from: {checkpoint_path}")
             try:
                 algo.restore_from_path(str(checkpoint_path.absolute()))
+                fix_optimizer_betas_after_checkpoint_load(algo)
+
+                # Extract iteration number from path
+                match = re.search(r'iteration_(\d+)', str(checkpoint_path))
+                if match:
+                    start_iteration = int(match.group(1))
+                    checkpoint_loaded = True
+                    print(f"Checkpoint loaded successfully. Resuming from iteration {start_iteration + 1}")
+                else:
+                    print("Warning: Could not determine iteration number from checkpoint path")
+                    start_iteration = 0
+                    checkpoint_loaded = True
+                    print(f"Checkpoint loaded successfully. Starting from iteration 1")
+
             except Exception as e:
                 raise RuntimeError(f"Error loading checkpoint: {e}") from e
-
-            fix_optimizer_betas_after_checkpoint_load(algo)
-
-            match = re.search(r'iteration_(\d+)', str(checkpoint_path))
-            if match:
-                start_iteration = int(match.group(1))
             else:
-                print("Could not determine iteration number from checkpoint path; defaulting to iteration 1.")
-                start_iteration = 0
-
-            checkpoint_loaded = True
-            print(f"Checkpoint loaded successfully. Resuming from iteration {start_iteration + 1}")
-
+                print(f"Error: Checkpoint path does not exist: {checkpoint_path}")
+                print("Continuing with fresh training...")
+                
         elif args.resume_latest:
             # Find and load most recent checkpoint
             checkpoint_dir = Path(config['checkpoints']['save_dir'])
             latest_checkpoint, latest_iteration = find_latest_checkpoint(checkpoint_dir)
-
+            
             if latest_checkpoint:
                 print(f"\nFound latest checkpoint: {latest_checkpoint} (iteration {latest_iteration})")
                 try:
@@ -503,7 +511,7 @@ def main():
             else:
                 print("\nNo checkpoints found in checkpoint directory.")
                 print("Starting fresh training...")
-
+        
         if not checkpoint_loaded:
             print("\nStarting fresh training from iteration 1...")
         else:
@@ -517,17 +525,17 @@ def main():
         # Save training config to checkpoint directory for easy reference
         checkpoint_base_dir = Path(config['checkpoints']['save_dir'])
         checkpoint_base_dir.mkdir(parents=True, exist_ok=True)
-
+        
         # Clean old checkpoints if delete_old_checkpoints is enabled and starting fresh training
         if config['defaults']['delete_old_checkpoints'] and not checkpoint_loaded:
             clean_checkpoint_folder(checkpoint_base_dir)
-
+        
         config_save_path = checkpoint_base_dir / "training_config.yaml"
         with open(config_save_path, 'w') as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-
+        
         # Also save environment config to checkpoint directory for inference
-        env_config_src = env_config_file_path
+        env_config_src = Path(__file__).parent / "configs" / "env_config.yaml"
         if env_config_src.exists():
             env_config_dst = checkpoint_base_dir / "env_config.yaml"
             import shutil
@@ -578,6 +586,13 @@ def main():
                     upload_checkpoint_artifact(checkpoint_path, i + 1, 0.0)
 
             print(f"\nIteration {i+1} completed. Checkpoint saved to: {checkpoint_path}\n")
+
+        # Force log the final checkpoint to wandb before shutdown
+        if use_wandb:
+            print("\nForce logging final checkpoint to wandb...")
+            final_reward = result.get("env_runners", {}).get("episode_return_mean", 0.0)
+            upload_checkpoint_artifact(checkpoint_path, i + 1, final_reward if final_reward is not None else 0.0)
+            print(f"Final checkpoint uploaded to wandb: iteration {i+1}")
 
     finally:
         if ray.is_initialized():

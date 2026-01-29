@@ -174,7 +174,7 @@ def load_config(config_path=None, checkpoint_path=None):
         if not config_file.exists():
             raise FileNotFoundError(f"Must provide config files within checkpoint: training_config.yaml not found in {checkpoint_path}")
     elif config_path is None:
-        config_file = Path(__file__).parent / "configs" / "sac_training_config.yaml"
+        config_file = Path(__file__).parent / "training_config_multi.yaml"
     else:
         config_file = Path(config_path)
         # Handle relative paths from training directory
@@ -199,7 +199,7 @@ def load_env_config(checkpoint_path=None):
         if not config_file.exists():
             raise FileNotFoundError(f"Must provide config files within checkpoint: env_config.yaml not found in {checkpoint_path}")
     else:
-        config_file = Path(__file__).parent / "configs" / "sac_env_config.yaml"
+        config_file = Path(__file__).parent / "configs" / "env_config.yaml"
 
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)
@@ -223,6 +223,12 @@ def main():
         raise ValueError("--load-configs requires --load-checkpoint to be specified")
 
     config = load_config(args.config, checkpoint_path)
+    # sac_train_multiagent.py should always run SAC, regardless of config file defaults.
+    config.setdefault("rl_config", {})
+    config["rl_config"]["algorithm"] = "SAC"
+    # sac_train.py should always run SAC, regardless of config file defaults.
+    config.setdefault("rl_config", {})
+    config["rl_config"]["algorithm"] = "SAC"
 
     # Apply command line overrides to config
     if hasattr(args, 'config_overrides') and args.config_overrides:
@@ -292,7 +298,7 @@ def main():
         if checkpoint_path:
             env_config_file_path = Path(checkpoint_path) / "env_config.yaml"
         else:
-            env_config_file_path = Path(__file__).parent / "configs" / "sac_env_config.yaml"
+            env_config_file_path = Path(__file__).parent / "configs" / "env_config.yaml"
 
         # Write env_config to a temporary file so workers can load it if needed
         temp_env_config_path = None

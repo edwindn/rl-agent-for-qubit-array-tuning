@@ -184,7 +184,7 @@ def load_env_config(checkpoint_path=None):
         if not config_file.exists():
             raise FileNotFoundError(f"Must provide config files within checkpoint: env_config.yaml not found in {checkpoint_path}")
     else:
-        config_file = Path(__file__).parent / "configs" / "ddpg_env_config.yaml"
+        config_file = Path(__file__).parent / "configs" / "env_config.yaml"
 
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)
@@ -277,7 +277,7 @@ def main():
         if checkpoint_path:
             env_config_file_path = Path(checkpoint_path) / "env_config.yaml"
         else:
-            env_config_file_path = Path(__file__).parent / "configs" / "sac_env_config.yaml"
+            env_config_file_path = Path(__file__).parent / "configs" / "env_config.yaml"
 
         # Write env_config to a temporary file so workers can load it if needed
         temp_env_config_path = None

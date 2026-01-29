@@ -28,7 +28,7 @@ def test_deterministic_environments():
     """Test and compare deterministic vs standard environments."""
 
     # Configuration - use absolute path so both envs can find it
-    config_path = str(Path(__file__).parent / "configs" / "sac_env_config.yaml")
+    config_path = str(Path(__file__).parent / "configs" / "env_config.yaml")
     num_steps = 9  # 9 steps + 1 initial = 10 scans total
 
     # Initialize both environments
