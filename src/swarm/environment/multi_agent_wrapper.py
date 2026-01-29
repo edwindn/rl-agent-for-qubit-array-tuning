@@ -393,10 +393,13 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         Returns:
             Tuple of (observations, infos) where infos is a per-agent dict
         """
-        global_obs, global_info = self.base_env.reset(seed=seed, options=options)
-
+        # Save previous episode data before reset (capacitance matrices still available)
         if self.distance_history is not None:
-            self._save_agent_histories(self.distance_history)
+            cgd_true = self.base_env.array.model.cgd_full
+            vgm_estimated = self.base_env.device_state.get("virtual_gate_matrix", None)
+            self._save_agent_histories(self.distance_history, cgd_true, vgm_estimated)
+
+        global_obs, global_info = self.base_env.reset(seed=seed, options=options)
 
         if self.distance_data_dir is not None:
             self.distance_history = {_id: [] for _id in self.all_agent_ids}
@@ -455,9 +458,12 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         agent_truncated = dict.fromkeys(self.all_agent_ids, truncated)
         agent_truncated["__all__"] = truncated  # Required by MultiAgentEnv
 
-        # Save distance history when episode ends
+        # Save distance history and capacitance matrices when episode ends
         if (terminated or truncated) and self.distance_history is not None:
-            self._save_agent_histories(self.distance_history)
+            # Extract capacitance matrices
+            cgd_true = self.base_env.array.model.cgd_full
+            vgm_estimated = self.base_env.device_state.get("virtual_gate_matrix", None)
+            self._save_agent_histories(self.distance_history, cgd_true, vgm_estimated)
             # Clear history after saving
             self.distance_history = {_id: [] for _id in self.all_agent_ids}
 
@@ -512,10 +518,28 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         )
 
 
-    def _save_agent_histories(self, history: dict):
+    def _save_agent_histories(self, history: dict, cgd_true=None, vgm_estimated=None):
         assert set(history.keys()) == set(self.all_agent_ids), "Mismatch in agent ids in saved history"
 
         distance_data_path = Path(self.distance_data_dir)
+
+        # Determine next count from first agent's folder (all agents share same count)
+        first_agent_folder = distance_data_path / self.all_agent_ids[0]
+        existing_files = glob.glob(str(first_agent_folder / "*.npy"))
+
+        if len(existing_files) == 0:
+            next_count = 1
+        else:
+            # Extract counts from filenames (format: XXXX_YYYYYY.npy)
+            counts = []
+            for filepath in existing_files:
+                filename = Path(filepath).stem
+                count_str = filename.split('_')[0]
+                counts.append(int(count_str))
+            next_count = max(counts) + 1
+
+        # Generate random 6-digit number (shared across all saves for this episode)
+        random_suffix = random.randint(0, 999999)
 
         for agent_id in self.all_agent_ids:
             dists = history[agent_id]
@@ -524,29 +548,30 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             # Get agent folder
             agent_folder = distance_data_path / agent_id
 
-            # Find existing files to determine next count
-            existing_files = glob.glob(str(agent_folder / "*.npy"))
-
-            if len(existing_files) == 0:
-                next_count = 1
-            else:
-                # Extract counts from filenames (format: XXXX_YYYYYY.npy)
-                counts = []
-                for filepath in existing_files:
-                    filename = Path(filepath).stem
-                    count_str = filename.split('_')[0]
-                    counts.append(int(count_str))
-                next_count = max(counts) + 1
-
-            # Generate random 6-digit number
-            random_suffix = random.randint(0, 999999)
-
             # Create filename with 4-digit zero-padded count and 6-digit zero-padded random suffix
             filename = f"{next_count:04d}_{random_suffix:06d}.npy"
             filepath = agent_folder / filename
 
             # Save the array
             np.save(filepath, dists)
+
+        # Save capacitance matrices if provided
+        if cgd_true is not None or vgm_estimated is not None:
+            import os
+            capacitance_folder = distance_data_path / "capacitance"
+            capacitance_folder.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(capacitance_folder, 0o777)
+            except:
+                pass
+
+            if cgd_true is not None:
+                cgd_filepath = capacitance_folder / f"cgd_true_{next_count:04d}.npy"
+                np.save(cgd_filepath, cgd_true)
+
+            if vgm_estimated is not None:
+                vgm_filepath = capacitance_folder / f"vgm_estimated_{next_count:04d}.npy"
+                np.save(vgm_filepath, vgm_estimated)
 
 
     # def _get_obs_images(self, obs: Dict[str, Union[np.ndarray, torch.tensor]]):

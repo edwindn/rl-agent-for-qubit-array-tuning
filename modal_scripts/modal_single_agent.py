@@ -1,5 +1,7 @@
 """
-Modal wrapper for running single-agent PPO benchmark on cloud GPUs.
+Modal wrapper for running single-agent PPO training on cloud GPUs.
+
+Uses the training code in src/swarm/single_agent_ablations/
 
 Usage (from project root):
     modal run modal_scripts/modal_single_agent.py
@@ -35,7 +37,7 @@ image = (
         copy=True
     )
     .run_commands(
-        "cd /root/quantum-rl-project && uv sync --frozen"
+        "cd /root/quantum-rl-project && UV_HTTP_TIMEOUT=300 uv sync --frozen"
     )
     .add_local_file(
         str(project_root / "src/swarm/capacitance_model/weights/best_model_barriers.pth"),
@@ -47,7 +49,7 @@ app = modal.App("quantum-rl-single-agent")
 
 
 @app.function(
-    gpu="A100",  # Single A100 GPU (JAX+PyTorch conflict prevents multi-env-runner)
+    gpu="A100:5",  # 5 A100 GPUs
     image=image,
     timeout=86400,  # 24 hour timeout
     secrets=[modal.Secret.from_name("wandb-secret")],
@@ -59,18 +61,10 @@ def train(num_dots: int = 2, num_iterations: int = 150):
 
     os.chdir("/root/quantum-rl-project")
 
-    # Configuration for single A100:
-    # - 1 env runner (JAX/PyTorch conflict prevents multiple env runners sharing GPU)
-    # - 0.4 GPUs per env runner
-    # - 0.5 GPUs per learner
-    # Total: 0.9 GPUs, fits in 1 A100
     cmd = [
-        "uv", "run", "python", "benchmarks/single_agent/train.py",
+        "uv", "run", "python", "src/swarm/single_agent_ablations/train.py",
         "--num-dots", str(num_dots),
-        "--num-iterations", str(num_iterations),
-        "--rl_config.env_runners.num_env_runners", "1",
-        "--rl_config.env_runners.num_gpus_per_env_runner", "0.4",
-        "--rl_config.learners.num_gpus_per_learner", "0.5",
+        "--defaults.num_iterations", str(num_iterations),
         "--rl_config.env_runners.sample_timeout_s", "1800",
     ]
 
@@ -83,10 +77,10 @@ def train(num_dots: int = 2, num_iterations: int = 150):
 @app.local_entrypoint()
 def main(num_dots: int = 2, num_iterations: int = 150):
     """Entry point when running 'modal run modal_single_agent.py'"""
-    print(f"Starting single-agent PPO training on Modal (1 A100)...")
+    print(f"Starting single-agent PPO training on Modal (5 A100s)...")
     print(f"  num_dots: {num_dots}")
     print(f"  num_iterations: {num_iterations}")
-    print(f"  env_runners: 1 (0.4 GPU)")
-    print(f"  learner: 1 (0.5 GPU)")
+    print(f"  env_runners: 12 (0.3 GPU each)")
+    print(f"  learner: 1 (1.0 GPU)")
     train.remote(num_dots=num_dots, num_iterations=num_iterations)
     print("Training completed!")

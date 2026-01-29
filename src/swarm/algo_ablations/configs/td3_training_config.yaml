@@ -1,9 +1,9 @@
-# TD3 + SimpleCNN Configuration
+# TD3 + IMPALA Configuration
 # Self-contained config for TD3 algorithm
 
 # Default training parameters
 defaults:
-  num_iterations: 200
+  num_iterations: 2000
   delete_old_checkpoints: true
   save_distance_data: true
 
@@ -96,7 +96,7 @@ rl_config:
       - "barrier_policy"
     count_steps_by: "agent_steps"
     free_log_std: false
-    log_std_bounds: [-10, 2]
+    log_std_bounds: [-5, 2]
 
 # Checkpoint configuration
 checkpoints:
@@ -111,11 +111,11 @@ gif_config:
   save_dir: "/tmp/shared_gif_captures"
   fps: 0.5
 
-# Neural Network Architecture
+# Neural Network Architecture - IMPALA backbone
 neural_networks:
   plunger_policy:
     backbone:
-      type: "SimpleCNN"
+      type: "IMPALA"
       mobilenet_version: "small"
       feature_size: 256
       load_pretrained: true
@@ -150,7 +150,7 @@ neural_networks:
 
   barrier_policy:
     backbone:
-      type: "SimpleCNN"
+      type: "IMPALA"
       mobilenet_version: "small"
       feature_size: 256
       freeze_backbone: false

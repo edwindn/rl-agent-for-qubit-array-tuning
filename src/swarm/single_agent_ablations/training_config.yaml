@@ -60,12 +60,12 @@ rl_config:
   # Learner configuration  
   learners:
     num_learners: 1                 # Number of learner workers
-    num_gpus_per_learner: 1.0        # GPU allocation per learner
+    num_gpus_per_learner: 0.9        # GPU allocation per learner
 
   # Training hyperparameters
   training:
-    train_batch_size: 8192          # Total batch size for training
-    minibatch_size: 512             # Size of minibatches for SGD
+    train_batch_size_per_learner: 8192   # Reduced back
+    minibatch_size: 512                  # Reduced back
     num_epochs: 10                   # Number of SGD epochs per training iteration
     grad_clip: 40.0                 # Amount of gradient clipping (set to null to disable) ~40.0 is the default
     grad_clip_by: "norm"            # Gradient clipping method
@@ -85,7 +85,7 @@ rl_config:
   single_agent:
     free_log_std: false         # Whether to predict the std (better exploration) or not (more stable)
                                 # Note this will affect how we extract the log std for logging
-    log_std_bounds: [-10, 2]    # Ranges within which to clip predicted log_std for the policy head
+    log_std_bounds: [-5, 2]     # Match multi-agent (was [-10, 2] which killed exploration)
 
 # Checkpoint configuration
 checkpoints:

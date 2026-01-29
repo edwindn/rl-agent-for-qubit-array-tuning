@@ -29,7 +29,7 @@ class ObjectiveConfig:
         noise_std: Standard deviation of Gaussian noise to add (default 0.0 = no noise)
         noise_seed: Random seed for reproducible noise (default None = random)
     """
-    noise_std: float = 0.1
+    noise_std: float = 0.01
     noise_seed: Optional[int] = 42
 
 

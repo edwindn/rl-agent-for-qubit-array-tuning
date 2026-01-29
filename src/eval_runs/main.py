@@ -117,6 +117,48 @@ def save_scans_to_iteration_folder(iteration_num, config, save_dir=None):
         import traceback
         traceback.print_exc()
 
+def _get_all_distance_files(distance_data_dir):
+    """Get set of all .npy files currently in distance_data_dir."""
+    distance_dir = Path(distance_data_dir)
+    if not distance_dir.exists():
+        return set()
+
+    files = set()
+    for agent_dir in distance_dir.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        for npy_file in agent_dir.glob("*.npy"):
+            files.add(str(npy_file))
+    return files
+
+
+def _upload_new_distances(distance_data_dir, previously_seen, artifact):
+    """Upload any new .npy files that weren't in previously_seen set.
+
+    Returns updated set of seen files.
+    """
+    distance_dir = Path(distance_data_dir)
+    if not distance_dir.exists():
+        print(f"Warning: distance_data_dir does not exist: {distance_dir}")
+        return previously_seen
+
+    current_files = _get_all_distance_files(distance_data_dir)
+    new_files = current_files - previously_seen
+
+    files_added = 0
+    for filepath in new_files:
+        npy_file = Path(filepath)
+        agent_dir_name = npy_file.parent.name
+        artifact_path = f"{agent_dir_name}/{npy_file.name}"
+        artifact.add_file(str(npy_file), name=artifact_path)
+        files_added += 1
+
+    if files_added > 0:
+        print(f"  Uploaded {files_added} new distance files to artifact")
+
+    return current_files
+
+
 from swarm.training.train_utils import (  # noqa: E402
     parse_config_overrides,
     map_sweep_parameters,
@@ -152,7 +194,34 @@ def parse_arguments():
     parser.add_argument(
         '--collect-data',
         action='store_true',
-        help='Collect distance data only (100 rollouts, no wandb logging)'
+        help='Collect distance data only (default 100 rollouts)'
+    )
+
+    parser.add_argument(
+        '--num-rollouts',
+        type=int,
+        default=100,
+        help='Number of rollouts for data collection (default: 100)'
+    )
+
+    parser.add_argument(
+        '--upload-to-wandb',
+        action='store_true',
+        help='Upload distance data to wandb after each episode (use with --collect-data)'
+    )
+
+    parser.add_argument(
+        '--num-env-runners',
+        type=int,
+        default=1,
+        help='Number of parallel env runners (default: 1)'
+    )
+
+    parser.add_argument(
+        '--gpu-fraction',
+        type=float,
+        default=0.9,
+        help='GPU fraction per env runner (default: 0.9)'
     )
 
     # Parse known args to allow for dynamic config overrides
@@ -172,8 +241,6 @@ def create_env(
     distance_data_dir=None,
     env_config_path=None,
     scan_save_dir=None,
-    is_collecting_data=False,
-    capacitance_model_checkpoint=None,
 ):
     """Create multi-agent quantum environment with JAX safety."""
     import os
@@ -198,15 +265,14 @@ def create_env(
     # Wrap in scan-saving wrapper (which inherits from MultiAgentEnvWrapper)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
     # RLlib handles temporal sequences via ConnectorV2, not via environment
+    # Note: capacitance model weights are loaded from env_config.yaml
     return ScanSavingWrapper(
         return_voltage=True,
         gif_config=gif_config,
         distance_data_dir=distance_data_dir,
         env_config_path=env_config_path,
-        capacitance_model_checkpoint=capacitance_model_checkpoint,
         scan_save_dir=scan_save_dir,
         scan_save_enabled=scan_save_dir is not None,
-        is_collecting_data=is_collecting_data,
     )
 
 
@@ -247,12 +313,16 @@ def main():
     args = parse_arguments()
 
     use_wandb = not args.disable_wandb and not args.collect_data
+    # Allow wandb upload even in collect-data mode if explicitly requested
+    upload_to_wandb = args.upload_to_wandb and args.collect_data
 
     # Resolve checkpoint path to absolute path
     args.load_checkpoint = str(Path(args.load_checkpoint).resolve())
     checkpoint_path = args.load_checkpoint
 
+    print(f"[DEBUG] Loading config from checkpoint: {checkpoint_path}")
     config = load_config(checkpoint_path)
+    print(f"[DEBUG] Config loaded successfully")
 
     # Apply command line overrides to config
     if hasattr(args, 'config_overrides') and args.config_overrides:
@@ -263,8 +333,9 @@ def main():
     if args.collect_data:
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        checkpoint_name = Path(checkpoint_path).name
-        data_parent_dir = Path("/home/edn/rl-agent-for-qubit-array-tuning/src/eval_runs/collected_data")
+        checkpoint_name = Path(checkpoint_path).name.replace(":", "_")  # Sanitize colons for filesystem
+        # Use path relative to this script (works on Modal and locally)
+        data_parent_dir = Path(__file__).parent / "collected_data"
         distance_data_dir = data_parent_dir / f"{timestamp}_{checkpoint_name}"
 
         data_parent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
@@ -309,6 +380,14 @@ def main():
         )
         # Note: We'll update wandb config with merged config later after env creation
         setup_wandb_metrics(config['wandb']['ema_period'])
+    elif upload_to_wandb:
+        # Initialize wandb for artifact upload only (collect-data mode)
+        wandb.init(
+            entity=config['wandb']['entity'],
+            project=config['wandb']['project'],
+            job_type="eval-data-collection"
+        )
+        print(f"Wandb initialized for artifact upload")
 
     
     # Initialize Ray with runtime environment from config
@@ -327,10 +406,12 @@ def main():
         },
     }
 
-    print("\nInitialising ray...\n")
+    print("[DEBUG] Initialising ray...")
     ray.init(**ray_config)
+    print("[DEBUG] Ray initialized successfully")
 
     try:
+        print("[DEBUG] Setting up gif_config and scan directories...")
         gif_config = config["gif_config"]
         # Override gif save dir to local training directory
         gif_config['save_dir'] = str(Path(__file__).parent / "gif_captures")
@@ -344,8 +425,6 @@ def main():
 
         # Load env config directly from YAML (no GPU initialization needed on driver)
         env_config = load_env_config()
-
-        capacitance_weights_path = env_config.get("capacitance_model", {}).get("weights_path")
 
         # Write env_config to a temporary file so workers can load it
         temp_env_config_path = None
@@ -364,9 +443,7 @@ def main():
             gif_config=gif_config,
             distance_data_dir=distance_data_dir,
             env_config_path=temp_env_config_path,
-            capacitance_model_checkpoint=capacitance_weights_path,
             scan_save_dir=str(scan_save_dir),
-            is_collecting_data=args.collect_data,
         )
         register_env("qarray_multiagent_env", create_env_fn)
 
@@ -494,14 +571,16 @@ def main():
                 rl_module_spec=rl_module_spec,
             )
             .env_runners(
-                num_env_runners=1,
+                # Use exact same config as training (don't override)
+                num_env_runners=config['rl_config']['env_runners']['num_env_runners'],
                 rollout_fragment_length=config['rl_config']['env_runners']['rollout_fragment_length'],
                 sample_timeout_s=config['rl_config']['env_runners']['sample_timeout_s'],
-                num_gpus_per_env_runner=0.9,
+                num_gpus_per_env_runner=config['rl_config']['env_runners']['num_gpus_per_env_runner'],
                 env_to_module_connector=env_to_module_connector,
                 add_default_connectors_to_env_to_module_pipeline=True,  # Let Ray handle defaults
             )
             .learners(
+                # Use exact same config as training (don't override)
                 num_learners=config['rl_config']['learners']['num_learners'],
                 num_gpus_per_learner=config['rl_config']['learners']['num_gpus_per_learner'],
             )
@@ -532,24 +611,31 @@ def main():
             algo_config.reward_scale = reward_scale
 
         # Build the algorithm
-        print(f"\nBuilding {algo} algorithm...\n")
+        print(f"[DEBUG] Building {algo} algorithm...")
+        import sys; sys.stdout.flush()
 
         algo = algo_config.build()
+        print(f"[DEBUG] Algorithm built successfully")
+        sys.stdout.flush()
 
         # Handle checkpoint loading if requested
         start_iteration = 0
         checkpoint_loaded = False
-        
+
         if args.load_checkpoint:
             # Load specific checkpoint
             checkpoint_path = Path(args.load_checkpoint).resolve()
             if not checkpoint_path.exists():
                 raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
 
-            print(f"\nLoading checkpoint from: {checkpoint_path}")
+            print(f"[DEBUG] Loading checkpoint from: {checkpoint_path}")
+            sys.stdout.flush()
             try:
                 algo.restore_from_path(str(checkpoint_path.absolute()))
+                print(f"[DEBUG] Checkpoint restored, fixing optimizer betas...")
+                sys.stdout.flush()
                 fix_optimizer_betas_after_checkpoint_load(algo)
+                print(f"[DEBUG] Optimizer betas fixed")
 
                 # Extract iteration number from path
                 match = re.search(r'iteration_(\d+)', str(checkpoint_path))
@@ -580,11 +666,33 @@ def main():
 
         if args.collect_data:
             training_start_time = time.time()
-            print("\nCollecting distance data for 100 rollouts...\n")
+            num_rollouts = args.num_rollouts
+            print(f"[DEBUG] Starting data collection for {num_rollouts} rollouts...")
+            sys.stdout.flush()
 
-            for i in range(100):
+            # Create wandb artifact for incremental uploads
+            if upload_to_wandb:
+                artifact_name = f"eval_distances_{Path(checkpoint_path).name}"
+                distance_artifact = wandb.Artifact(
+                    artifact_name,
+                    type="distance_data",
+                    metadata={
+                        "checkpoint": checkpoint_path,
+                        "num_rollouts": num_rollouts,
+                        "num_env_runners": args.num_env_runners,
+                    }
+                )
+                print(f"[DEBUG] Will upload distance data to wandb artifact: {artifact_name}")
+                # Track which files we've already seen/uploaded
+                seen_files = set()
+
+            for i in range(num_rollouts):
+                print(f"[DEBUG] Starting rollout {i+1}/{num_rollouts}...")
+                sys.stdout.flush()
                 # Use evaluate() instead of train() to skip gradient updates
                 result = algo.evaluate()
+                print(f"[DEBUG] Rollout {i+1} completed")
+                sys.stdout.flush()
 
                 # Clean console output (no wandb logging)
                 print_training_progress(result, i, training_start_time)
@@ -594,6 +702,16 @@ def main():
                     # Wait briefly for async worker processes to finish writing data to disk
                     time.sleep(0.5)
                     save_scans_to_iteration_folder(i + 1, config)
+
+                # Upload any new distance .npy files to wandb
+                if upload_to_wandb and distance_data_dir:
+                    time.sleep(0.5)  # Wait for file writes from parallel runners
+                    seen_files = _upload_new_distances(distance_data_dir, seen_files, distance_artifact)
+
+            # Finalize and log the artifact
+            if upload_to_wandb:
+                wandb.log_artifact(distance_artifact)
+                print(f"\nUploaded distance artifact to wandb: {artifact_name}")
 
             print(f"\nData collection complete. Distance data saved to: {distance_data_dir}\n")
         else:
@@ -672,7 +790,7 @@ def main():
         if ray.is_initialized():
             ray.shutdown()
 
-        if use_wandb:
+        if use_wandb or upload_to_wandb:
             wandb.finish()
             print("Wandb session finished")
 

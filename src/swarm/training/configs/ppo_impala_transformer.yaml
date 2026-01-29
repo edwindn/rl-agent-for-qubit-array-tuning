@@ -3,7 +3,7 @@
 
 # Default training parameters
 defaults:
-  num_iterations: 200
+  num_iterations: 150
   delete_old_checkpoints: true
   save_distance_data: true
 
@@ -45,24 +45,24 @@ rl_config:
   algorithm: "PPO"
 
   env_runners:
-    num_env_runners: 12
-    rollout_fragment_length: 50
+    num_env_runners: 8
+    rollout_fragment_length: 128
     sample_timeout_s: 600.0
-    num_gpus_per_env_runner: 0.3
+    num_gpus_per_env_runner: 0.45
 
   learners:
     num_learners: 1
-    num_gpus_per_learner: 0.75
+    num_gpus_per_learner: 0.95
 
   # PPO training hyperparameters
   training:
     # Common params (new API stack uses train_batch_size_per_learner)
-    train_batch_size_per_learner: 4096
+    train_batch_size_per_learner: 1024
     grad_clip: 40.0
     grad_clip_by: "norm"
 
     # PPO-specific params
-    minibatch_size: 512
+    minibatch_size: 128
     num_epochs: 10
     lr: 0.0005
     gamma: 0.0

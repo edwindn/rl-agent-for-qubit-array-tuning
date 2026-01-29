@@ -153,6 +153,11 @@ class ScanSavingWrapper(MultiAgentEnvWrapper):
         filename = self.episode_dir / f"step_{self.step_count:06d}.png"
         pil_image.save(filename)
 
+        # Also save raw scans as numpy array for analysis (shape: num_scans x H x W)
+        raw_scans = np.stack(scans, axis=0)  # Shape: (num_scans, H, W)
+        npy_filename = self.episode_dir / f"step_{self.step_count:06d}.npy"
+        np.save(npy_filename, raw_scans)
+
         # Debug logging for first few saves
         if self.step_count <= 3 or self.step_count % 20 == 0:
             print(f"[ScanSavingWrapper] Saved {num_scans} scans for step {self.step_count} to {filename}")

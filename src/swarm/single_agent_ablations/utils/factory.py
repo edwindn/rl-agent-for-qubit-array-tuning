@@ -1,12 +1,16 @@
 """
 Factory for creating RLlib module specifications for the single-agent benchmark.
+
+Note: We use MultiRLModuleSpec even for single-agent training because RLlib's
+single-agent PPO code path has different behavior than the multi-agent code path.
+The multi-agent path works correctly for our continuous action space setup.
 """
 
 import gymnasium as gym
 from ray.rllib.algorithms.ppo.ppo_catalog import PPOCatalog
 from ray.rllib.algorithms.ppo.torch.default_ppo_torch_rl_module import DefaultPPOTorchRLModule
 from ray.rllib.core.models.configs import ModelConfig
-from ray.rllib.core.rl_module.multi_rl_module import RLModuleSpec
+from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec, RLModuleSpec
 from ray.rllib.utils.annotations import override
 
 from swarm.voltage_model.algorithms.common import build_encoder_config, get_head_input_dim
@@ -78,8 +82,13 @@ class CustomSingleAgentCatalog(PPOCatalog):
         return config.build(framework=framework)
 
 
-def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = None) -> RLModuleSpec:
-    """Create a single-agent RLModuleSpec based on env_config."""
+def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = None) -> MultiRLModuleSpec:
+    """Create a MultiRLModuleSpec with single agent based on env_config.
+
+    Note: We use MultiRLModuleSpec instead of RLModuleSpec because RLlib's
+    single-agent PPO code path has issues with continuous action spaces.
+    Using multi-agent config with a single agent uses the correct code path.
+    """
     import numpy as np
     from gymnasium import spaces
 
@@ -90,10 +99,22 @@ def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = No
     resolution = env_config["simulator"]["resolution"]
     num_dots = env_config["simulator"]["num_dots"]
     use_barriers = env_config["simulator"]["use_barriers"]
+    # TEMPORARY: bypass_barriers - agent only controls gates
+    bypass_barriers = env_config["simulator"].get("bypass_barriers", False)
+    # TEMPORARY: single_gate_mode - agent only controls ONE gate
+    single_gate_mode = env_config["simulator"].get("single_gate_mode", False)
     num_channels = num_dots - 1
 
-    num_barriers = num_dots - 1 if use_barriers else 0
-    num_actions = num_dots + num_barriers
+    # Determine number of actions based on mode
+    if single_gate_mode:
+        # Agent only controls ONE gate
+        num_actions = 1
+    elif bypass_barriers:
+        # Agent controls all gates (barriers auto-set)
+        num_actions = num_dots
+    else:
+        num_barriers = num_dots - 1 if use_barriers else 0
+        num_actions = num_dots + num_barriers
 
     image_space = spaces.Box(
         low=0.0,
@@ -129,11 +150,17 @@ def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = No
         elif memory_layer == "transformer":
             model_config["max_seq_len"] = backbone["transformer"]["max_seq_len"]
 
-    return RLModuleSpec(
+    # Create single-agent spec
+    agent_spec = RLModuleSpec(
         module_class=DefaultPPOTorchRLModule,
         observation_space=observation_space,
         action_space=action_space,
         model_config=model_config,
         catalog_class=CustomSingleAgentCatalog,
         inference_only=False,
+    )
+
+    # Wrap in MultiRLModuleSpec with single agent
+    return MultiRLModuleSpec(
+        rl_module_specs={"agent_0": agent_spec}
     )

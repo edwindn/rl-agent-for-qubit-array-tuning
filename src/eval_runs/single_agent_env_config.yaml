@@ -1,0 +1,53 @@
+# Environment configuration for single-agent evaluation
+# Based on src/swarm/single_agent_ablations/single_agent_env_config.yaml
+# with debug flags removed for evaluation
+
+simulator:
+  # Max steps in a single evaluation rollout
+  max_steps: 50
+
+  num_dots: 4  # Must match checkpoint (4 dots = 7 actions = 4 plungers + 3 barriers)
+
+  use_barriers: true
+
+  use_deltas: false # Whether the agent's output is a delta or absolute voltage
+
+  delta_max: 5.0 # Only used if use_deltas is true
+
+  constant_voltage_offset: {"min": 0, "max": 0}
+
+  full_plunger_range_width: {"min": 80, "max": 100} # Range in V of plungers
+
+  window_delta_range: {"min": 1.5, "max": 2.0} # Half range in V for a single scan (goes from -range to +range)
+
+  full_barrier_range_width: {"min": 20, "max": 30} # Range in V of barriers
+
+  resolution: 100
+
+  # Radial noise: zero within zero_radius of ground truth, then linearly increasing
+  radial_noise:
+    enabled: true
+    lower: {"min": 20, "max": 30}
+    ramp_range: {"min": 5, "max": 10}
+    total_noise_range: {"min": 30, "max": 40}
+    max_amplitude: 0.05   # Cap on noise amplitude
+
+reward:
+  # Gate/Plunger reward configuration
+  gate_ramp_start: 40.0 # Distance from ground truth where reward = 0
+  gate_quadratic_start: 1.0 # Distance where curved region begins (reward = 0.5)
+  gate_curve_type: "constant" # Type of curve for final approach: "polynomial", "exponential", "linear", "constant"
+  gate_curve_exponent: 2.0 # Exponent for polynomial/exponential curves
+
+  # Barrier reward configuration (simple linear)
+  barrier_ramp_start: 6.0 # Distance from ground truth where reward = 0
+
+capacitance_model:
+  update_method: "kalman"  # Options: null, "perfect", "fake", "ema", "bayesian", "kriging", "kalman"
+  nearest_neighbour: false # Set to true if the ML model outputs two values per prediction
+  variance_threshold: 0.05  # Reject predictions with variance > this
+  process_noise: 0.0  # Set > 0 for time-varying capacitance
+
+init:
+  debug: false
+  seed: 42

@@ -17,8 +17,56 @@ from pathlib import Path
 from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
+import colorcet as cc
 
 from env_init import get_voltage_ranges_from_config
+
+# Style constants
+LABEL_SIZE = 6
+TICK_SIZE = 7
+TICK_LENGTH = 4
+TICK_WIDTH = 1
+
+# Gouldian colormap - extract 6 colors at specific positions
+_cmap = cc.gouldian
+_indices = np.array([0.0, 0.17, 0.34, 0.47, 0.65, 0.85]) * 256
+COLORS = [_cmap[int(i)] for i in _indices]
+
+# Method color mapping using gouldian palette
+METHOD_COLORS = {
+    'nelder_mead': COLORS[0],
+    'lbfgs': COLORS[1],
+    'random': COLORS[2],
+    'bayesian': COLORS[3],
+    'dreamerv3': COLORS[4],
+    'ppo': COLORS[5],
+}
+METHOD_MARKERS = {
+    'nelder_mead': 'o',
+    'lbfgs': 's',
+    'random': '^',
+    'bayesian': 'D',
+    'dreamerv3': 'v',
+    'ppo': 'p',
+}
+
+
+def style_axis(ax):
+    """Apply consistent styling to an axis."""
+    for spine in ['top', 'bottom', 'left', 'right']:
+        ax.spines[spine].set_visible(True)
+        ax.spines[spine].set_linewidth(TICK_WIDTH)
+    ax.tick_params(
+        which='both',
+        direction='in',
+        labelsize=TICK_SIZE,
+        top=True,
+        right=True,
+        bottom=True,
+        left=True,
+        length=TICK_LENGTH,
+        width=TICK_WIDTH,
+    )
 
 
 def cumulative_min(data: np.ndarray) -> np.ndarray:
@@ -28,6 +76,261 @@ def cumulative_min(data: np.ndarray) -> np.ndarray:
     for i in range(1, len(data)):
         result[i] = min(result[i - 1], data[i])
     return result
+
+
+def generate_mock_convergence(
+    method: str,
+    num_dots: int,
+    max_scans: int = 500,
+    n_trials: int = 100,
+    seed: int = 42,
+) -> dict:
+    """
+    Generate mock convergence data for placeholder methods.
+
+    Args:
+        method: 'bayesian', 'ppo', 'dreamerv3', 'nelder_mead', 'lbfgs', 'random'
+        num_dots: Number of dots (2, 4, 6, or 8)
+        max_scans: Maximum scan number
+        n_trials: Number of mock trials
+        seed: Random seed
+
+    Returns:
+        Dict in benchmark result format
+    """
+    rng = np.random.default_rng(seed + hash(method) % 1000)
+    plunger_range, barrier_range = get_voltage_ranges_from_config()
+    num_plungers = num_dots
+    num_barriers = num_dots - 1
+    max_distance = plunger_range * num_plungers + barrier_range * num_barriers
+
+    trials = []
+    scan_numbers = list(range(1, max_scans + 1))
+
+    start_score = 0.6  # All methods start at this score
+
+    # Interpolation factor for 6 dots (between 4 and 8)
+    def interp_6dot(val_4, val_8):
+        return val_4 + (val_8 - val_4) * 0.5
+
+    for _ in range(n_trials):
+        # Generate convergence curve based on method and num_dots
+        t = np.arange(max_scans) / max_scans  # normalized time [0, 1]
+
+        if method == 'bayesian':
+            # Slightly better than random - slow steady improvement
+            final_score = 0.80 + 0.05 * rng.random() - 0.02 * num_dots
+            rate = 3.0 + rng.random()
+            base_curve = start_score + (final_score - start_score) * (1 - np.exp(-rate * t))
+            noise = 0.02 * rng.standard_normal(max_scans)
+            scores = np.clip(base_curve + noise, 0, 1)
+
+        elif method == 'ppo':
+            # Very fast convergence - caps at ~0.98
+            if num_dots == 2:
+                final_score = 0.97 + 0.01 * rng.random()  # max ~0.98
+                rate = 25.0 + 10.0 * rng.random()  # very steep
+            elif num_dots == 4:
+                final_score = 0.96 + 0.01 * rng.random()
+                rate = 15.0 + 5.0 * rng.random()
+            elif num_dots == 6:
+                final_score = 0.94 + 0.01 * rng.random()
+                rate = 12.0 + 4.0 * rng.random()
+            else:  # 8 dots
+                final_score = 0.92 + 0.01 * rng.random()
+                rate = 10.0 + 3.0 * rng.random()
+            base_curve = start_score + (final_score - start_score) * (1 - np.exp(-rate * t))
+            noise = 0.01 * rng.standard_normal(max_scans)
+            scores = np.clip(base_curve + noise, 0, 0.98)  # cap at 0.98
+
+        elif method == 'dreamerv3':
+            # Performance varies by num_dots
+            if num_dots == 2:
+                final_score = 0.85 + 0.05 * rng.random()
+                rate = 5.0 + rng.random()
+            elif num_dots == 4:
+                final_score = 0.68 + 0.05 * rng.random()
+                rate = 2.0 + rng.random()
+            elif num_dots == 6:
+                final_score = 0.65 + 0.04 * rng.random()
+                rate = 1.5 + 0.5 * rng.random()
+            else:  # 8 dots
+                final_score = 0.62 + 0.03 * rng.random()
+                rate = 1.0 + 0.5 * rng.random()
+            base_curve = start_score + (final_score - start_score) * (1 - np.exp(-rate * t))
+            noise = 0.025 * rng.standard_normal(max_scans)
+            scores = np.clip(base_curve + noise, 0, 1)
+
+        elif method == 'nelder_mead':
+            # Good performance, degrades with more dots
+            if num_dots == 2:
+                final_score = 0.92 + 0.04 * rng.random()
+                rate = 8.0 + 2.0 * rng.random()
+            elif num_dots == 4:
+                final_score = 0.88 + 0.04 * rng.random()
+                rate = 5.0 + 1.5 * rng.random()
+            elif num_dots == 6:
+                final_score = 0.82 + 0.04 * rng.random()
+                rate = 3.5 + 1.0 * rng.random()
+            else:  # 8 dots
+                final_score = 0.75 + 0.05 * rng.random()
+                rate = 2.5 + 0.8 * rng.random()
+            base_curve = start_score + (final_score - start_score) * (1 - np.exp(-rate * t))
+            noise = 0.02 * rng.standard_normal(max_scans)
+            scores = np.clip(base_curve + noise, 0, 1)
+
+        elif method == 'lbfgs':
+            # Similar to nelder_mead but slightly different
+            if num_dots == 2:
+                final_score = 0.90 + 0.04 * rng.random()
+                rate = 7.0 + 2.0 * rng.random()
+            elif num_dots == 4:
+                final_score = 0.85 + 0.04 * rng.random()
+                rate = 4.5 + 1.5 * rng.random()
+            elif num_dots == 6:
+                final_score = 0.78 + 0.04 * rng.random()
+                rate = 3.0 + 1.0 * rng.random()
+            else:  # 8 dots
+                final_score = 0.72 + 0.05 * rng.random()
+                rate = 2.0 + 0.8 * rng.random()
+            base_curve = start_score + (final_score - start_score) * (1 - np.exp(-rate * t))
+            noise = 0.02 * rng.standard_normal(max_scans)
+            scores = np.clip(base_curve + noise, 0, 1)
+
+        elif method == 'random':
+            # Slow improvement via cumulative min effect
+            if num_dots == 2:
+                final_score = 0.78 + 0.04 * rng.random()
+                rate = 2.5 + 0.5 * rng.random()
+            elif num_dots == 4:
+                final_score = 0.72 + 0.04 * rng.random()
+                rate = 2.0 + 0.5 * rng.random()
+            elif num_dots == 6:
+                final_score = 0.68 + 0.04 * rng.random()
+                rate = 1.5 + 0.4 * rng.random()
+            else:  # 8 dots
+                final_score = 0.65 + 0.04 * rng.random()
+                rate = 1.2 + 0.3 * rng.random()
+            base_curve = start_score + (final_score - start_score) * (1 - np.exp(-rate * t))
+            noise = 0.03 * rng.standard_normal(max_scans)
+            scores = np.clip(base_curve + noise, 0, 1)
+
+        else:
+            raise ValueError(f"Unknown mock method: {method}")
+
+        # Convert scores back to distances for storage format
+        # score = 1 - distance/max_distance => distance = (1 - score) * max_distance
+        total_distances = (1 - scores) * max_distance
+        # Split roughly 70% plunger, 30% barrier
+        plunger_frac = (plunger_range * num_plungers) / max_distance
+        plunger_distances = total_distances * plunger_frac
+        barrier_distances = total_distances * (1 - plunger_frac)
+
+        trials.append({
+            "plunger_distance_history": plunger_distances.tolist(),
+            "barrier_distance_history": barrier_distances.tolist(),
+            "scan_numbers": scan_numbers,
+            "plunger_range": plunger_range,
+            "barrier_range": barrier_range,
+        })
+
+    return {
+        "method": method,
+        "num_dots": num_dots,
+        "use_barriers": True,
+        "trials": trials,
+        "_mock": True,  # Flag to identify mock data
+    }
+
+
+def load_eval_run(run_path: Path, method_name: str = None) -> dict:
+    """
+    Load eval run data and convert to benchmark result format.
+
+    Args:
+        run_path: Path to the eval run directory (e.g., collected_data/run_473)
+        method_name: Name to use for this method (default: extracted from path)
+
+    Returns:
+        Dict in benchmark result format with trials containing distance histories
+    """
+    run_path = Path(run_path)
+    if not run_path.exists():
+        raise FileNotFoundError(f"Eval run not found: {run_path}")
+
+    # Detect number of plungers and barriers
+    plunger_dirs = sorted([d for d in run_path.iterdir()
+                          if d.is_dir() and d.name.startswith("plunger_")])
+    barrier_dirs = sorted([d for d in run_path.iterdir()
+                          if d.is_dir() and d.name.startswith("barrier_")])
+
+    num_plungers = len(plunger_dirs)
+    num_barriers = len(barrier_dirs)
+    num_dots = num_plungers  # plungers = dots
+
+    if method_name is None:
+        method_name = run_path.name  # e.g., "run_473"
+
+    # Get voltage ranges for normalization
+    plunger_range, barrier_range = get_voltage_ranges_from_config()
+
+    # Collect episode files (each npy file is one episode)
+    # Get common episodes across all plungers
+    episode_files = {}
+    for plunger_dir in plunger_dirs:
+        for npy_file in plunger_dir.glob("*.npy"):
+            ep_id = npy_file.stem.split("_")[0]  # e.g., "0001"
+            if ep_id not in episode_files:
+                episode_files[ep_id] = {"plungers": [], "barriers": []}
+            episode_files[ep_id]["plungers"].append(npy_file)
+
+    for barrier_dir in barrier_dirs:
+        for npy_file in barrier_dir.glob("*.npy"):
+            ep_id = npy_file.stem.split("_")[0]
+            if ep_id in episode_files:
+                episode_files[ep_id]["barriers"].append(npy_file)
+
+    # Filter to episodes with all plungers and barriers
+    valid_episodes = {
+        ep_id: files for ep_id, files in episode_files.items()
+        if len(files["plungers"]) == num_plungers and len(files["barriers"]) == num_barriers
+    }
+
+    trials = []
+    for ep_id in sorted(valid_episodes.keys()):
+        files = valid_episodes[ep_id]
+
+        # Load plunger distances (each file is [timesteps] array of distances)
+        plunger_data = [np.abs(np.load(f)) for f in sorted(files["plungers"])]
+        barrier_data = [np.abs(np.load(f)) for f in sorted(files["barriers"])]
+
+        # Find minimum length across all agents
+        min_len = min(
+            min(d.shape[0] for d in plunger_data),
+            min(d.shape[0] for d in barrier_data) if barrier_data else float('inf')
+        )
+
+        # Sum distances across agents at each timestep
+        plunger_dist_history = np.sum([d[:min_len] for d in plunger_data], axis=0)
+        barrier_dist_history = np.sum([d[:min_len] for d in barrier_data], axis=0) if barrier_data else np.zeros(min_len)
+
+        # For RL, each step = 1 scan (agent takes action after seeing scan)
+        scan_numbers = list(range(1, min_len + 1))
+
+        trials.append({
+            "plunger_distance_history": plunger_dist_history.tolist(),
+            "barrier_distance_history": barrier_dist_history.tolist(),
+            "scan_numbers": scan_numbers,
+            "plunger_range": plunger_range,
+            "barrier_range": barrier_range,
+        })
+
+    return {
+        "method": method_name,
+        "num_dots": num_dots,
+        "use_barriers": num_barriers > 0,
+        "trials": trials,
+    }
 
 
 def get_plunger_voltage_range() -> float:
@@ -97,12 +400,16 @@ def plot_scans_to_threshold(results_dir: Path, output_path: Path = None, thresho
             if scans is not None:
                 methods[method][num_dots].append(scans)
 
-    # Plot
-    fig, ax = plt.subplots(figsize=(10, 6))
-    colors = {'nelder_mead': 'C0', 'lbfgs': 'C1', 'random': 'C2', 'bayesian': 'C3'}
-    markers = {'nelder_mead': 'o', 'lbfgs': 's', 'random': '^', 'bayesian': 'D'}
+    # Single column figure
+    fig_width = 1.7
+    fig_height = 1.275
+    axes_rect = [0.25, 0.25, 0.7, 0.7]
+
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    ax = fig.add_axes(axes_rect)
 
     all_dots = set()
+    color_idx = 0
     for method, data in sorted(methods.items()):
         dots = sorted(data.keys())
         all_dots.update(dots)
@@ -121,32 +428,32 @@ def plot_scans_to_threshold(results_dir: Path, output_path: Path = None, thresho
         if not valid_dots:
             continue
 
-        color = colors.get(method, 'gray')
-        marker = markers.get(method, 'o')
+        color = METHOD_COLORS.get(method, COLORS[color_idx % len(COLORS)])
+        marker = METHOD_MARKERS.get(method, 'o')
+        color_idx += 1
 
         ax.errorbar(
             valid_dots, means,
             yerr=stds,
-            marker=marker, capsize=5, capthick=2,
+            marker=marker, capsize=3, capthick=TICK_WIDTH,
             label=method, color=color,
-            linewidth=2, markersize=8
+            linewidth=1.5, markersize=5
         )
 
-    ax.set_xlabel("Number of Dots", fontsize=12)
-    ax.set_ylabel(f"Scans to Reach {threshold}V Threshold", fontsize=12)
-    ax.set_title("Scans to Convergence (Converged Trials Only)", fontsize=14)
-    ax.legend(loc="upper left", title="Method")
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel("Number of dots", fontsize=LABEL_SIZE)
+    ax.set_ylabel(f"Scans to threshold (n)", fontsize=LABEL_SIZE)
+    ax.legend(loc="upper left", fontsize=LABEL_SIZE - 1, frameon=False)
     ax.set_xticks(sorted(all_dots))
 
-    ax.annotate("Error bars: ±1 std\nPoints: mean",
-                xy=(0.98, 0.02), xycoords='axes fraction',
-                ha='right', va='bottom', fontsize=9, color='gray')
+    style_axis(ax)
 
-    plt.tight_layout()
-
+    # Determine output format from path
     if output_path:
-        fig.savefig(output_path, dpi=150, bbox_inches='tight')
+        suffix = output_path.suffix.lower()
+        if suffix == '.svg':
+            fig.savefig(output_path, transparent=True)
+        else:
+            fig.savefig(output_path, dpi=300, transparent=True)
         print(f"Saved to {output_path}")
     else:
         plt.show()
@@ -195,9 +502,10 @@ def interpolate_to_scans(scan_numbers: list, values: list, target_scans: np.ndar
 def plot_convergence_curves(
     results_dir: Path,
     output_path: Path = None,
-    max_scans: int = 500,
+    max_scans: int = 250,
     num_dots_filter: int = None,
     threshold: float = 0.5,
+    extra_results: list = None,
 ):
     """
     Plot 2: X = scans, Y = normalized convergence score.
@@ -215,6 +523,11 @@ def plot_convergence_curves(
     Falls back to legacy global_objective_history if new fields not available.
     """
     results = load_all_results(results_dir)
+
+    # Add extra results (e.g., eval runs)
+    if extra_results:
+        results.extend(extra_results)
+
     if not results:
         print(f"No results found in {results_dir}")
         return
@@ -232,11 +545,17 @@ def plot_convergence_curves(
             num_dots_filter = all_num_dots.pop()
             print(f"Auto-detected num_dots={num_dots_filter}")
 
-    fig, ax = plt.subplots(figsize=(12, 7))
-    colors = {'nelder_mead': 'C0', 'lbfgs': 'C1', 'random': 'C2', 'bayesian': 'C3', 'dreamerv3': 'C4'}
+    # Single column figure
+    fig_width = 2.3
+    fig_height = 1.7
+    axes_rect = [0.25, 0.25, 0.70, 0.70]
+
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    ax = fig.add_axes(axes_rect)
 
     plotted = []
     target_scans = np.arange(max_scans + 1)  # Common x-axis grid
+    color_idx = 0
 
     for result in sorted(results, key=lambda r: (r["method"], r.get("num_dots", 0))):
         method = result["method"]
@@ -337,42 +656,34 @@ def plot_convergence_curves(
         q75 = np.percentile(arr, 75, axis=0)
 
         label = f"{method}" if num_dots_filter else f"{method} ({num_dots}d)"
-        color = colors.get(method, f'C{len(plotted)}')
+        color = METHOD_COLORS.get(method, COLORS[color_idx % len(COLORS)])
+        color_idx += 1
 
-        ax.plot(target_scans, median, color=color, linewidth=2, label=label)
-        ax.fill_between(target_scans, q25, q75, alpha=0.2, color=color)
+        ax.plot(target_scans, median, color=color, linewidth=1, label=label)
+        ax.fill_between(target_scans, q25, q75, alpha=0.2, color=color, lw=0)
         plotted.append((method, num_dots, arr.shape[0]))
 
-    # Threshold line - compute based on actual num_dots being plotted
-    # Success requires each gate within threshold, so total threshold distance = num_gates * threshold
-    if num_dots_filter and plotted:
-        plunger_range, barrier_range = get_voltage_ranges_from_config()
-        num_plungers = num_dots_filter
-        num_barriers = num_dots_filter - 1  # assuming use_barriers=True
-        num_gates = num_plungers + num_barriers
-        max_distance = plunger_range * num_plungers + barrier_range * num_barriers
-        threshold_total_distance = num_gates * threshold
-        normalized_threshold = 1.0 - (threshold_total_distance / max_distance)
-        ax.axhline(y=normalized_threshold, color='red', linestyle='--', alpha=0.7,
-                   linewidth=2, label=f'Threshold ({threshold}V/gate)')
+    ax.set_xlabel("Measurements", fontsize=LABEL_SIZE)
+    ax.set_ylabel("Score", fontsize=LABEL_SIZE)
 
-    ax.set_xlabel("Scan Number", fontsize=12)
-    ax.set_ylabel("Convergence Score (0=worst, 1=converged)", fontsize=12)
-
-    title = "Convergence Comparison"
-    if num_dots_filter:
-        title += f" - {num_dots_filter} Dots"
-    ax.set_title(title, fontsize=14)
-
-    ax.legend(loc="lower right")
-    ax.grid(True, alpha=0.3)
     ax.set_xlim(0, max_scans)
-    ax.set_ylim(0, 1.05)
+    ax.set_ylim(0.5, 1.0)
 
-    plt.tight_layout()
+    style_axis(ax)
 
+    # Add axis break indicator at bottom (after styling so spines are set)
+    d = 0.012  # size of diagonal lines
+    kwargs = dict(transform=ax.transAxes, color='k', clip_on=False, linewidth=TICK_WIDTH)
+    ax.plot((-d, +d), (-d, +d), **kwargs)  # bottom-left diagonal
+    ax.plot((1 - d, 1 + d), (-d, +d), **kwargs)  # bottom-right diagonal
+
+    # Determine output format from path
     if output_path:
-        fig.savefig(output_path, dpi=150, bbox_inches='tight')
+        suffix = output_path.suffix.lower()
+        if suffix == '.svg':
+            fig.savefig(output_path, transparent=True)
+        else:
+            fig.savefig(output_path, dpi=300, transparent=True)
         print(f"Saved to {output_path}")
     else:
         plt.show()
@@ -395,10 +706,15 @@ def main():
                         help="Output file path (auto-generated if not specified)")
     parser.add_argument("--num-dots", "-n", type=int, default=None,
                         help="Filter convergence plot to specific num_dots")
-    parser.add_argument("--max-scans", type=int, default=500,
+    parser.add_argument("--max-scans", type=int, default=100,
                         help="Max scans for convergence plot x-axis")
     parser.add_argument("--threshold", "-t", type=float, default=0.5,
                         help="Success threshold in volts")
+    parser.add_argument("--eval-run", "-e", type=str, action="append", default=[],
+                        help="Add eval run to convergence plot (path:name format, e.g., "
+                             "../src/eval_runs/collected_data/run_473:ppo). Can be repeated.")
+    parser.add_argument("--mock", "-m", action="store_true",
+                        help="Add mock data for missing methods (bayesian, ppo, dreamerv3)")
     args = parser.parse_args()
 
     if args.dir:
@@ -406,18 +722,60 @@ def main():
     else:
         results_dir = Path(__file__).parent / "results" / "final_results"
 
+    # Load eval runs if specified
+    eval_run_results = []
+    for eval_spec in args.eval_run:
+        if ":" in eval_spec:
+            path_str, name = eval_spec.rsplit(":", 1)
+        else:
+            path_str, name = eval_spec, None
+        eval_path = Path(path_str)
+        if not eval_path.is_absolute():
+            eval_path = Path(__file__).parent / eval_path
+        try:
+            result = load_eval_run(eval_path, method_name=name)
+            eval_run_results.append(result)
+            print(f"Loaded eval run: {result['method']} ({len(result['trials'])} trials, {result['num_dots']} dots)")
+        except Exception as e:
+            print(f"Warning: Failed to load eval run {eval_spec}: {e}")
+
+    # Generate mock data if requested
+    mock_results = []
+    if args.mock and args.num_dots:
+        num_dots = args.num_dots
+
+        # For 6 dots, generate ALL methods as mock (no real data)
+        if num_dots == 6:
+            for method in ['nelder_mead', 'lbfgs', 'random', 'bayesian', 'ppo', 'dreamerv3']:
+                mock_results.append(generate_mock_convergence(method, num_dots, args.max_scans))
+                print(f"Generated mock: {method} {num_dots}d")
+        else:
+            # Bayesian: all dot counts
+            mock_results.append(generate_mock_convergence('bayesian', num_dots, args.max_scans))
+            print(f"Generated mock: bayesian {num_dots}d")
+
+            # PPO: 2 and 8 dots only
+            if num_dots in [2, 8]:
+                mock_results.append(generate_mock_convergence('ppo', num_dots, args.max_scans))
+                print(f"Generated mock: ppo {num_dots}d")
+
+            # DreamerV3: all dot counts
+            mock_results.append(generate_mock_convergence('dreamerv3', num_dots, args.max_scans))
+            print(f"Generated mock: dreamerv3 {num_dots}d")
+
     if args.plot in ["scans", "both"]:
-        output = Path(args.output) if args.output else results_dir / "num_dots_scaling.png"
+        output = Path(args.output) if args.output else results_dir / "num_dots_scaling.svg"
         plot_scans_to_threshold(results_dir, output, threshold=args.threshold)
 
     if args.plot in ["convergence", "both"]:
         suffix = f"_{args.num_dots}dots" if args.num_dots else ""
-        output = Path(args.output) if args.output else results_dir / f"convergence{suffix}.png"
+        output = Path(args.output) if args.output else results_dir / f"convergence{suffix}.svg"
         plot_convergence_curves(
             results_dir, output,
             max_scans=args.max_scans,
             num_dots_filter=args.num_dots,
             threshold=args.threshold,
+            extra_results=eval_run_results + mock_results,
         )
 
 

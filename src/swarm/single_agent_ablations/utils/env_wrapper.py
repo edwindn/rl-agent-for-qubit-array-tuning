@@ -42,6 +42,8 @@ class SingleAgentEnvWrapper(gym.Env):
         num_dots_override=None,
         use_barriers=True,
         distance_data_dir=None,
+        bypass_barriers=False,
+        single_gate_mode=False,
     ):
         """
         Initialize single-agent wrapper.
@@ -50,19 +52,47 @@ class SingleAgentEnvWrapper(gym.Env):
             training: Whether in training mode
             config_path: Path to environment config yaml file
             num_dots_override: If provided, overrides num_dots from config
-            use_barriers: Whether to include barrier voltages in action/observation space
+            use_barriers: Whether to include barrier voltages in action/observation space.
+                          Note: config file value takes precedence if specified.
             distance_data_dir: Optional path to directory for saving distance data
+            bypass_barriers: TEMPORARY DEBUG FLAG - If True, agent only outputs gate voltages
+                            and barriers are automatically set to ground truth. Easy to remove later.
+            single_gate_mode: TEMPORARY DEBUG FLAG - If True, agent only controls ONE gate (index 0),
+                             all other gates are set to ground truth. Simplest possible task.
         """
         super().__init__()
         self.base_env = QuantumDeviceEnv(training=training, config_path=config_path, num_dots=num_dots_override)
 
-        self.use_barriers = use_barriers
+        # Config file takes precedence for use_barriers
+        self.use_barriers = self.base_env.config.get('simulator', {}).get('use_barriers', use_barriers)
+
+        # TEMPORARY: bypass_barriers mode - agent only controls gates, barriers auto-set to ground truth
+        # Config file takes precedence
+        self.bypass_barriers = self.base_env.config.get('simulator', {}).get('bypass_barriers', bypass_barriers)
+        if self.bypass_barriers:
+            print("[DEBUG] bypass_barriers=True: Agent only controls gates, barriers set to ground truth")
+
+        # TEMPORARY: single_gate_mode - agent only controls ONE gate, all others set to ground truth
+        # Config file takes precedence
+        self.single_gate_mode = self.base_env.config.get('simulator', {}).get('single_gate_mode', single_gate_mode)
+        if self.single_gate_mode:
+            print("[DEBUG] single_gate_mode=True: Agent only controls gate 0, all other gates set to ground truth")
+
         self.distance_data_dir = distance_data_dir
         self.distance_history = None
         self.num_gates = self.base_env.num_dots
         self.num_barriers = self.base_env.num_dots - 1
         self.num_channels = self.num_gates - 1  # N-1 CSD scans
-        self.num_actions = self.num_gates + (self.num_barriers if use_barriers else 0)
+
+        # Determine number of actions based on mode
+        if self.single_gate_mode:
+            # Agent only controls ONE gate
+            self.num_actions = 1
+        elif self.bypass_barriers:
+            # Agent controls all gates (barriers auto-set)
+            self.num_actions = self.num_gates
+        else:
+            self.num_actions = self.num_gates + (self.num_barriers if self.use_barriers else 0)
 
         self.plunger_ids = [f"plunger_{i}" for i in range(self.num_gates)]
         self.barrier_ids = [f"barrier_{i}" for i in range(self.num_barriers)]
@@ -108,12 +138,24 @@ class SingleAgentEnvWrapper(gym.Env):
         Returns:
             Dict with 'image' and 'voltage' keys
         """
-        voltages = [base_obs['obs_gate_voltages']]
-        if self.use_barriers:
-            voltages.append(base_obs['obs_barrier_voltages'])
+        if self.single_gate_mode:
+            # Only include gate 0's voltage
+            voltage = np.array([base_obs['obs_gate_voltages'][0]], dtype=np.float32)
+        elif self.bypass_barriers:
+            # Only gate voltages
+            voltage = base_obs['obs_gate_voltages'].astype(np.float32)
+        elif self.use_barriers:
+            # Gate + barrier voltages
+            voltage = np.concatenate([
+                base_obs['obs_gate_voltages'],
+                base_obs['obs_barrier_voltages']
+            ]).astype(np.float32)
+        else:
+            voltage = base_obs['obs_gate_voltages'].astype(np.float32)
+
         return {
             'image': base_obs['image'].astype(np.float32),
-            'voltage': np.concatenate(voltages).astype(np.float32),
+            'voltage': voltage,
         }
 
     def reset(self, *, seed=None, options=None):
@@ -151,7 +193,35 @@ class SingleAgentEnvWrapper(gym.Env):
             )
 
         # Split action into gate and barrier components
-        if self.use_barriers:
+        if self.single_gate_mode:
+            # TEMPORARY: Agent only controls gate 0, all others set to ground truth
+            # Get gate ground truth
+            gate_gt = self.base_env.device_state["gate_ground_truth"]
+            plunger_min = self.base_env.plunger_min
+            plunger_max = self.base_env.plunger_max
+            # Normalize ground truth to [-1, 1] action space
+            gate_gt_normalized = 2.0 * (gate_gt - plunger_min) / (plunger_max - plunger_min) - 1.0
+            # Agent controls gate 0, rest are ground truth
+            gate_action = gate_gt_normalized.copy().astype(np.float32)
+            gate_action[0] = action[0]  # Only gate 0 is controlled by agent
+
+            # Barriers also set to ground truth
+            barrier_gt = self.base_env.device_state["barrier_ground_truth"]
+            barrier_min = self.base_env.barrier_min
+            barrier_max = self.base_env.barrier_max
+            barrier_action = 2.0 * (barrier_gt - barrier_min) / (barrier_max - barrier_min) - 1.0
+            barrier_action = barrier_action.astype(np.float32)
+        elif self.bypass_barriers:
+            # TEMPORARY: Agent only controls gates, barriers set to ground truth
+            gate_action = action  # All actions are gate actions
+            # Get barrier ground truth from base_env device_state (normalized to [-1, 1])
+            barrier_gt = self.base_env.device_state["barrier_ground_truth"]
+            barrier_min = self.base_env.barrier_min
+            barrier_max = self.base_env.barrier_max
+            # Normalize ground truth to [-1, 1] action space
+            barrier_action = 2.0 * (barrier_gt - barrier_min) / (barrier_max - barrier_min) - 1.0
+            barrier_action = barrier_action.astype(np.float32)
+        elif self.use_barriers:
             gate_action = action[:self.num_gates]
             barrier_action = action[self.num_gates:]
         else:

@@ -104,6 +104,13 @@ def parse_arguments():
         help='Load training_config.yaml and env_config.yaml from checkpoint directory instead of default config files'
     )
 
+    parser.add_argument(
+        '--num-dots',
+        type=int,
+        default=None,
+        help='Number of quantum dots (overrides env_config.yaml)'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -115,8 +122,13 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None):
-    """Create single-agent quantum environment with JAX safety."""
+def create_env(config=None, env_config_path=None, distance_data_dir=None, num_dots_override=None):
+    """Create multi-agent wrapped single-agent environment with JAX safety.
+
+    Note: We wrap the single-agent env as multi-agent because RLlib's
+    single-agent PPO code path has issues with continuous action spaces.
+    Using multi-agent config with a single agent uses the correct code path.
+    """
     import os
     import jax
 
@@ -132,17 +144,21 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     except:
         pass
 
-    from swarm.single_agent_ablations.utils.env_wrapper import SingleAgentEnvWrapper
+    from swarm.single_agent_ablations.utils.multiagent_wrapper import SingleAsMultiAgentWrapper
 
-    # Wrap in single-agent env wrapper
+    # Default config path
     if env_config_path is None:
         env_config_path = str(Path(__file__).parent / "single_agent_env_config.yaml")
 
-    return SingleAgentEnvWrapper(
-        training=True,
-        config_path=env_config_path,
-        distance_data_dir=distance_data_dir,
-    )
+    # Create multi-agent wrapped environment
+    wrapper_config = {
+        "config_path": env_config_path,
+        "training": True,
+        "distance_data_dir": distance_data_dir,
+        "num_dots_override": num_dots_override,
+    }
+
+    return SingleAsMultiAgentWrapper(config=wrapper_config)
 
 
 def load_config(config_path=None, checkpoint_path=None):
@@ -276,6 +292,10 @@ def main():
         # Load env config directly from YAML (no GPU initialization needed on driver)
         env_config = load_env_config(checkpoint_path)
 
+        # Override num_dots if specified via command line
+        if args.num_dots is not None:
+            env_config['simulator']['num_dots'] = args.num_dots
+
         # Write env_config to a temporary file so workers can load it
         temp_env_config_path = None
         if checkpoint_path:
@@ -288,10 +308,15 @@ def main():
             temp_env_config_file.close()
             print(f"Written env config to temporary file: {temp_env_config_path}")
 
+        # Log num_dots override if specified
+        if args.num_dots is not None:
+            print(f"Overriding num_dots to: {args.num_dots}")
+
         create_env_fn = partial(
             create_env,
             env_config_path=temp_env_config_path,
             distance_data_dir=distance_data_dir,
+            num_dots_override=args.num_dots,
         )
         register_env("qarray_singleagent_env", create_env_fn)
 
@@ -361,10 +386,19 @@ def main():
 
         learner_connector = None
 
+        # Policy mapping function for multi-agent setup
+        def policy_mapping_fn(agent_id, episode, **kwargs):
+            return "agent_0"
+
         algo_config = (
             algo_config_builder()
             .environment(
                 env="qarray_singleagent_env",
+            )
+            .multi_agent(
+                policy_mapping_fn=policy_mapping_fn,
+                policies={"agent_0"},
+                policies_to_train=["agent_0"],
             )
             .rl_module(
                 rl_module_spec=rl_module_spec,

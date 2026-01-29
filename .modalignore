@@ -39,10 +39,12 @@ build/
 
 # Logs and outputs
 *.log
+*.out
 logs/
 runs/
 wandb/
 tensorboard_logs/
+weights_symmetric_150k/
 
 # Ray session data
 /tmp/ray/
@@ -75,6 +77,14 @@ checkpoints/
 *.ckpt
 
 # Large data directories
+data/
+symmetric_dataset_150k/
+logs/
+artifacts/
+collected_data/
+scan_captures/
+gif_captures/
+rollout_scans/
 src/swarm/qarray_dataset
 src/swarm/artifacts
 src/swarm/wandb
@@ -83,8 +93,19 @@ src/swarm/training/data
 src/swarm/training/checkpoints
 src/swarm/capacitance_model/wandb
 src/swarm/capacitance_model/weights
+src/swarm/capacitance_model/symmetric_weights_separate
+src/swarm/capacitance_model/symmetric_weights_impala
+src/swarm/capacitance_model/mobilenet_final_epoch_8
 src/swarm/environment/gui
-benchmarks
+weights_symmetric_150k_impala/
+benchmarks/.venv
+benchmarks/checkpoints
+benchmarks/wandb
+benchmarks/dreamer
+benchmarks/single_agent
+benchmarks/*.log
+benchmarks/results
+benchmarks/20*
 checkpoints
 wandb
 

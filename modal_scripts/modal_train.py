@@ -33,20 +33,20 @@ if modalignore_path.exists():
 # Only rebuilds if requirements.txt changes
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("uv")
+    .pip_install("uv", "wandb")
     .add_local_dir(
         str(project_root),
         remote_path="/root/quantum-rl-project",
         ignore=ignore_patterns,
-        copy=True
+        copy=True,
     )
+    .env({"MODAL_MOUNT_TIMEOUT": "600"})  # 10 min mount timeout
     .run_commands(
         "cd /root/quantum-rl-project && uv sync --frozen"
     )
     .add_local_file(
-        str(project_root / "src/swarm/capacitance_model/symmetric_weights/mobilenet_barrier_weights.pth"),
-        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/symmetric_weights/mobilenet_barrier_weights.pth"
-        #remote_path="/root/quantum-rl-project/src/impala_barrier_weights.pth"
+        str(project_root / "src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
+        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
     )
 )
 
@@ -62,25 +62,55 @@ app = modal.App("quantum-rl-training")
     timeout=86400,  # 24 hour timeout
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
-def train():
-    """Run the training script inside Modal container."""
+def train(checkpoint_artifact: str = None, config_path: str = "src/swarm/training/configs/ppo_impala.yaml"):
+    """Run the training script inside Modal container.
+
+    Args:
+        checkpoint_artifact: Optional wandb artifact path to resume from
+                            e.g. 'rl_agents_for_tuning/RLModel/rl_checkpoint_best:v3510'
+        config_path: Path to config file relative to project root
+    """
     import subprocess
     import os
 
     # Change to project directory
     os.chdir("/root/quantum-rl-project")
 
+    # Build command
+    cmd = ["uv", "run", "python", "src/swarm/training/train.py", "--config", config_path]
+
+    # If checkpoint artifact specified, download it first
+    if checkpoint_artifact:
+        import wandb
+        print(f"Downloading checkpoint artifact: {checkpoint_artifact}")
+        run = wandb.init(project="RLModel", entity="rl_agents_for_tuning")
+        artifact = run.use_artifact(checkpoint_artifact, type='model_checkpoint')
+        artifact_dir = artifact.download()
+        wandb.finish()
+        print(f"Checkpoint downloaded to: {artifact_dir}")
+
+        # Add checkpoint loading argument
+        cmd.extend(["--load-checkpoint", artifact_dir])
+
     # Run the training script using uv to use the virtual environment
-    # You can add any command-line arguments here
-    subprocess.run(
-        ["uv", "run", "python", "src/swarm/training/train.py", "--config", "configs/ppo_impala.yaml"],
-        check=True
-    )
+    subprocess.run(cmd, check=True)
 
 @app.local_entrypoint()
-def main():
-    """Entry point when running 'modal run modal_train.py'"""
+def main(
+    checkpoint: str = None,
+    config: str = "src/swarm/training/configs/ppo_impala.yaml",
+):
+    """Entry point when running 'modal run modal_train.py'
+
+    Args:
+        checkpoint: Optional wandb artifact path to resume from
+                   e.g. 'rl_agents_for_tuning/RLModel/rl_checkpoint_best:v3510'
+        config: Path to config file relative to project root
+    """
     print("Starting quantum device RL training on Modal...")
     print("This will run train.py on cloud GPUs")
-    train.remote()
+    print(f"Using config: {config}")
+    if checkpoint:
+        print(f"Resuming from checkpoint: {checkpoint}")
+    train.remote(checkpoint_artifact=checkpoint, config_path=config)
     print("Training completed!")

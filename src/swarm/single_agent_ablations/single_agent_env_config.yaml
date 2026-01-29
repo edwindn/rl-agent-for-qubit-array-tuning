@@ -9,6 +9,13 @@ simulator:
 
   use_barriers: true
 
+  # TEMPORARY DEBUG: If true, agent only controls gates and barriers are auto-set to ground truth
+  bypass_barriers: false
+
+  # TEMPORARY DEBUG: If true, agent only controls ONE gate (index 0), all other gates set to ground truth
+  # This is the simplest possible task - just learn to control a single voltage
+  single_gate_mode: false
+
   use_deltas: false # Whether the plunger agents' output is a ΔV or V
   
   delta_max: 5.0 #only used if use_deltas is true
@@ -50,7 +57,7 @@ reward:
 
 
 capacitance_model:
-  update_method: null  # Options: null, "perfect", "fake", "ema", "bayesian", "kriging", "kalman"
+  update_method: "kalman"  # Options: null, "perfect", "fake", "ema", "bayesian", "kriging", "kalman"
   nearest_neighbour: false # set to true if the ML model outputs two values per prediction (gate-dot RL and LR couplings in this order)
   # note that the perfect method will also remove any cross-talk with and between the barriers
   # Kalman filter settings (only used when update_method: "kalman")

@@ -368,15 +368,20 @@ def main():
 
         # Handle voltage parsing to memory manually
         use_deltas = env_config['simulator']['use_deltas']
-        memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
-        has_lstm = memory_layer == 'lstm'
-        has_transformer = memory_layer == 'transformer'
+        plunger_memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
+        barrier_memory_layer = config['neural_networks']['barrier_policy']['backbone'].get('memory_layer')
+        has_lstm = plunger_memory_layer == 'lstm' or barrier_memory_layer == 'lstm'
+        has_transformer = plunger_memory_layer == 'transformer' or barrier_memory_layer == 'transformer'
 
         # Determine if we need frame stacking for temporal models (transformer)
         use_frame_stacking = has_transformer
         num_frames = 1
         if use_frame_stacking:
-            num_frames = config['neural_networks']['plunger_policy']['backbone']['transformer']['max_seq_len']
+            # Get max_seq_len from whichever policy uses transformer
+            if plunger_memory_layer == 'transformer':
+                num_frames = config['neural_networks']['plunger_policy']['backbone']['transformer']['max_seq_len']
+            elif barrier_memory_layer == 'transformer':
+                num_frames = config['neural_networks']['barrier_policy']['backbone']['transformer']['max_seq_len']
             print(f"\n[Frame Stacking] Enabled with {num_frames} frames for transformer\n")
 
         # Build env-to-module connector

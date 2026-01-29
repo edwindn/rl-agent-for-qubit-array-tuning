@@ -698,7 +698,7 @@ def main():
     parser.add_argument(
         "--max_scans",
         type=int,
-        default=None,
+        default=500,
         help="Maximum total scans/function evaluations per trial",
     )
     parser.add_argument(
