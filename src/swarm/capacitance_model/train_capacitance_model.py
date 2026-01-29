@@ -724,7 +724,7 @@ def train_func(config: dict):
 def main():
     parser = argparse.ArgumentParser(description='Train Capacitance Prediction Model')
     parser.add_argument('--root_data_dir', type=str, 
-                       default='/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/qarray_dataset/',
+                       default='src/swarm/qarray_dataset/',
                        help='Path to dataset directory')
     parser.add_argument('--data_dirs', type=str, nargs='+', default=['dataset'],
                        help='List of data directories')

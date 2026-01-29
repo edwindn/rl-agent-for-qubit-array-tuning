@@ -58,7 +58,7 @@ reward:
 
 
 capacitance_model:
-  update_method: "kalman"  # Options: null, "perfect", "fake", "ema", "bayesian", "kriging", "kalman"
+  update_method: "kalman"  # Options: null, "perfect", "fake", "kalman", "direct"
   nearest_neighbour: false # set to true if the ML model outputs two values per prediction (gate-dot RL and LR couplings in this order)
   # note that the perfect method will also remove any cross-talk with and between the barriers
   # Kalman filter settings (only used when update_method: "kalman")

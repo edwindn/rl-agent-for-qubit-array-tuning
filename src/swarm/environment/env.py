@@ -589,14 +589,6 @@ class QuantumDeviceEnv(gym.Env):
 
         # errors = values_np - np.absolute(true_values)
 
-        # # Log values and logvars to capacitance_values.log
-        # # Use absolute path to avoid Ray working directory issues
-        # log_file_path = Path("/home/edn/rl-agent-for-qubit-array-tuning/src/swarm/inference/capacitance_values.log")
-
-        # with open(log_file_path, "a") as f:
-        #     f.write(f"values: {values_np.tolist()}\t\t\t")
-        #     f.write(f"errors: {errors.tolist()}\t\t\t")
-        #     f.write(f"log_vars: {log_vars_np.tolist()}\n")
 
         update_method = self.config["capacitance_model"]["update_method"]
 
