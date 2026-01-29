@@ -2,7 +2,6 @@
 name = "swarm-rl"
 version = "0.1.0"
 description = "Reinforcement learning agents for quantum device tuning"
-#authors = [{name = "Rahul, Edwin", email = "rahul.marchand@new.ox.ac.uk, edwin.denicolo@merton.ox.ac.uk"}]
 requires-python = ">=3.11,<3.12"
 dependencies = [
     # QArray
