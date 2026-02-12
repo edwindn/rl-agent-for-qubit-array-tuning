@@ -22,14 +22,53 @@ from scipy import stats
 import colorcet as cc
 from matplotlib.colors import ListedColormap
 
-def calibration_plot(all_predictions, all_targets, n_bins=10, save_path='calibration_plot.svg'):
+
+def get_vgm_elements_for_channel(channel_idx: int, vgm_matrix: np.ndarray, num_dots: int) -> np.ndarray:
     """
-    Creates calibration plot comparing predicted vs observed errors.
-    Perfect calibration = diagonal line.
+    Extract VGM elements corresponding to a channel's capacitance predictions.
+
+    For channel i (scanning dots i and i+1), model predicts [NN, NNN_right, NNN_left]:
+    - NN: VGM[i, i+1] - cross-coupling between dot i and plunger i+1
+    - NNN_right: VGM[i, i+2] (0 if out of bounds)
+    - NNN_left: VGM[i+1, i-1] (0 if out of bounds)
+
+    Args:
+        channel_idx: Index of barrier channel (0 to num_dots-2)
+        vgm_matrix: Virtual gate matrix of shape (num_dots+1, num_dots+1) or (num_dots, num_dots)
+        num_dots: Number of quantum dots
+
+    Returns:
+        np.ndarray of shape (3,): [nn, nnn_right, nnn_left] VGM elements
+    """
+    i = channel_idx
+
+    # NN: VGM[i, i+1]
+    nn = float(vgm_matrix[i, i + 1]) if i + 1 < vgm_matrix.shape[1] else 0.0
+
+    # NNN_right: VGM[i, i+2]
+    if i + 2 < vgm_matrix.shape[1]:
+        nnn_right = float(vgm_matrix[i, i + 2])
+    else:
+        nnn_right = 0.0
+
+    # NNN_left: VGM[i+1, i-1]
+    if i - 1 >= 0 and i + 1 < vgm_matrix.shape[0]:
+        nnn_left = float(vgm_matrix[i + 1, i - 1])
+    else:
+        nnn_left = 0.0
+
+    return np.array([nn, nnn_right, nnn_left], dtype=np.float32)
+
+
+def calibration_plot(all_predictions, all_targets, metadata=None, n_bins=10, save_path='calibration_plot.svg'):
+    """
+    Creates calibration plot: X = model variance (confidence), Y = mean prediction error.
+    Points colored by step in episode (early=blue → late=red) to show tuning progression.
 
     Args:
         all_predictions: List of prediction dicts with 'values', 'log_vars', 'uncertainties'
         all_targets: List of target arrays corresponding to each prediction
+        metadata: List of dicts with 'episode', 'step', 'channel' for each sample
         n_bins: Number of bins for calibration plot
         save_path: Path to save the plot
     """
@@ -45,8 +84,9 @@ def calibration_plot(all_predictions, all_targets, n_bins=10, save_path='calibra
     pred_values = []
     pred_uncertainties = []
     actual_errors = []
+    step_positions = []  # Track step in episode for coloring
 
-    for pred_dict, target in zip(all_predictions, all_targets):
+    for i, (pred_dict, target) in enumerate(zip(all_predictions, all_targets)):
         values = pred_dict['values']
         uncertainties = pred_dict['uncertainties']
         errors = np.abs(values - target)
@@ -55,10 +95,24 @@ def calibration_plot(all_predictions, all_targets, n_bins=10, save_path='calibra
         pred_uncertainties.extend(uncertainties)
         actual_errors.extend(errors)
 
+        # Get step position for coloring (if metadata available)
+        if metadata is not None and i < len(metadata):
+            step = metadata[i].get('step', 0)
+            step_positions.extend([step] * len(values))
+        else:
+            step_positions.extend([i] * len(values))
+
     pred_uncertainties = np.array(pred_uncertainties)
     actual_errors = np.array(actual_errors)
+    step_positions = np.array(step_positions)
 
-    # Sort by predicted uncertainty
+    # Normalize step positions for coloring (0 = early, 1 = late)
+    if step_positions.max() > step_positions.min():
+        normalized_steps = (step_positions - step_positions.min()) / (step_positions.max() - step_positions.min())
+    else:
+        normalized_steps = np.zeros_like(step_positions, dtype=float)
+
+    # Sort by predicted uncertainty for binning
     sorted_indices = np.argsort(pred_uncertainties)
     sorted_uncertainties = pred_uncertainties[sorted_indices]
     sorted_errors = actual_errors[sorted_indices]
@@ -84,34 +138,32 @@ def calibration_plot(all_predictions, all_targets, n_bins=10, save_path='calibra
 
     # Single subplot figure
     fig_width = 3.25
-    fig_height = 3.25 #2.4375
+    fig_height = 3.25
     axes_rect = [0.16, 0.15, 0.8, 0.75]
 
     fig = plt.figure(figsize=(fig_width, fig_height))
     ax = fig.add_axes(axes_rect)
 
-    # Individual data points
-    n = len(pred_uncertainties)
-    indices = np.arange(n)
-    normalized_indices = indices / (n - 1) if n > 1 else np.array([0.5])
-    colors = cmap(normalized_indices)
-    ax.scatter(pred_uncertainties, actual_errors, alpha=0.3, s=1, color=colors)
+    # Individual data points colored by step in episode
+    colors = cmap(normalized_steps)
+    ax.scatter(pred_uncertainties, actual_errors, alpha=0.3, s=1, c=colors)
 
     x0, y0, width, height = axes_rect[0], axes_rect[1], axes_rect[2], axes_rect[3]
-    cax = fig.add_axes([x0, y0 + height + 0.02, width * 0.5, height * 0.03])  # [x, y, width, height]
+    cax = fig.add_axes([x0, y0 + height + 0.02, width * 0.5, height * 0.03])
     cbar = fig.colorbar(plt.cm.ScalarMappable(cmap=cmap), cax=cax, orientation='horizontal')
-    cbar.set_ticks([])
-    cbar.set_label('Scan number', fontsize=label_size, labelpad=-15)
+    cbar.set_ticks([0, 1])
+    cbar.set_ticklabels(['Early', 'Late'])
+    cbar.set_label('Step in episode', fontsize=label_size, labelpad=-15)
 
     # Binned averages
-    ax.scatter(predicted_uncertainties, observed_errors, marker='s', s=10, color='k', ec='black')
+    ax.scatter(predicted_uncertainties, observed_errors, marker='s', s=10, color='k', ec='black', zorder=5)
 
     # Perfect calibration line
     max_val = max(max(predicted_uncertainties), max(observed_errors))
     ax.plot([0, max_val], [0, max_val], '--', color='k', linewidth=1)
 
-    ax.set_xlabel(r'$\sigma^2$ (arb.)', fontsize=label_size)
-    ax.set_ylabel(r'$\bar{\mu}_{\mathrm{error}}$ (arb.)', fontsize=label_size)
+    ax.set_xlabel(r'Model Variance $\sigma^2$', fontsize=label_size)
+    ax.set_ylabel(r'Mean Prediction Error', fontsize=label_size)
 
     # Spine and tick styling
     for spine in ['top', 'bottom', 'left', 'right']:
@@ -125,9 +177,8 @@ def calibration_plot(all_predictions, all_targets, n_bins=10, save_path='calibra
     calib_error = np.mean(np.abs(np.array(predicted_uncertainties) - np.array(observed_errors)))
 
     ax.set_xlim(0, max_val)
-    ax.set_ylim(0, 1)
+    ax.set_ylim(0, max(1, max(actual_errors) * 1.1))
 
-    #plt.show()
     plt.savefig(save_path, transparent=True, format="svg")
     plt.close()
     print(f"Calibration plot saved as '{save_path}'")
@@ -386,9 +437,39 @@ def load_inference_data(
             print(f"Warning: No CGD found for episode {episode_num}, skipping")
             continue
 
-        cgd_matrix = np.load(cgd_path)
-        num_dots = cgd_matrix.shape[0]
-        num_channels = num_dots - 1  # Number of scan channels
+        cgd_matrix_full = np.load(cgd_path)
+
+        # Load VGM (virtual gate matrix estimate) for this episode
+        vgm_path = cap_path / f"vgm_estimated_{episode_num:04d}.npy"
+        vgm_matrix = None
+        if vgm_path.exists():
+            vgm_matrix = np.load(vgm_path)
+
+        # Load Cdd_inv (inverse of dot-dot capacitance) for this episode
+        cdd_inv_path = cap_path / f"cdd_inv_{episode_num:04d}.npy"
+        cdd_inv_matrix = None
+        if cdd_inv_path.exists():
+            cdd_inv_matrix = np.load(cdd_inv_path)
+
+        # Handle CGD with barriers: shape (num_dots+sensor, num_plungers+barriers+sensor)
+        # Extract plunger-only portion for capacitance model comparison
+        num_rows = cgd_matrix_full.shape[0]
+        num_cols = cgd_matrix_full.shape[1]
+
+        # Detect if barriers are present (more columns than rows+1)
+        has_barriers = num_cols > num_rows + 1
+        if has_barriers:
+            # For N dots with barriers: shape is (N+1, 2N+2) where sensor is last row
+            # Extract: remove sensor row, keep first N+1 columns (plungers + sensor gate)
+            num_dots = num_rows - 1  # Exclude sensor row from dot count
+            num_plungers = num_dots  # One plunger per dot
+            # Extract plunger columns + sensor column: first num_dots columns + last column
+            cgd_matrix = cgd_matrix_full[:num_dots, :num_dots + 1]  # (num_dots, num_dots+1)
+        else:
+            cgd_matrix = cgd_matrix_full
+            num_dots = cgd_matrix.shape[0]
+
+        num_channels = num_dots - 1  # Number of scan channels (barriers between dots)
 
         # Get step files (use .npy if available, otherwise skip)
         step_files = sorted(episode_dir.glob("step_*.npy"))
@@ -412,11 +493,54 @@ def load_inference_data(
             for channel_idx in range(min(num_channels, scans.shape[0])):
                 scan = scans[channel_idx]  # Shape: (H, W)
 
-                # Get target for this channel
-                if nearest_neighbours:
-                    target = get_nearest_targets(channel_idx, cgd_matrix, num_dots, has_sensor=True)
+                # Model sees virtualized scans taken with VGM-adjusted voltages
+                # The "effective" capacitance visible in scans is: Effective = Cdd_inv @ CGD @ VGM
+                # Compute effective capacitance as target
+                if vgm_matrix is not None and cdd_inv_matrix is not None:
+                    # Compute full effective matrix: Cdd_inv @ CGD @ VGM
+                    # Extract plunger portions for the dots
+                    cgd_plungers = cgd_matrix[:num_dots, :num_dots]  # (num_dots, num_dots)
+                    vgm_plungers = vgm_matrix[:num_dots, :num_dots]  # (num_dots, num_dots)
+                    cdd_inv_plungers = cdd_inv_matrix[:num_dots, :num_dots]  # (num_dots, num_dots)
+
+                    # Correct formula: Effective = Cdd_inv @ CGD @ VGM
+                    effective = cdd_inv_plungers @ cgd_plungers @ vgm_plungers
+
+                    # Extract target elements for this channel (same indexing as get_targets_with_nnn)
+                    i = channel_idx
+                    if nearest_neighbours:
+                        target = np.array([
+                            effective[i, i + 1],
+                            effective[i + 1, i]
+                        ], dtype=np.float32)
+                    else:
+                        nn = effective[i, i + 1]
+                        nnn_right = effective[i, i + 2] if i + 2 < num_dots else 0.0
+                        nnn_left = effective[i + 1, i - 1] if i - 1 >= 0 else 0.0
+                        target = np.array([nn, nnn_right, nnn_left], dtype=np.float32)
+                elif vgm_matrix is not None:
+                    # Legacy fallback without Cdd_inv (old data format)
+                    cgd_plungers = cgd_matrix[:num_dots, :num_dots]
+                    vgm_plungers = vgm_matrix[:num_dots, :num_dots]
+                    effective = cgd_plungers @ vgm_plungers
+
+                    i = channel_idx
+                    if nearest_neighbours:
+                        target = np.array([
+                            effective[i, i + 1],
+                            effective[i + 1, i]
+                        ], dtype=np.float32)
+                    else:
+                        nn = effective[i, i + 1]
+                        nnn_right = effective[i, i + 2] if i + 2 < num_dots else 0.0
+                        nnn_left = effective[i + 1, i - 1] if i - 1 >= 0 else 0.0
+                        target = np.array([nn, nnn_right, nnn_left], dtype=np.float32)
                 else:
-                    target = get_targets_with_nnn(channel_idx, cgd_matrix, num_dots, has_sensor=True)
+                    # Fallback to raw CGD if no VGM
+                    if nearest_neighbours:
+                        target = get_nearest_targets(channel_idx, cgd_matrix, num_dots, has_sensor=True)
+                    else:
+                        target = get_targets_with_nnn(channel_idx, cgd_matrix, num_dots, has_sensor=True)
 
                 # Prepare image for model: (1, H, W) tensor
                 image = torch.from_numpy(scan.astype(np.float32)).unsqueeze(0)
@@ -489,6 +613,9 @@ def main():
 
     # Get transforms
     transform = get_transforms(normalize=True)
+
+    # Initialize metadata (will be populated in inference mode)
+    metadata = None
 
     if args.inference_data:
         # === INFERENCE MODE: Load from collected data ===
@@ -634,7 +761,7 @@ def main():
     print("="*60)
 
     calib_path = f'{args.output_prefix}_calibration_plot.svg'
-    calib_error = calibration_plot(all_predictions, all_targets, n_bins=15, save_path=calib_path)
+    calib_error = calibration_plot(all_predictions, all_targets, metadata=metadata, n_bins=15, save_path=calib_path)
     print(f"Expected Calibration Error: {calib_error:.6f}")
 
     # Run coverage test

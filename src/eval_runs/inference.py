@@ -38,7 +38,7 @@ from ray.tune.registry import register_env
 
 from swarm.voltage_model import create_rl_module_spec
 from swarm.training.train_utils import fix_optimizer_betas_after_checkpoint_load
-from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
+from swarm.environment.scan_saving_wrapper import ScanSavingWrapper
 
 
 def policy_mapping_fn(agent_id: str, episode=None, **kwargs) -> str:
@@ -50,18 +50,20 @@ def policy_mapping_fn(agent_id: str, episode=None, **kwargs) -> str:
     raise ValueError(f"Unknown agent type: {agent_id}")
 
 
-def create_env(config=None, env_config_path=None, distance_data_dir=None):
-    """Create multi-agent environment."""
+def create_env(config=None, env_config_path=None, distance_data_dir=None, scan_save_dir=None):
+    """Create multi-agent environment with scan saving."""
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.1")
     os.environ.setdefault("JAX_ENABLE_X64", "true")
 
-    return MultiAgentEnvWrapper(
+    return ScanSavingWrapper(
         training=False,
         return_voltage=True,
-        gif_config=None,
+        gif_config={"enabled": False, "save_dir": None, "fps": 2},
         distance_data_dir=distance_data_dir,
         env_config_path=env_config_path,
+        scan_save_dir=scan_save_dir,
+        scan_save_enabled=scan_save_dir is not None,
     )
 
 
@@ -125,6 +127,11 @@ def main():
     distance_data_dir.mkdir(parents=True, exist_ok=True)
     print(f"Distance data directory: {distance_data_dir}")
 
+    # Create scan save directory (sibling to collected_data)
+    scan_save_dir = Path(__file__).parent / "scan_captures"
+    scan_save_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Scan save directory: {scan_save_dir}")
+
     # Initialize wandb if requested
     wandb_run = None
     if args.upload_to_wandb:
@@ -154,6 +161,7 @@ def main():
             create_env,
             env_config_path=temp_env_config_path,
             distance_data_dir=str(distance_data_dir),
+            scan_save_dir=str(scan_save_dir),
         )
         register_env("qarray_multiagent_env", create_env_fn)
 

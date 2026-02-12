@@ -396,8 +396,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         # Save previous episode data before reset (capacitance matrices still available)
         if self.distance_history is not None:
             cgd_true = self.base_env.array.model.cgd_full
+            cdd_inv = self.base_env.array.model.cdd_inv_full
             vgm_estimated = self.base_env.device_state.get("virtual_gate_matrix", None)
-            self._save_agent_histories(self.distance_history, cgd_true, vgm_estimated)
+            self._save_agent_histories(self.distance_history, cgd_true, vgm_estimated, cdd_inv)
 
         global_obs, global_info = self.base_env.reset(seed=seed, options=options)
 
@@ -462,8 +463,9 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         if (terminated or truncated) and self.distance_history is not None:
             # Extract capacitance matrices
             cgd_true = self.base_env.array.model.cgd_full
+            cdd_inv = self.base_env.array.model.cdd_inv_full
             vgm_estimated = self.base_env.device_state.get("virtual_gate_matrix", None)
-            self._save_agent_histories(self.distance_history, cgd_true, vgm_estimated)
+            self._save_agent_histories(self.distance_history, cgd_true, vgm_estimated, cdd_inv)
             # Clear history after saving
             self.distance_history = {_id: [] for _id in self.all_agent_ids}
 
@@ -518,7 +520,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         )
 
 
-    def _save_agent_histories(self, history: dict, cgd_true=None, vgm_estimated=None):
+    def _save_agent_histories(self, history: dict, cgd_true=None, vgm_estimated=None, cdd_inv=None):
         assert set(history.keys()) == set(self.all_agent_ids), "Mismatch in agent ids in saved history"
 
         distance_data_path = Path(self.distance_data_dir)
@@ -556,7 +558,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             np.save(filepath, dists)
 
         # Save capacitance matrices if provided
-        if cgd_true is not None or vgm_estimated is not None:
+        if cgd_true is not None or vgm_estimated is not None or cdd_inv is not None:
             import os
             capacitance_folder = distance_data_path / "capacitance"
             capacitance_folder.mkdir(parents=True, exist_ok=True)
@@ -572,6 +574,10 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             if vgm_estimated is not None:
                 vgm_filepath = capacitance_folder / f"vgm_estimated_{next_count:04d}.npy"
                 np.save(vgm_filepath, vgm_estimated)
+
+            if cdd_inv is not None:
+                cdd_inv_filepath = capacitance_folder / f"cdd_inv_{next_count:04d}.npy"
+                np.save(cdd_inv_filepath, cdd_inv)
 
 
     # def _get_obs_images(self, obs: Dict[str, Union[np.ndarray, torch.tensor]]):
