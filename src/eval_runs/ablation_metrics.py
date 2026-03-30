@@ -242,7 +242,7 @@ def main() -> None:
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
     run_dirs = _iter_run_dirs(data_dir)
-    if not run_dirs and data_dir.is_dir() and data_dir.name.startswith("run"):
+    if not run_dirs and data_dir.is_dir():
         run_dirs = [data_dir]
 
     results: Dict[str, Dict[str, Dict[str, float]]] = {}

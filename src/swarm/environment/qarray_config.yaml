@@ -127,7 +127,7 @@ simulator:
   latched_model:
     use_sparse: False
     num_charge_states: 32
-    charge_state_batch_size: 1000
+    charge_state_batch_size: 500
 
   voltage_capacitance_model:
     # Voltage-dependent capacitance matrices

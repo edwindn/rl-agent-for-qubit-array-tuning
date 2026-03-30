@@ -77,7 +77,10 @@ checkpoints/
 # Large data directories
 src/swarm/single_agent_sac/data/*
 src/swarm/algo_ablations
-src/eval_runs
+src/eval_runs/collected_data
+src/eval_runs/data
+src/eval_runs/scan_captures
+src/eval_runs/wandb
 src/swarm/qarray_dataset
 src/swarm/artifacts
 src/swarm/wandb

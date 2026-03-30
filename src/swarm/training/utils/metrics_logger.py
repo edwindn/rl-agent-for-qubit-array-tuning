@@ -422,6 +422,23 @@ def log_to_wandb(result: Dict[str, Any], iteration: int, distance_data_dir: Opti
             plunger_folders = sorted([f for f in distance_data_path.iterdir() if f.is_dir() and f.name.startswith("plunger_")])
             barrier_folders = sorted([f for f in distance_data_path.iterdir() if f.is_dir() and f.name.startswith("barrier_")])
 
+            # Log plunger data as wandb artifacts
+            if plunger_folders:
+                artifact = wandb.Artifact(
+                    name=f"plunger_data_iter_{iteration+1}",
+                    type="plunger_distances",
+                    description=f"Plunger distance data for iteration {iteration+1}"
+                )
+
+                for agent_folder in plunger_folders:
+                    npy_files = glob.glob(str(agent_folder / "*.npy"))
+                    if npy_files:
+                        # Add all .npy files from this plunger folder
+                        for npy_file in npy_files:
+                            artifact.add_file(npy_file, name=f"{agent_folder.name}/{Path(npy_file).name}")
+
+                wandb.log_artifact(artifact)
+
             # Calculate mean distance magnitude for plunger agents
             plunger_distances_all = []
             if plunger_folders:

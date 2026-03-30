@@ -28,7 +28,9 @@ import torch
 import wandb
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.algorithms.sac import SACConfig
+from ray.rllib.callbacks.callbacks import RLlibCallback
 from ray.tune.registry import register_env
+from tqdm import tqdm
 
 # Set logging level to reduce verbosity
 logging.getLogger("ray").setLevel(logging.ERROR)
@@ -242,9 +244,12 @@ def main():
 
     use_wandb = not args.disable_wandb
 
-    # Resolve checkpoint path to absolute path
-    args.load_checkpoint = str(Path(args.load_checkpoint).resolve())
-    checkpoint_path = args.load_checkpoint
+    # Convert checkpoint path to absolute, but keep it relative to current working directory
+    # This allows it to work both locally and in Modal containers
+    checkpoint_path = Path(args.load_checkpoint)
+    if not checkpoint_path.is_absolute():
+        checkpoint_path = Path.cwd() / checkpoint_path
+    checkpoint_path = str(checkpoint_path)
 
     config = load_config(checkpoint_path)
 
@@ -256,7 +261,8 @@ def main():
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     checkpoint_name = Path(checkpoint_path).name
-    data_parent_dir = Path("/home/edn/rl-agent-for-qubit-array-tuning/src/eval_runs/collected_data")
+    # Use relative path from script location to work in both local and Modal
+    data_parent_dir = Path(__file__).parent / "collected_data"
     distance_data_dir = data_parent_dir / f"{timestamp}_{checkpoint_name}"
 
     data_parent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
@@ -465,10 +471,10 @@ def main():
                 rl_module_spec=rl_module_spec,
             )
             .env_runners(
-                num_env_runners=1,
+                num_env_runners=0,
                 rollout_fragment_length=config['rl_config']['env_runners']['rollout_fragment_length'],
                 sample_timeout_s=config['rl_config']['env_runners']['sample_timeout_s'],
-                num_gpus_per_env_runner=0.9,
+                num_gpus_per_env_runner=0.0,
                 env_to_module_connector=env_to_module_connector,
                 add_default_connectors_to_env_to_module_pipeline=True,  # Let Ray handle defaults
             )
@@ -490,12 +496,12 @@ def main():
                 evaluation_num_env_runners=1,
                 evaluation_duration=1,  # Run 1 episode per evaluation
                 evaluation_duration_unit="episodes",
-                evaluation_sample_timeout_s=1800,
+                evaluation_sample_timeout_s=config['rl_config']['env_runners']['evaluation_sample_timeout_s'],
                 evaluation_config={
                     "explore": True,  # Use stochastic actions
+                    "num_gpus_per_env_runner": 0.8,
                 },
             )
-            # .callbacks([custom_callbacks] if use_wandb else [])
         )
 
         # Set reward_scale on config for SAC learner to access
@@ -512,14 +518,14 @@ def main():
         checkpoint_loaded = False
         
         if args.load_checkpoint:
-            # Load specific checkpoint
-            checkpoint_path = Path(args.load_checkpoint).resolve()
-            if not checkpoint_path.exists():
+            # Load specific checkpoint (checkpoint_path already set correctly at line 249-252)
+            checkpoint_path_obj = Path(checkpoint_path)
+            if not checkpoint_path_obj.exists():
                 raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
 
             print(f"\nLoading checkpoint from: {checkpoint_path}")
             try:
-                algo.restore_from_path(str(checkpoint_path.absolute()))
+                algo.restore_from_path(checkpoint_path)
                 fix_optimizer_betas_after_checkpoint_load(algo)
 
                 # Extract iteration number from path

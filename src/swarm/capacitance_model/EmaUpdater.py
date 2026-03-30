@@ -55,9 +55,6 @@ class EmaCapacitancePredictor:
         # TODO prior config not being used for now
         print("WARNING: EMA prior not being used, prior means set to mean value of distribution (0.3)")
 
-        if not nn:
-            raise NotImplementedError("EMA capacitance update only supports nearest-neighbour coupling for now.")
-
         # Initialize matrices for capacitance estimates and ML prediction variances
         # indexed as (i_gate, i_dot)
         self.means = np.zeros((n_dots, n_dots))
@@ -68,94 +65,87 @@ class EmaCapacitancePredictor:
 
     def _initialize_matrices(self):
         """Initialize the capacitance matrices with default values."""
-        if self.nearest_neighbour:
-            # Set nearest neighbor couplings to 0.3 in the means matrix
-            for i in range(self.n_dots - 1):
-                self.means[i, i+1] = 0.3
-                self.means[i+1, i] = 0.3
+        # NNN mode: initialize both NN and NNN couplings
+        for i in range(self.n_dots - 1):
+            # Nearest neighbor couplings
+            self.means[i, i+1] = 0.3
+            self.means[i+1, i] = 0.3
+        for i in range(self.n_dots - 2):
+            # Next-nearest neighbor couplings
+            self.means[i, i+2] = 0.15
+            self.means[i+2, i] = 0.15
 
-    def direct_update(self, i: int, j: int, ml_estimate: float, ml_variance: float):
+    def direct_update(self, dot_pair: Tuple[int, int], ml_estimate: float):
         """
         Directly update a capacitance element with ML model output.
-        Uses exponential moving average if ema_length is specified, otherwise uses last value.
-        Automatically enforces symmetry by normalizing to upper triangular and mirroring.
+        Sets the capacitance value directly to the ML prediction.
+        Automatically enforces symmetry.
 
         Args:
-            i (int): gate index
-            j (int): dot index
+            dot_pair (Tuple[int, int]): Tuple of (i, j) dot indices
             ml_estimate (float): ML model's capacitance estimate
-            ml_variance (float): ML model's prediction variance
 
         Raises:
             ValueError: If indices are invalid
         """
-        # Validate inputs
-        if not (0 <= i < self.n_dots and 0 <= j < self.n_dots):
-            raise ValueError(f"Invalid indices: ({i}, {j}). Must be in range [0, {self.n_dots})")
+        i, j = dot_pair
 
-        # Normalize to upper triangular (canonical form: row < col)
-        row, col = min(i, j), max(i, j)
+        # Handle edge cases where indices are out of bounds
+        if i < 0 or j >= self.n_dots:
+            if i == -1 or j == self.n_dots:
+                # Edge case at boundaries - skip update
+                return
+            else:
+                raise ValueError(f"Invalid dot indices ({i}, {j}) for matrix of size {self.n_dots}")
 
-        # In nearest neighbour mode, only allow updates to nearest neighbor pairs
-        if self.nearest_neighbour and abs(row - col) != 1:
-            raise ValueError(f"In nearest neighbour mode, can only update adjacent pairs. Got (gate {i}, dot {j})")
+        # Validate dot pair separation (NNN mode: allow distance 1 and 2)
+        if abs(i - j) not in [1, 2]:
+            raise ValueError(f"Can only update adjacent or next-nearest pairs. Got dot pair ({i}, {j})")
 
-        # Update the mean using EMA if ema_length is specified, otherwise use last value
-        if self.ema_length is not None:
-            # Exponential moving average: new_mean = alpha * new_value + (1 - alpha) * old_mean
-            # where alpha = 1 / ema_length, scaled by confidence (inverse variance)
-            # Lower variance -> higher confidence -> stronger update
-            base_alpha = 1.0 / self.ema_length
-            confidence_scale = 1.0 / (0.5 + ml_variance)
-            alpha = base_alpha * confidence_scale
-            # Clip alpha to [0, 1] to maintain stability
-            alpha = np.clip(alpha, 0.0, 1.0)
-            new_mean = alpha * ml_estimate + (1 - alpha) * self.means[row, col]
-        else:
-            # Just use the last value
-            new_mean = ml_estimate
-
-        # Update upper triangular and mirror to lower (enforce symmetry)
-        self.means[row, col] = new_mean
-        self.means[col, row] = new_mean
-        self.variances[row, col] = ml_variance
-        self.variances[col, row] = ml_variance
+        # Set the value directly (symmetric update)
+        self.means[i, j] = ml_estimate
+        self.means[j, i] = ml_estimate
 
 
     def update_from_scan(self, left_dot: int, ml_outputs: List[Tuple[float, float]]):
         """
         Process ML model output for a dot pair scan and update relevant capacitances.
 
-        In NN mode, both predictions (RL and LR) target the same symmetric coupling
-        Cgd[i, i+1]. direct_update() normalizes both to the canonical position, so
-        the second update overwrites the first (last value wins for non-EMA mode).
+        NNN mode: 3 outputs [NN, NNN_right, NNN_left] for different couplings
 
         Args:
             left_dot: left dot in the scan - we assume pair (i, i+1)
-            ml_outputs (List[Tuple[float, float]]): List of tuples containing
-                (capacitance_estimate, log_variance) for each coupling between gate i and dot j.
+            ml_outputs (List[Tuple[float, float]]): List of 3 tuples containing
+                (capacitance_estimate, log_variance) for each coupling.
 
         Example:
             predictor.update_from_scan(
                 left_dot=2,
-                ml_outputs=[(0.23, -2.3), (0.18, -1.9)]
+                ml_outputs=[(0.23, -2.3), (0.18, -1.9), (0.15, -2.1)]
             )
         """
-        expected_len = 2 if self.nearest_neighbour else 3
-        if len(ml_outputs) != expected_len:
-            raise ValueError(f"ml_outputs must contain {expected_len} measurements, but got {len(ml_outputs)}")
+        if len(ml_outputs) != 3:
+            raise ValueError(f"ml_outputs must contain 3 measurements, but got {len(ml_outputs)}")
 
         i = left_dot
 
-        # RL coupling: cgd[i+1, i] -> normalizes to cgd[i, i+1]
-        estimate_RL, log_var_RL = ml_outputs[0]
-        variance_RL = np.exp(log_var_RL)
-        self.direct_update(i+1, i, estimate_RL, variance_RL)
+        # NNN mode: [NN, NNN_right, NNN_left]
+        # NN: Cgd[i, i+1]
+        estimate_nn, log_var_nn = ml_outputs[0]
 
-        # LR coupling: cgd[i, i+1] (already canonical)
-        estimate_LR, log_var_LR = ml_outputs[1]
-        variance_LR = np.exp(log_var_LR)
-        self.direct_update(i, i+1, estimate_LR, variance_LR)
+        # NNN_right: Cgd[i, i+2]
+        estimate_nnn_right, log_var_nnn_right = ml_outputs[1]
+
+        # NNN_left: Cgd[i+1, i-1]
+        estimate_nnn_left, log_var_nnn_left = ml_outputs[2]
+
+        # Define dot pairs following the same convention as KrigingUpdater
+        dot_pairs = [(i, i+1), (i, i+2), (i+1, i-1)]
+        estimates = [estimate_nn, estimate_nnn_right, estimate_nnn_left]
+
+        # Update each coupling directly
+        for dot_pair, estimate in zip(dot_pairs, estimates):
+            self.direct_update(dot_pair, estimate)
 
 
     def get_capacitance_stats(self, i: int, j: int) -> Tuple[float, float]:
@@ -220,12 +210,12 @@ if __name__ == "__main__":
         else:
             return (0.0, 0.1)   # Very distant pairs
 
-    predictor = EmaCapacitancePredictor(n_dots, nn=True, prior_config=distance_prior)
+    predictor = EmaCapacitancePredictor(n_dots, nn=False, prior_config=distance_prior)
 
-    # Simulating ML model outputs: [RL, LR] for scan of dots (1,2)
-    ml_estimates = [0.23, 0.18]  # Capacitance predictions
-    log_variances = [-2.3, -1.9]  # Log variance (ignored for EMA)
-    predictor.update_from_scan(left_dot=1, ml_outputs=[(ml_estimates[0], log_variances[0]), (ml_estimates[1], log_variances[1])])
+    # Simulating ML model outputs: [NN, NNN_right, NNN_left] for scan of dots (1,2)
+    ml_estimates = [0.23, 0.18, 0.15]  # Capacitance predictions
+    log_variances = [-2.3, -1.9, -2.1]  # Log variance
+    predictor.update_from_scan(left_dot=1, ml_outputs=[(ml_estimates[0], log_variances[0]), (ml_estimates[1], log_variances[1]), (ml_estimates[2], log_variances[2])])
 
     # Get specific capacitance stats
     mean, var = predictor.get_capacitance_stats(1, 2)

@@ -258,6 +258,7 @@ class QuantumDeviceEnv(gym.Env):
             info (dict): A dictionary with auxiliary diagnostic information.
         """
         self.current_step += 1
+        #print(self.current_step)
 
         gate_voltages = action["action_gate_voltages"]
         barrier_voltages = action["action_barrier_voltages"]
@@ -631,20 +632,16 @@ class QuantumDeviceEnv(gym.Env):
 
         if update_method == "ema":
             # EMA method: use ML predictions directly (not deltas)
-            if self.capacitance_model["nearest_neighbour"]:
-                for i in range(self.num_dots - 1):
-                    # For EMA, use absolute ML predictions directly
-                    # The ML model predicts absolute capacitance values, not deltas
-                    absolute_values = [
-                        -float(values_np[i, 0]),  # RL coupling
-                        -float(values_np[i, 1]),  # LR coupling
-                    ]
-
-                    # Update the EMA predictor with absolute values and log variances
-                    ml_outputs = [(absolute_values[j], float(log_vars_np[i, j])) for j in range(2)]
-                    self.capacitance_model["capacitance_predictor"].update_from_scan(left_dot=i, ml_outputs=ml_outputs)
-            else:
-                raise NotImplementedError("Capacitance update only supports nearest-neighbour mode for now")
+            # NNN mode: 3 outputs [NN, NNN_right, NNN_left]
+            for i in range(self.num_dots - 1):
+                ml_outputs = [
+                    (-float(values_np[i, 0]), float(log_vars_np[i, 0])),  # NN (negated)
+                    (-float(values_np[i, 1]), float(log_vars_np[i, 1])),  # NNN_right (negated)
+                    (-float(values_np[i, 2]), float(log_vars_np[i, 2])),  # NNN_left (negated)
+                ]
+                self.capacitance_model["capacitance_predictor"].update_from_scan(
+                    left_dot=i, ml_outputs=ml_outputs
+                )
 
             # Get updated capacitance matrix from EMA predictor (diagonal already set to 1)
             cgd_estimate = self.capacitance_model["capacitance_predictor"].get_full_matrix()
