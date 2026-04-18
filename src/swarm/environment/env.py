@@ -178,6 +178,10 @@ class QuantumDeviceEnv(gym.Env):
         # This simulates starting without knowledge of crosstalk
         self.array._reset_virtual_gate_matrix_to_identity()
 
+        # Reset capacitance predictor to prior (must match VGM reset)
+        if isinstance(self.capacitance_model, dict) and "capacitance_predictor" in self.capacitance_model:
+            self.capacitance_model["capacitance_predictor"].reset()
+
         if self.capacitance_model == "perfect":
             self.array._reset_virtual_gate_matrix_to_perfect()
 
@@ -230,6 +234,7 @@ class QuantumDeviceEnv(gym.Env):
 
         observation = self._normalise_obs(raw_observation)
 
+        self._last_normalized_obs = observation
         self._update_virtual_gate_matrix(observation)
 
         info = self._get_info()
@@ -290,6 +295,7 @@ class QuantumDeviceEnv(gym.Env):
             raw_observation = self.array._get_obs(gate_voltages, barrier_voltages, optimal_sensor_voltage)
             observation = self._normalise_obs(raw_observation)
 
+            self._last_normalized_obs = observation
             self._update_virtual_gate_matrix(observation)
             self.device_state["virtual_gate_matrix"] = (
                 self.array.model.gate_voltage_composer.virtual_gate_matrix
@@ -615,11 +621,13 @@ class QuantumDeviceEnv(gym.Env):
                     )
             else:
                 # NNN mode: 3 outputs [NN, NNN_right, NNN_left]
+                # NN output is negated (qarray sign convention)
+                # NNN outputs are NOT negated — opposite sign convention from NN
                 for i in range(self.num_dots - 1):
                     ml_outputs = [
                         (-float(values_np[i, 0]), float(log_vars_np[i, 0])),  # NN (negated)
-                        (-float(values_np[i, 1]), float(log_vars_np[i, 1])),  # NNN_right (negated)
-                        (-float(values_np[i, 2]), float(log_vars_np[i, 2])),  # NNN_left (negated)
+                        ( float(values_np[i, 1]), float(log_vars_np[i, 1])),  # NNN_right (not negated)
+                        ( float(values_np[i, 2]), float(log_vars_np[i, 2])),  # NNN_left (not negated)
                     ]
                     self.capacitance_model["capacitance_predictor"].update_from_scan(
                         left_dot=i, ml_outputs=ml_outputs
@@ -790,11 +798,12 @@ class QuantumDeviceEnv(gym.Env):
                 capacitance_predictor = KalmanCapacitanceUpdater(
                     n_dots=self.num_dots,
                     prior_mean=0.3,
-                    prior_variance=0.5,
+                    prior_variance=0.1,
                     variance_threshold=self.config["capacitance_model"].get("variance_threshold", 0.05),
                     process_noise=self.config["capacitance_model"].get("process_noise", 0.0),
                     include_nnn=not nearest_neighbour,  # Include NNN when not in NN-only mode
                     prior_mean_nnn=0.15,  # NNN couplings are typically weaker
+                    prior_variance_nnn=0.03,  # NNN values ~3x smaller than NN
                 )
             else:
                 raise ValueError(f"Unknown update method: {update_method}")

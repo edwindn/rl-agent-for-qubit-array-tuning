@@ -36,6 +36,7 @@ class KalmanCapacitanceUpdater:
         mean_bounds: Tuple[float, float] = (-1.0, 1.0),
         log_var_bounds: Tuple[float, float] = (-6.0, 2.0),
         prior_mean_nnn: float = None,
+        prior_variance_nnn: float = None,
     ):
         """
         Args:
@@ -50,6 +51,8 @@ class KalmanCapacitanceUpdater:
                             Default (-6, 2) gives variance in ~[0.002, 7.4]
             prior_mean_nnn: Initial capacitance estimate for NNN couplings
                             (defaults to prior_mean if not specified)
+            prior_variance_nnn: Initial uncertainty for NNN couplings
+                            (defaults to prior_variance if not specified)
         """
         self.n_dots = n_dots
         self.variance_threshold = variance_threshold
@@ -57,6 +60,7 @@ class KalmanCapacitanceUpdater:
         self.prior_mean = prior_mean
         self.prior_mean_nnn = prior_mean_nnn if prior_mean_nnn is not None else prior_mean
         self.prior_variance = prior_variance
+        self.prior_variance_nnn = prior_variance_nnn if prior_variance_nnn is not None else prior_variance
         self.include_nnn = include_nnn
         self.mean_bounds = mean_bounds
         self.log_var_bounds = log_var_bounds
@@ -77,8 +81,8 @@ class KalmanCapacitanceUpdater:
             for i in range(n_dots - 2):
                 self.means[i, i + 2] = self.prior_mean_nnn
                 self.means[i + 2, i] = self.prior_mean_nnn  # symmetric
-                self.variances[i, i + 2] = prior_variance
-                self.variances[i + 2, i] = prior_variance
+                self.variances[i, i + 2] = self.prior_variance_nnn
+                self.variances[i + 2, i] = self.prior_variance_nnn
 
         # Stats for debugging
         self.total_accepted = 0
@@ -226,7 +230,8 @@ class KalmanCapacitanceUpdater:
             cgd[i, i] = 1.0
         return cgd
 
-    def reset(self, prior_mean: float = None, prior_variance: float = None, prior_mean_nnn: float = None):
+    def reset(self, prior_mean: float = None, prior_variance: float = None,
+              prior_mean_nnn: float = None, prior_variance_nnn: float = None):
         """Reset all estimates to prior."""
         if prior_mean is None:
             prior_mean = self.prior_mean
@@ -234,6 +239,8 @@ class KalmanCapacitanceUpdater:
             prior_mean_nnn = self.prior_mean_nnn
         if prior_variance is None:
             prior_variance = self.prior_variance
+        if prior_variance_nnn is None:
+            prior_variance_nnn = self.prior_variance_nnn
 
         # Reset NN positions
         for i in range(self.n_dots - 1):
@@ -247,8 +254,8 @@ class KalmanCapacitanceUpdater:
             for i in range(self.n_dots - 2):
                 self.means[i, i + 2] = prior_mean_nnn
                 self.means[i + 2, i] = prior_mean_nnn
-                self.variances[i, i + 2] = prior_variance
-                self.variances[i + 2, i] = prior_variance
+                self.variances[i, i + 2] = prior_variance_nnn
+                self.variances[i + 2, i] = prior_variance_nnn
 
         self.total_accepted = 0
         self.total_rejected = 0

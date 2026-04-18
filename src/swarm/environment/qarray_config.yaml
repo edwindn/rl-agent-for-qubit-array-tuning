@@ -27,9 +27,14 @@ simulator:
       # Cross-coupling based on distance between gate and non-primary dots
       cross_coupling:
         # Distance 1: adjacent gate-dot pairs
-        1: {"min": 0.3, "max": 0.7} # 0.3-0.7
+        # Default: {"min": 0.3, "max": 0.7}
+        # Default: {"min": 0.3, "max": 0.7}
+        # Paper Fig 3(a-c) used: {"min": 0.7, "max": 0.7} (fixed)
+        1: {"min": 0.3, "max": 0.7}
         # Distance 2: next-adjacent gate-dot pairs
-        2: {"min": 0.01, "max": 0.3} # 0.01-0.3
+        # Default: {"min": 0.01, "max": 0.3}
+        # Paper Fig 3(a-c) used: {"min": 0.3, "max": 0.3} (fixed)
+        2: {"min": 0.01, "max": 0.3}
         # Distance 3+: long-range gate-dot coupling
         3_plus: {"min": 0., "max": 0.01} # 0-0.01
     
