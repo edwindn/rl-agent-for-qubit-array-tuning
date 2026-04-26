@@ -1,0 +1,22 @@
+=== PyMARLEnvWrapper.get_env_info() ===
+  state_shape: 140000
+  obs_shape: 20000
+  n_actions: 1
+  n_agents: 7
+  episode_limit: 50
+  action_spaces: list[Box] x 7  (low=-1.0, high=1.0)
+  actions_dtype: <class 'numpy.float32'>
+  normalise_actions: False
+  agent_groups: {'plunger': [0, 1, 2, 3], 'barrier': [4, 5, 6]}
+  obs_shapes: {'plunger': (2, 100, 100), 'barrier': (1, 100, 100)}
+  agent_ids: ['plunger_0', 'plunger_1', 'plunger_2', 'plunger_3', 'barrier_0', 'barrier_1', 'barrier_2']
+
+=== Derived quantities ===
+  n_agents              = 7  (4 plungers + 3 barriers)
+  episode_limit         = 50
+  obs_H, obs_W          = 100, 100
+  flat_obs_size         = 20000  (channels_padded=2)
+  state_size            = 140000
+  plunger agent ids     = ['plunger_0', 'plunger_1', 'plunger_2', 'plunger_3']
+  barrier agent ids     = ['barrier_0', 'barrier_1', 'barrier_2']
+  agent_groups          = {'plunger': [0, 1, 2, 3], 'barrier': [4, 5, 6]}

@@ -23,7 +23,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from swarm.capacitance_model import CapacitancePredictionModel, BayesianCapacitancePredictor, KrigingCapacitancePredictor, EmaCapacitancePredictor
+from swarm.capacitance_model import CapacitancePredictionModel
 
 
 class QuantumDeviceEnv(gym.Env):
@@ -761,20 +761,11 @@ class QuantumDeviceEnv(gym.Env):
                 else:
                     return (0.0, 0.1)
 
-            if update_method == "bayesian":
-                # Initialize Bayesian predictor
-                capacitance_predictor = BayesianCapacitancePredictor(
-                    n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
-                )
-            elif update_method == "kriging":
-                # Initialize spatially aware predictor
-                capacitance_predictor = KrigingCapacitancePredictor(
-                    n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
-                )
-            elif update_method == "ema":
-                # Initialize EMA predictor
-                capacitance_predictor = EmaCapacitancePredictor(
-                    n_dots=self.num_dots, nn=nearest_neighbour, prior_config=distance_prior
+            if update_method in {"bayesian", "kriging", "ema"}:
+                raise NotImplementedError(
+                    f"update_method={update_method!r} requires the {update_method.capitalize()}Updater module, "
+                    "which was removed during repo cleanup. Restore the updater file from `main` or use "
+                    "`kalman` / `direct` instead."
                 )
             elif update_method in ["kalman", "direct"]:
                 # Initialize Kalman filter or direct updater with variance gating

@@ -37,6 +37,12 @@ dev = [
     "pytest-cov>=4.0.0",
     "pre-commit>=3.0.0",
 ]
+facmac = [
+    "sacred",
+    "jsonpickle",
+    "tensorboard-logger",
+    "gym==0.10.8",
+]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

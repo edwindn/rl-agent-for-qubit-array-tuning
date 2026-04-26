@@ -1,0 +1,101 @@
+# Task-7 full-scale FACMAC training config.
+# GroupedMAC + per-group Nature-CNN agents + QMix mixer.
+# Hyperparams scale up from facmac_quantum_smoke_grouped to paper-default magnitudes.
+# Expected wall clock: ~3-6 hours on a single RTX 4000 Ada.
+
+# --- custom GroupedMAC + CNN agents ---
+mac: "grouped_mac"
+agent: "grouped"
+agent_modules:
+  plunger: "plunger_cnn"
+  barrier: "barrier_cnn"
+obs_agent_id: False
+obs_last_action: False
+agent_output_type: ~
+agent_return_logits: False
+
+# --- scale ---
+mixer: "qmix"
+mixing_embed_dim: 64           # paper default (was 16 in smoke)
+hypernet_layers: 1
+hypernet_embed: 64
+hyper_initialization_nonzeros: 0
+skip_connections: False
+gated: False
+q_embed_dim: 1
+
+batch_size_run: 12             # 12 parallel env workers, 2 per GPU on physical GPUs 2-7; GPU 1 freed for learner. (Was 6 — GPU util on workers was ~8% so doubled-up; expected 1.5-1.8x throughput.)
+batch_size: 32                 # PyMARL SMAC default (paper used 100 for MAMuJoCo's vector obs; with our 100x100 images per agent, the global QMix state is 7*2*100*100 floats and the unrolled per-timestep activations don't fit on a 19.5 GB learner GPU at bs=100 — OOM'd in run #21 at 18.8/19.55 GB).
+buffer_size: 2048              # ~115 GB RAM at res=100. Paper uses 10^6 transitions but our state_dim is much larger (image obs vs vector); 2048 episodes ≈ 105k transitions.
+buffer_cpu_only: True          # explicit (also vendor default). Buffer storage on host RAM; samples are .to(device)'d in run.py:305 before learner.train.
+buffer_warmup: 0
+t_max: 500000                  # total env steps *across all workers*
+test_interval: 20000
+test_nepisode: 24              # multiple of batch_size_run (12) so test batches align
+testing_on: True
+runner: "multi_gpu_parallel"
+worker_gpu_ids: [2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7]   # 2 workers per physical GPU (2-7); learner uses cuda:0 (= physical GPU 1 under CUDA_VISIBLE_DEVICES=1,...,7)
+runner_scope: "episodic"
+
+# --- learner ---
+learner: "facmac_learner"
+learn_interval: 4              # 1 learner update per 4 env steps (was 1): un-bottlenecks parent CPU
+n_train: 1
+critic_train_reps: 1
+
+# --- exploration ---
+action_range: ~
+action_selector: ~
+exploration_mode: "gaussian"
+start_steps: 10000             # paper MAMuJoCo default (was 1000)
+act_noise: 0.1
+ou_theta: 0.15
+ou_sigma: 0.2
+ou_noise_scale: 0.3
+final_ou_noise_scale: 0.
+ou_stop_episode: 1000
+noise_clip: 0.5
+
+# --- optimisation (paper MAMuJoCo values) ---
+optimizer: adam
+optimizer_epsilon: 0.01
+lr: 0.001                      # paper MAMuJoCo (was 0.0003 — too conservative, plateaued)
+critic_lr: 0.001               # paper MAMuJoCo
+gamma: 0                       # matches PPO/SAC main-algo setting on this env. With bootstrap (gamma=0.99, paper default), vanilla FACMAC's critic diverged: target_mean grew 14× over 250k steps and test returns dropped below random (run #23). At gamma=0 the TD target reduces to r(s,a) — bounded, cannot diverge.
+grad_norm_clip: 0.5            # paper default
+td_lambda: 0.8
+q_nstep: 0
+weight_decay: True
+weight_decay_factor: 0.0001
+
+# --- targets (paper MAMuJoCo values) ---
+double_q: False
+target_update_interval: ~
+target_update_mode: "soft"
+target_update_tau: 0.001       # paper MAMuJoCo (was 0.005 — 5x too fast)
+
+discretize_actions: False
+n_runners: ~
+rnn_hidden_dim: 64
+run_mode: ~
+name: "facmac_quantum_full"
+epsilon_decay_mode: ~
+epsilon_start: ~
+epsilon_finish: ~
+epsilon_anneal_time: ~
+test_greedy: ~
+
+# --- IO / monitoring ---
+save_model: True
+save_model_interval: 50000     # 10 checkpoints across the run
+use_tensorboard: False
+use_cuda: True
+verbose: False
+
+use_wandb: True
+wandb_project: "FACMAC-benchmark"
+wandb_entity: "rl_agents_for_tuning"
+wandb_ema_period: 20
+
+env_args:
+  state_last_action: False

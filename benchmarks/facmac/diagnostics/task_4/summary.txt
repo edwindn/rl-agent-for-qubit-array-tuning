@@ -1,0 +1,67 @@
+=== Shape traces (input H x W = 48 x 48) ===
+
+-- plunger agent --
+  input:           (3, 2, 48, 48)
+  cnn[0] Conv2d       -> (3, 32, 11, 11)
+  cnn[1] ReLU         -> (3, 32, 11, 11)
+  cnn[2] Conv2d       -> (3, 64, 4, 4)
+  cnn[3] ReLU         -> (3, 64, 4, 4)
+  cnn[4] Conv2d       -> (3, 64, 2, 2)
+  cnn[5] ReLU         -> (3, 64, 2, 2)
+  cnn[6] Flatten      -> (3, 256)
+  fc1            -> (3, 64)
+  fc2 (actions)  -> (3, 1)
+  total params:    90,401
+    cnn.0.weight       (32, 2, 8, 8)  numel=4,096
+    cnn.0.bias         (32,)  numel=32
+    cnn.2.weight       (64, 32, 4, 4)  numel=32,768
+    cnn.2.bias         (64,)  numel=64
+    cnn.4.weight       (64, 64, 3, 3)  numel=36,864
+    cnn.4.bias         (64,)  numel=64
+    fc1.weight         (64, 256)  numel=16,384
+    fc1.bias           (64,)  numel=64
+    fc2.weight         (1, 64)  numel=64
+    fc2.bias           (1,)  numel=1
+
+-- barrier agent --
+  input:           (3, 1, 48, 48)
+  cnn[0] Conv2d       -> (3, 32, 11, 11)
+  cnn[1] ReLU         -> (3, 32, 11, 11)
+  cnn[2] Conv2d       -> (3, 64, 4, 4)
+  cnn[3] ReLU         -> (3, 64, 4, 4)
+  cnn[4] Conv2d       -> (3, 64, 2, 2)
+  cnn[5] ReLU         -> (3, 64, 2, 2)
+  cnn[6] Flatten      -> (3, 256)
+  fc1            -> (3, 64)
+  fc2 (actions)  -> (3, 1)
+  total params:    88,353
+    cnn.0.weight       (32, 1, 8, 8)  numel=2,048
+    cnn.0.bias         (32,)  numel=32
+    cnn.2.weight       (64, 32, 4, 4)  numel=32,768
+    cnn.2.bias         (64,)  numel=64
+    cnn.4.weight       (64, 64, 3, 3)  numel=36,864
+    cnn.4.bias         (64,)  numel=64
+    fc1.weight         (64, 256)  numel=16,384
+    fc1.bias           (64,)  numel=64
+    fc2.weight         (1, 64)  numel=64
+    fc2.bias           (1,)  numel=1
+
+  [written] /home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/facmac/diagnostics/task_4/shape_trace.txt
+
+=== Gradient flow per CNN agent ===
+  plunger: OK (all layers got non-zero grads)
+  barrier: OK (all layers got non-zero grads)
+
+=== Sentinel dispatch test ===
+  plunger sentinel = +1.0, barrier sentinel = -1.0
+  action_out shape = (3, 7, 1)   (expected (3, 7, 1))
+  mean plunger slots = +1.0000   (expect +1.0)
+  mean barrier slots = -1.0000   (expect -1.0)
+  plunger routing OK: True
+  barrier routing OK: True
+  [written] /home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/facmac/diagnostics/task_4/sentinel_dispatch.txt
+
+=== Parameter-update isolation ===
+  loss on plunger only:  plunger grads non-zero = True, barrier grads non-zero = False  OK
+  loss on barrier only:  barrier grads non-zero = True, plunger grads non-zero = False  OK
+  [written] /home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/facmac/diagnostics/task_4/param_isolation.txt
