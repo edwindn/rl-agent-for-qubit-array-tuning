@@ -1,12 +1,10 @@
-import json
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-from pathlib import Path
 
 # ----- Device Selection ----- #
-_cfg = json.loads((Path(__file__).parent / "parameter_config.json").read_text())
-if _cfg["device"]["USE_CPU"]:
+USE_CPU = False   # set True to force CPU execution
+if USE_CPU:
     jax.config.update("jax_platform_name", "cpu")
 jax.config.update("jax_enable_x64", True)
 
@@ -160,8 +158,8 @@ for episode in range(N_EPISODES):
     for i in range(N_QUBITS):
         print(f"    Q{i:<5}  {float(pg.hw[i, 0]):>13.4f}  {float(pg.hw[i, 1]):>14.4f}  {float(pg.hw[i, 2]):>12.4f}")
 
-    # Single physical params array. C_tensor is the virtual→physical map; bounds
-    # are enforced here on the physical params via a global scale factor α in update_params.
+    # Single physical params array. C_tensor maps virtual actions → physical updates;
+    # clip_params enforces a relaxed safety rail at CLIP_MULTIPLIER × episode span.
     params = jnp.column_stack([pg.omega_01, pg.omega_d, pg.phi, pg.Omega, pg.beta])
 
     # Episode-specific bounds on physical params
@@ -189,17 +187,16 @@ for episode in range(N_EPISODES):
         #print_info(label, rewards_simul, rewards_alone, C_tensor, J_cols)
         #plot_staircase(label, params, P1_simul, rewards_simul, P1_alone)
 
-        # Update: C_tensor maps virtual actions → physical update; α scales the full
-        # physical step to keep params within bounds (α=1 = unconstrained).
-        delta_norm = DELTA_SCALE * jnp.ones_like(params)
-        delta_raw  = norm.delta_to_physical(delta_norm, delta_scales)
-        params     = update_params(params, delta_raw, pg.C_tensor, param_mins, param_maxs,
-                                   clip_multiplier=CLIP_MULTIPLIER)
+        delta_norm  = DELTA_SCALE * jnp.ones_like(params)
+        delta_raw   = norm.delta_to_physical(delta_norm, delta_scales)
+        params_prev = params
+        params      = update_params(params, delta_raw, C_tensor, param_mins, param_maxs,
+                                    clip_multiplier=CLIP_MULTIPLIER)
 
         print(f"  delta_norm = {DELTA_SCALE:.3f} (uniform)  →  compensated update applied.")
         print(f"    {'Qubit':<6}  " + "  ".join(f"{n:>10}" for n in PARAM_NAMES))
         print("    " + "-" * (6 + 14 * 5))
-        _delta_np = jax.device_get(delta_raw)
+        _delta_np = jax.device_get(params - params_prev)
         for i in range(N_QUBITS):
             vals = "  ".join(f"{_delta_np[i, k]:>+10.5f}" for k in range(5))
             print(f"    Q{i:<5}  {vals}")

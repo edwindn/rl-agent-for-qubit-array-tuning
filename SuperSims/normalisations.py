@@ -41,8 +41,8 @@ _BETA_MAX = _cfg["pulse"]["beta"]["max"]
 _OMEGA_01_DOWN    = _2pi * 0.3   # 300 MHz downward tuning range [rad/ns]
 _OMEGA_D_WINDOW   = _2pi * 0.05  # ±50 MHz window around omega_01 [rad/ns]
 _OMEGA_BOUND_FRAC = 0.30         # ±30% of estimated 2π/t_g for Omega bounds
-_PHI_MIN          = -_2pi        # phi lower bound [rad]
-_PHI_MAX          =  _2pi        # phi upper bound [rad]
+_PHI_MIN          = -jnp.pi      # phi lower bound [rad] — matches [-π, π] wrap target
+_PHI_MAX          =  jnp.pi      # phi upper bound [rad]
 
 
 def episode_bounds(omega_01_init, t_g):

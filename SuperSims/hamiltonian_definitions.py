@@ -1,7 +1,6 @@
 import dynamiqs as dq
 import jax.numpy as jnp
 
-import parameter_generation as pg
 from parameter_generation import N
 
 """
@@ -61,7 +60,8 @@ a    = dq.destroy(N).to_jax()   # lowering (annihilation) operator
 adag = dq.create(N).to_jax()    # raising (creation) operator
 n_op = dq.number(N).to_jax()    # photon-number operator
 I_op = dq.eye(N).to_jax()       # identity
-iX_op = 1j * (adag - a)         # capacitive drive coupling operator
+iX_op        = 1j * (adag - a)          # capacitive drive coupling operator
+_n_n_minus_1 = n_op @ (n_op - I_op)    # precomputed for anharmonicity term
 
 def H_bare_all(omega_01_vec, alpha):
     """Build (N_QUBITS, N, N) bare Hamiltonians from omega_01_vec.
@@ -73,6 +73,6 @@ def H_bare_all(omega_01_vec, alpha):
         alpha:        (N_QUBITS,) anharmonicities [rad/ns].
     """
     H_bare   = omega_01_vec[:, None, None] * n_op[None]
-    H_anharm = (alpha / 2.0)[:, None, None] * (n_op @ (n_op - I_op))[None]
+    H_anharm = (alpha / 2.0)[:, None, None] * _n_n_minus_1[None]
     return H_bare + H_anharm
 
