@@ -44,6 +44,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         self,
         training: bool = True,
         return_voltage: bool = False,
+        return_global_state: bool = False,
         gif_config: dict = None,
         distance_data_dir: str = None,
         env_config_path: str = None,
@@ -60,13 +61,25 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
             training: Whether in training mode
             return_voltage: If True, returns dict observation with image and voltage.
                           If False, returns only the image array.
+            return_global_state: If True, each agent's observation dict additionally
+                          includes 'global_image' (full N-1 channel CSD stack) and
+                          'global_voltages' (concatenation of all gate + barrier
+                          voltages). Used by MAPPO's centralized critic. Requires
+                          return_voltage=True.
             distance_data_dir: Path to directory for saving distance data (if enabled)
             env_config_path: Optional path to custom env config file (defaults to env_config.yaml)
             capacitance_model_checkpoint: Path to capacitance model weights checkpoint
         """
         super().__init__()
 
+        if return_global_state and not return_voltage:
+            raise ValueError(
+                "return_global_state=True requires return_voltage=True (the global "
+                "state extends the per-agent dict observation)."
+            )
+
         self.return_voltage = return_voltage
+        self.return_global_state = return_global_state
         self.distance_data_dir = distance_data_dir
         self.is_collecting_data = is_collecting_data
 
@@ -179,9 +192,26 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
         self.action_spaces = {}
 
         if self.return_voltage:
+            # Joint voltage range across gate+barrier agents (used for global_voltages
+            # when return_global_state is set). Gate and barrier ranges are both [-1, 1]
+            # in the normalized env, so a single Box covers them.
+            num_global_voltages = self.num_gates + self.num_barriers
+            global_image_space = spaces.Box(
+                low=0.0,
+                high=1.0,
+                shape=(image_shape[0], image_shape[1], self.num_image_channels),
+                dtype=np.float32,
+            )
+            global_voltage_space = spaces.Box(
+                low=min(gate_low, barrier_low),
+                high=max(gate_high, barrier_high),
+                shape=(num_global_voltages,),
+                dtype=np.float32,
+            )
+
             # Gate agents: Dict observation with image, voltage, and is_plunger
             for agent_id in self.gate_agent_ids:
-                self.observation_spaces[agent_id] = spaces.Dict({
+                gate_dict = {
                     'image': spaces.Box(
                         low=0.0,
                         high=1.0,
@@ -194,7 +224,11 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                         shape=(1,),
                         dtype=np.float32,
                     ),
-                })
+                }
+                if self.return_global_state:
+                    gate_dict['global_image'] = global_image_space
+                    gate_dict['global_voltages'] = global_voltage_space
+                self.observation_spaces[agent_id] = spaces.Dict(gate_dict)
 
                 self.action_spaces[agent_id] = spaces.Box(
                     low=gate_low,
@@ -205,7 +239,7 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
 
             # Barrier agents: Dict observation with image, voltage, and is_plunger
             for agent_id in self.barrier_agent_ids:
-                self.observation_spaces[agent_id] = spaces.Dict({
+                barrier_dict = {
                     'image': spaces.Box(
                         low=0.0,
                         high=1.0,
@@ -218,7 +252,11 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                         shape=(1,),
                         dtype=np.float32,
                     ),
-                })
+                }
+                if self.return_global_state:
+                    barrier_dict['global_image'] = global_image_space
+                    barrier_dict['global_voltages'] = global_voltage_space
+                self.observation_spaces[agent_id] = spaces.Dict(barrier_dict)
 
                 self.action_spaces[agent_id] = spaces.Box(
                     low=barrier_low,
@@ -326,10 +364,20 @@ class MultiAgentEnvWrapper(MultiAgentEnv):
                 voltage = global_obs["obs_barrier_voltages"][agent_idx : agent_idx + 1]
                 # is_plunger = np.array([0.0], dtype=np.float32)
 
-            return {
+            agent_obs = {
                 'image': agent_image.astype(np.float32),
                 'voltage': voltage.astype(np.float32),
             }
+            if self.return_global_state:
+                # Shared global state for centralized critics: full CSD stack +
+                # concatenated all-agent voltages. Same array referenced by every
+                # agent in the step (the global state is shared by design).
+                agent_obs['global_image'] = global_obs["image"].astype(np.float32)
+                agent_obs['global_voltages'] = np.concatenate([
+                    global_obs["obs_gate_voltages"],
+                    global_obs["obs_barrier_voltages"],
+                ]).astype(np.float32)
+            return agent_obs
         else:
             # Return image only
             return agent_image.astype(np.float32)
@@ -859,10 +907,33 @@ if __name__ == "__main__":
     """Test the multi-agent wrapper."""
     print("=== Testing Multi-Agent Quantum Wrapper ===")
 
+    # The kalman / direct updaters in env_config.yaml require a capacitance-model
+    # checkpoint, and ours on disk has a stale head dim ([2] vs current [3]).
+    # For the smoke test we write a temp env_config with update_method=null (the
+    # capacitance model is bypassed entirely) — this exercises every code path
+    # the MAPPO wrapper change touches without depending on external weights.
+    import tempfile
+    import yaml
+    _repo_root = Path(__file__).resolve().parents[3]
+    _base_config_path = _repo_root / "src" / "swarm" / "environment" / "env_config.yaml"
+    with open(_base_config_path, "r") as _fh:
+        _smoke_env_config = yaml.safe_load(_fh)
+    _smoke_env_config["capacitance_model"]["update_method"] = None
+    _smoke_config_path = Path(tempfile.gettempdir()) / "mappo_wrapper_smoke_env_config.yaml"
+    with open(_smoke_config_path, "w") as _fh:
+        yaml.dump(_smoke_env_config, _fh, default_flow_style=False)
+    _smoke_config_path = str(_smoke_config_path)
+    _capacitance_checkpoint = None
+    print(f"Using smoke env config: {_smoke_config_path}")
+
     try:
         # Test image-only mode (return_voltage=False)
         print("\n--- Testing image-only mode ---")
-        wrapper = MultiAgentEnvWrapper(training=True, return_voltage=False)
+        wrapper = MultiAgentEnvWrapper(
+            training=True, return_voltage=False,
+            env_config_path=_smoke_config_path,
+            capacitance_model_checkpoint=_capacitance_checkpoint,
+        )
         print("✓ Created multi-agent wrapper (image-only)")
 
         print(f"Agent IDs: {wrapper.get_agent_ids()}")
@@ -889,7 +960,11 @@ if __name__ == "__main__":
 
         # Test dict mode (return_voltage=True)
         print("\n--- Testing dict observation mode ---")
-        wrapper = MultiAgentEnvWrapper(training=True, return_voltage=True)
+        wrapper = MultiAgentEnvWrapper(
+            training=True, return_voltage=True,
+            env_config_path=_smoke_config_path,
+            capacitance_model_checkpoint=_capacitance_checkpoint,
+        )
         print("✓ Created multi-agent wrapper (dict mode)")
 
         # Test reset
@@ -912,6 +987,137 @@ if __name__ == "__main__":
 
         obs, rewards, terminated, truncated, info = wrapper.step(actions)
         print(f"✓ Step successful - got {len(rewards)} agent rewards")
+
+        wrapper.close()
+
+        # Test global-state mode (return_global_state=True, for MAPPO)
+        print("\n--- Testing global-state mode ---")
+        diag_dir = Path("/tmp/mappo_wrapper_smoke")
+        diag_dir.mkdir(parents=True, exist_ok=True)
+        wrapper = MultiAgentEnvWrapper(
+            training=True,
+            return_voltage=True,
+            return_global_state=True,
+            env_config_path=_smoke_config_path,
+            capacitance_model_checkpoint=_capacitance_checkpoint,
+        )
+        print("✓ Created multi-agent wrapper (global-state mode)")
+
+        obs, info = wrapper.reset()
+        print(f"✓ Reset successful - got observations for {len(obs)} agents")
+
+        agent_ids = wrapper.get_agent_ids()
+        H, W, num_image_channels = wrapper.base_env.observation_space["image"].shape
+        num_global_voltages = wrapper.num_gates + wrapper.num_barriers
+
+        for agent_id in agent_ids[:2]:
+            agent_obs = obs[agent_id]
+            assert 'global_image' in agent_obs, f"missing global_image for {agent_id}"
+            assert 'global_voltages' in agent_obs, f"missing global_voltages for {agent_id}"
+            assert agent_obs['global_image'].shape == (H, W, num_image_channels), (
+                f"{agent_id} global_image shape {agent_obs['global_image'].shape} "
+                f"!= expected ({H}, {W}, {num_image_channels})"
+            )
+            assert agent_obs['global_voltages'].shape == (num_global_voltages,), (
+                f"{agent_id} global_voltages shape {agent_obs['global_voltages'].shape} "
+                f"!= expected ({num_global_voltages},)"
+            )
+            print(f"  {agent_id}: image{agent_obs['image'].shape}, "
+                  f"global_image{agent_obs['global_image'].shape}, "
+                  f"global_voltages{agent_obs['global_voltages'].shape}")
+
+        # Confirm global state is identical across all agents at the same step
+        ref_global_image = obs[agent_ids[0]]['global_image']
+        ref_global_voltages = obs[agent_ids[0]]['global_voltages']
+        for agent_id in agent_ids[1:]:
+            assert np.array_equal(obs[agent_id]['global_image'], ref_global_image), (
+                f"global_image differs across agents (agent {agent_id})"
+            )
+            assert np.array_equal(obs[agent_id]['global_voltages'], ref_global_voltages), (
+                f"global_voltages differs across agents (agent {agent_id})"
+            )
+        print("✓ global_image / global_voltages are identical across all agents")
+
+        # Step once and re-check
+        actions = {aid: wrapper.action_spaces[aid].sample() for aid in agent_ids}
+        obs, rewards, terminated, truncated, info = wrapper.step(actions)
+        assert 'global_image' in obs[agent_ids[0]]
+        assert 'global_voltages' in obs[agent_ids[0]]
+        print("✓ Step successful with global state attached")
+
+        # Diagnostic plot: side-by-side per-agent slices vs the shared global image,
+        # plus a bar chart of the global voltage vector. Lets the user (and Claude)
+        # eyeball that channel routing is correct before moving on.
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+
+            global_image = obs[agent_ids[0]]['global_image']
+            global_voltages = obs[agent_ids[0]]['global_voltages']
+
+            n_cols = max(num_image_channels, 1)
+            fig, axes = plt.subplots(
+                nrows=2, ncols=n_cols, figsize=(3 * n_cols, 6), squeeze=False
+            )
+            for c in range(num_image_channels):
+                axes[0, c].imshow(global_image[:, :, c], cmap='plasma')
+                axes[0, c].set_title(f"global_image[c={c}]")
+                axes[0, c].axis('off')
+            # Show the per-agent image of the first plunger and first barrier
+            ref_plunger = wrapper.gate_agent_ids[0]
+            ref_barrier = wrapper.barrier_agent_ids[0]
+            axes[1, 0].imshow(obs[ref_plunger]['image'][:, :, 0], cmap='plasma')
+            axes[1, 0].set_title(f"{ref_plunger}.image[c=0]")
+            axes[1, 0].axis('off')
+            if n_cols > 1:
+                axes[1, 1].imshow(obs[ref_plunger]['image'][:, :, 1], cmap='plasma')
+                axes[1, 1].set_title(f"{ref_plunger}.image[c=1]")
+                axes[1, 1].axis('off')
+            if n_cols > 2:
+                axes[1, 2].imshow(obs[ref_barrier]['image'][:, :, 0], cmap='plasma')
+                axes[1, 2].set_title(f"{ref_barrier}.image[c=0]")
+                axes[1, 2].axis('off')
+            for c in range(3, n_cols):
+                axes[1, c].axis('off')
+
+            fig.tight_layout()
+            img_path = diag_dir / "wrapper_smoke_images.png"
+            fig.savefig(img_path, dpi=110)
+            plt.close(fig)
+            print(f"✓ Saved per-agent vs global image plot → {img_path}")
+
+            # Voltage bar chart
+            labels = (
+                [f"plunger_{i}" for i in range(wrapper.num_gates)]
+                + [f"barrier_{i}" for i in range(wrapper.num_barriers)]
+            )
+            fig, ax = plt.subplots(figsize=(8, 3))
+            ax.bar(labels, global_voltages)
+            ax.axhline(0, color='k', linewidth=0.5)
+            ax.set_ylabel("normalized voltage")
+            ax.set_title("global_voltages (one shared vector across all agents)")
+            ax.tick_params(axis='x', rotation=30)
+            fig.tight_layout()
+            volt_path = diag_dir / "wrapper_smoke_voltages.png"
+            fig.savefig(volt_path, dpi=110)
+            plt.close(fig)
+            print(f"✓ Saved global_voltages bar chart → {volt_path}")
+
+            # Numerical dump for grepping / diffing
+            data_path = diag_dir / "wrapper_smoke_summary.txt"
+            with open(data_path, "w") as f:
+                f.write(f"num_agents (gates+barriers): {wrapper.num_gates}+{wrapper.num_barriers}\n")
+                f.write(f"global_image.shape: {global_image.shape}\n")
+                f.write(f"global_image min/max: {global_image.min():.4f} / {global_image.max():.4f}\n")
+                f.write(f"global_voltages.shape: {global_voltages.shape}\n")
+                f.write(f"global_voltages: {global_voltages.tolist()}\n")
+                f.write(f"per-agent voltages:\n")
+                for aid in agent_ids:
+                    f.write(f"  {aid}: {obs[aid]['voltage'].tolist()}\n")
+            print(f"✓ Wrote numerical summary → {data_path}")
+        except ImportError:
+            print("(matplotlib unavailable — skipping diagnostic plots)")
 
         wrapper.close()
         print("\n✓ All tests passed!")

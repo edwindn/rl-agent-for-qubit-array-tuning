@@ -9,6 +9,8 @@ from ray.rllib.algorithms.ppo.torch.default_ppo_torch_rl_module import DefaultPP
 from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec, RLModuleSpec
 
 from swarm.voltage_model.algorithms import (
+    CustomMAPPOCatalog,
+    CustomMAPPOTorchRLModule,
     CustomPPOCatalog,
     CustomSACCatalog,
     CustomSACTorchRLModule,
@@ -113,6 +115,13 @@ def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = No
     if algo == "ppo":
         module_class = DefaultPPOTorchRLModule
         catalog_class = CustomPPOCatalog
+    elif algo == "mappo":
+        # MAPPO is PPO with a centralized critic. The custom RLModule overrides
+        # compute_values to route the embeddings=None fallback through the
+        # MAPPORoutingEncoder (the default impl calls critic_encoder directly,
+        # which would feed per-agent obs into the centralized encoder).
+        module_class = CustomMAPPOTorchRLModule
+        catalog_class = CustomMAPPOCatalog
     elif algo == "sac":
         module_class = CustomSACTorchRLModule
         catalog_class = CustomSACCatalog
@@ -120,7 +129,45 @@ def create_rl_module_spec(env_config: dict, algo: str = "ppo", config: dict = No
         module_class = CustomTD3TorchRLModule
         catalog_class = CustomTD3Catalog
     else:
-        raise ValueError(f"Unsupported algorithm: {algo}. Supported: 'ppo', 'sac', 'td3'")
+        raise ValueError(f"Unsupported algorithm: {algo}. Supported: 'ppo', 'mappo', 'sac', 'td3'")
+
+    # MAPPO needs each agent's obs_space to also expose the global state so the
+    # catalog can size the centralized critic encoder. The actor still reads
+    # only its per-agent {image, voltage}; the critic reads {global_image,
+    # global_voltages}. The env wrapper populates these keys when constructed
+    # with return_global_state=True.
+    if algo == "mappo":
+        global_image_space = spaces.Box(
+            low=0.0,
+            high=1.0,
+            shape=(image_shape[0], image_shape[1], num_channels),
+            dtype=np.float32,
+        )
+        num_agents = num_dots + (num_dots - 1)  # plungers + barriers
+        global_voltage_space = spaces.Box(
+            low=min(gate_low, barrier_low),
+            high=max(gate_high, barrier_high),
+            shape=(num_agents,),
+            dtype=np.float32,
+        )
+        gate_voltage_space = spaces.Box(
+            low=gate_low, high=gate_high, shape=(1,), dtype=np.float32,
+        )
+        barrier_voltage_space = spaces.Box(
+            low=barrier_low, high=barrier_high, shape=(1,), dtype=np.float32,
+        )
+        gate_obs_space = spaces.Dict({
+            "image": gate_obs_space,
+            "voltage": gate_voltage_space,
+            "global_image": global_image_space,
+            "global_voltages": global_voltage_space,
+        })
+        barrier_obs_space = spaces.Dict({
+            "image": barrier_obs_space,
+            "voltage": barrier_voltage_space,
+            "global_image": global_image_space,
+            "global_voltages": global_voltage_space,
+        })
 
     # Create single agent RLModule specs
     plunger_spec = RLModuleSpec(

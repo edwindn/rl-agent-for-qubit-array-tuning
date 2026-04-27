@@ -9,6 +9,12 @@ Common utilities are in common.py
 """
 
 from .common import build_encoder_config, get_head_input_dim
+from .mappo import (
+    CustomMAPPOCatalog,
+    CustomMAPPOTorchRLModule,
+    MAPPOEncoderConfig,
+    MAPPORoutingEncoder,
+)
 from .ppo import CustomPPOCatalog
 from .sac import CustomSACCatalog, CustomSACTorchRLModule
 from .td3 import CustomTD3Catalog, CustomTD3TorchRLModule
@@ -20,6 +26,11 @@ __all__ = [
     "get_head_input_dim",
     # PPO
     "CustomPPOCatalog",
+    # MAPPO
+    "CustomMAPPOCatalog",
+    "CustomMAPPOTorchRLModule",
+    "MAPPOEncoderConfig",
+    "MAPPORoutingEncoder",
     # SAC
     "CustomSACCatalog",
     "CustomSACTorchRLModule",

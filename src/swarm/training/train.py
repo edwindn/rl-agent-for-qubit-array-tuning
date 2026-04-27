@@ -111,6 +111,13 @@ def parse_arguments():
         help='Load training_config.yaml and env_config.yaml from checkpoint directory instead of default config files'
     )
 
+    parser.add_argument(
+        '--env-config',
+        type=str,
+        default=None,
+        help='Path to env_config YAML (overrides the default env/env_config.yaml). Useful for smoke tests that need update_method=null.'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -122,8 +129,14 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None):
-    """Create multi-agent quantum environment with JAX safety."""
+def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None, return_global_state=False):
+    """Create multi-agent quantum environment with JAX safety.
+
+    When ``return_global_state=True`` (used by MAPPO), each agent's observation
+    Dict additionally includes ``global_image`` (full N-1 channel CSD stack)
+    and ``global_voltages`` (concatenated all-agent voltages) for the
+    centralized critic.
+    """
     import os
     import jax
 
@@ -151,6 +164,7 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     # RLlib handles temporal sequences via ConnectorV2, not via environment
     return MultiAgentEnvWrapper(
         return_voltage=True,
+        return_global_state=return_global_state,
         gif_config=gif_config,
         distance_data_dir=distance_data_dir,
         env_config_path=env_config_path,
@@ -184,13 +198,18 @@ def load_config(config_path=None, checkpoint_path=None):
     return config
 
 
-def load_env_config(checkpoint_path=None):
+def load_env_config(checkpoint_path=None, env_config_override=None):
     """Load environment configuration from YAML file.
 
     Args:
         checkpoint_path: Path to checkpoint directory. If provided, loads from checkpoint instead of default location
+        env_config_override: Optional explicit path to an env_config YAML. Takes precedence over checkpoint_path.
     """
-    if checkpoint_path:
+    if env_config_override is not None:
+        config_file = Path(env_config_override)
+        if not config_file.exists():
+            raise FileNotFoundError(f"--env-config path does not exist: {config_file}")
+    elif checkpoint_path:
         # Load from checkpoint directory
         config_file = Path(checkpoint_path) / "env_config.yaml"
         if not config_file.exists():
@@ -283,11 +302,13 @@ def main():
         cleanup_gif_files(gif_config['save_dir'])
 
         # Load env config directly from YAML (no GPU initialization needed on driver)
-        env_config = load_env_config(checkpoint_path)
+        env_config = load_env_config(checkpoint_path, env_config_override=args.env_config)
 
-        # Write env_config to a temporary file so workers can load it
+        # Write env_config to a temporary file so workers can load it. Needed
+        # whenever the driver's env_config differs from the on-disk default —
+        # i.e. when loading from checkpoint OR when --env-config was passed.
         temp_env_config_path = None
-        if checkpoint_path:
+        if checkpoint_path or args.env_config:
             import tempfile
             temp_env_config_file = tempfile.NamedTemporaryFile(
                 mode='w', suffix='.yaml', delete=False, dir='/tmp'
@@ -297,7 +318,19 @@ def main():
             temp_env_config_file.close()
             print(f"Written env config to temporary file: {temp_env_config_path}")
 
-        create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir, env_config_path=temp_env_config_path)
+        # MAPPO needs the env wrapper to attach the global state to every per-agent
+        # observation. The flag is decided here from the algorithm config so the
+        # registered env is consistent with the RLModule spec built below.
+        algo_str = config['rl_config']['algorithm'].lower()
+        return_global_state = algo_str == "mappo"
+
+        create_env_fn = partial(
+            create_env,
+            gif_config=gif_config,
+            distance_data_dir=distance_data_dir,
+            env_config_path=temp_env_config_path,
+            return_global_state=return_global_state,
+        )
         register_env("qarray_multiagent_env", create_env_fn)
 
         # Merge with training config for wandb logging
@@ -336,8 +369,16 @@ def main():
                 "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
             }
         }
-        
+
         algo = config['rl_config']['algorithm'].lower()
+        # MAPPO is PPO with a centralized critic; the catalog reads the per-policy
+        # `centralized_critic` block to size its critic encoder + value head.
+        if algo == "mappo":
+            cc_cfg = config['neural_networks']
+            for policy_name in ("plunger_policy", "barrier_policy"):
+                rl_module_config[policy_name]["centralized_critic"] = (
+                    cc_cfg[policy_name]["centralized_critic"]
+                )
 
         rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
 
@@ -358,8 +399,8 @@ def main():
             # Remove PPO-only parameters when using SAC
             for param in ppo_only_params:
                 training_params.pop(param, None)
-        elif algo == 'ppo':
-            # Remove SAC-only parameters when using PPO
+        elif algo in ('ppo', 'mappo'):
+            # MAPPO uses PPOConfig under the hood, so the same param filter applies.
             for param in sac_only_params:
                 training_params.pop(param, None)
 
@@ -368,12 +409,15 @@ def main():
         # custom_callbacks = partial(CustomCallbacks, log_images=log_images)
 
         # Select algorithm config builder
-        if algo == "ppo":
+        if algo in ("ppo", "mappo"):
+            # MAPPO is PPO + centralized critic; the centralization lives entirely in
+            # the RLModule (custom catalog + routing encoder), so the algorithm
+            # config builder is plain PPOConfig.
             algo_config_builder = PPOConfig
         elif algo == "sac":
             algo_config_builder = SACConfig
         else:
-            raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, sac")
+            raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, mappo, sac")
 
         # Handle voltage parsing to memory manually
         use_deltas = env_config['simulator']['use_deltas']
