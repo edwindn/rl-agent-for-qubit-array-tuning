@@ -1,0 +1,25 @@
+{
+  "system": {
+    "N_QUBITS": 4,
+    "N": 3
+  },
+  "qubit": {
+    "omega_01_GHz": {"min": 4.000, "max": 6.000},
+    "alpha_GHz":    {"min": -0.300, "max": -0.200}
+  },
+  "crosstalk": {
+    "lambda_": {"min": 0.00, "max": 0.50}
+  },
+  "pulse": {
+    "t_g":       {"min": 16.0,  "max": 24.0},
+    "omega_d_GHz": {"sigma_GHz": 0.01},
+    "phi":       {"min": -3.141592653589793, "max": 3.141592653589793},
+    "Omega":     {"sigma_frac": 0.1},
+    "beta":      {"min": 0.5,  "max": 1.5}
+  },
+  "hardware": {
+    "phi_hw":      {"min": -3.141592653589793, "max": 3.141592653589793},
+    "t_delay":     {"min": -2.0,  "max": 2.0},
+    "Omega_scale": {"min":  0.85, "max": 1.15}
+  }
+}
