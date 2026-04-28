@@ -1,3 +1,9 @@
+## Benchmark run weights
+
+| Algorithm | wandb run | Notes |
+|-----------|-----------|-------|
+| MAPPO     | `zany-cloud-648` (https://wandb.ai/rl_agents_for_tuning/RLModel/runs/5cz5lz9v) | 4 dots, 400 iters, no virtualization (`update_method: null`). Best ~iter 250-300. |
+
 ## Main script for running inference
 
 Example command:
