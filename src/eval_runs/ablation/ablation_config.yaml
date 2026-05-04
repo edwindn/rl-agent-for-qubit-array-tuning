@@ -100,4 +100,13 @@ algos:
     env_overrides: {}
     notes: "FACMAC — local ckpt 454200 (converged); test_barrier degraded from peak 14.08@82k -> ~5.0 by 380k+"
 
+  facmac_peak:
+    # Same training run as `facmac`, but at t=101400 (closest saved ckpt to the
+    # test_barrier peak at t≈82k). Reported as a separate entry so the paper
+    # can show both "best the algo achieved" and "converged final" framings.
+    pipeline: "facmac"
+    local_checkpoint: "/home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/facmac/results/models/facmac_quantum_full__2026-04-25_23-52-05/101400"
+    env_overrides: {}
+    notes: "FACMAC at t=101400 (near peak test_barrier at t≈82k); for 'best achieved' comparison"
+
   # TODO: maddpg — training launching tonight on Modal; eval entry will be added once ckpt ready
