@@ -486,10 +486,10 @@ def main():
                 rl_module_spec=rl_module_spec,
             )
             .env_runners(
-                num_env_runners=1,
+                num_env_runners=config['rl_config']['env_runners'].get('num_env_runners', 1),
                 rollout_fragment_length=config['rl_config']['env_runners']['rollout_fragment_length'],
                 sample_timeout_s=config['rl_config']['env_runners']['sample_timeout_s'],
-                num_gpus_per_env_runner=0.9,
+                num_gpus_per_env_runner=config['rl_config']['env_runners'].get('num_gpus_per_env_runner', 0.9),
                 env_to_module_connector=env_to_module_connector,
                 add_default_connectors_to_env_to_module_pipeline=True,  # Let Ray handle defaults
             )
@@ -508,7 +508,7 @@ def main():
                    else {}),
             )
             .evaluation(
-                evaluation_num_env_runners=1,
+                evaluation_num_env_runners=config['rl_config'].get('evaluation', {}).get('evaluation_num_env_runners', 1),
                 evaluation_duration=1,  # Run 1 episode per evaluation
                 evaluation_duration_unit="episodes",
                 evaluation_sample_timeout_s=1800,

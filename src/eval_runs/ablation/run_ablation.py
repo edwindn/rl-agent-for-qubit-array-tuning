@@ -178,14 +178,28 @@ def _prepare_checkpoint(
     # Override num_iterations to ablation episode count.
     full_cfg.setdefault("defaults", {})["num_iterations"] = int(num_episodes)
 
-    # Inference-friendly Ray topology: single local env runner + dedicated GPU
-    # for the learner. Training-time multi-runner setup (num_env_runners: 12
-    # @ 0.25 GPU each) trips a Ray 2.51 race in EnvRunnerGroup.get_spaces on
-    # this server.
+    # Inference-friendly Ray topology: pure local eval — no remote env runners
+    # at all (sampling or evaluation). Training-time multi-runner setup
+    # (num_env_runners: 12 @ 0.25 GPU each) trips a Ray 2.51 race in
+    # EnvRunnerGroup.get_spaces on this server, and even
+    # evaluation_num_env_runners=1 stalls between reset and step 1 for some
+    # checkpoints (PPO+IMPALA, run_473) — local eval avoids both.
     rl_cfg = full_cfg.setdefault("rl_config", {})
     rl_cfg.setdefault("env_runners", {})["num_env_runners"] = 0
     rl_cfg["env_runners"]["num_gpus_per_env_runner"] = 0
+    rl_cfg.setdefault("evaluation", {})["evaluation_num_env_runners"] = 0
     rl_cfg.setdefault("learners", {})["num_gpus_per_learner"] = 1.0
+
+    # Disable GIF + scan-image capture for ablation — both write a PNG per
+    # step per agent, costing ~1 sec/step in I/O alone. We only need the
+    # per-episode .npy distance trajectories that the ablation_metrics
+    # pipeline consumes.
+    full_cfg.setdefault("gif_config", {})["enabled"] = False
+    full_cfg["defaults"]["save_distance_data"] = True   # confirm .npy stays on
+    # The scan-saving wrapper writes if env var SCAN_SAVE_ENABLED is truthy;
+    # main.py sets the dir unconditionally. Safest is to flag via the wrapper
+    # path: setting scan_save_dir to None in env_config disables it (handled
+    # below in env_overrides).
 
     # Patch ray.runtime_env.excludes — eval_runs/ accumulates >500MB of past
     # collected_data on this machine and Ray's working_dir upload caps at 512MB.
@@ -231,18 +245,18 @@ def _run_eval(algo_name: str, ckpt_dir: Path, num_episodes: int, gpu: int | None
     env = os.environ.copy()
     if gpu is not None:
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-    # main.py reads num_episodes from training_config (or its own default); pass
-    # via env var as a generic override hook — our main.py respects N_EVAL_EPISODES
-    # if set (added 2026-05-04 for ablation reproducibility).
     env["ABLATION_NUM_EPISODES"] = str(num_episodes)
     env["ABLATION_ALGO_NAME"] = algo_name
+    # Unbuffered stdout/stderr so progress prints land in the log immediately
+    # (default block-buffering when redirected to a file makes runs look hung).
+    env["PYTHONUNBUFFERED"] = "1"
 
     cmd = [
-        "uv", "run", "python", str(EVAL_MAIN),
+        "uv", "run", "python", "-u", str(EVAL_MAIN),
         "--load-checkpoint", str(ckpt_dir),
         "--disable-wandb",
     ]
-    print(f"[{algo_name}] running: {' '.join(cmd)}")
+    print(f"[{algo_name}] running: {' '.join(cmd)}", flush=True)
     subprocess.check_call(cmd, env=env, cwd=str(REPO_ROOT))
 
 
