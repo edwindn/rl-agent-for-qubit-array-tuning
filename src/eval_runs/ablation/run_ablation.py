@@ -196,6 +196,14 @@ def _prepare_checkpoint(
     # pipeline consumes.
     full_cfg.setdefault("gif_config", {})["enabled"] = False
     full_cfg["defaults"]["save_distance_data"] = True   # confirm .npy stays on
+
+    # Skip per-iteration checkpoint saves. The eval loop runs algo.evaluate()
+    # which doesn't change weights, so saving each iteration is wasteful. More
+    # importantly, parallel ablation runs share cwd=qaduub-mappo and would
+    # all race on the same ./checkpoints/iteration_N/ path — observed crash:
+    # FileNotFoundError on .../iteration_5/learner_group/state.pkl when two
+    # processes save concurrently.
+    full_cfg.setdefault("checkpoints", {})["save_per_iter"] = False
     # The scan-saving wrapper writes if env var SCAN_SAVE_ENABLED is truthy;
     # main.py sets the dir unconditionally. Safest is to flag via the wrapper
     # path: setting scan_save_dir to None in env_config disables it (handled

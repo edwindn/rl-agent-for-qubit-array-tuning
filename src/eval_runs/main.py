@@ -632,29 +632,36 @@ def main():
             if config['gif_config']['enabled'] and use_wandb:
                 process_and_log_gifs(i + 1, config, use_wandb)
 
-            # Save checkpoint using modern RLlib API
-            local_checkpoint_dir = Path(config['checkpoints']['save_dir']) / f"iteration_{i+1}"
-            local_checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            checkpoint_path = algo.save_to_path(str(local_checkpoint_dir.absolute()))
+            # Save checkpoint using modern RLlib API. Skip when running eval-only
+            # (each "iteration" is just an algo.evaluate() call with no gradient
+            # updates, so the saved weights would be identical to the loaded
+            # checkpoint). Multiple parallel ablation runs share the working
+            # directory, so unconditional saves race on the same iteration_X path.
+            if config['checkpoints'].get('save_per_iter', True):
+                local_checkpoint_dir = Path(config['checkpoints']['save_dir']) / f"iteration_{i+1}"
+                local_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                checkpoint_path = algo.save_to_path(str(local_checkpoint_dir.absolute()))
 
-            # Delete old checkpoints if enabled (keep only latest)
-            if config['defaults']['delete_old_checkpoints']:
-                delete_old_checkpoint_if_needed(Path(config['checkpoints']['save_dir']))
+                # Delete old checkpoints if enabled (keep only latest)
+                if config['defaults']['delete_old_checkpoints']:
+                    delete_old_checkpoint_if_needed(Path(config['checkpoints']['save_dir']))
 
-            # Upload checkpoint as wandb artifact if performance improved
-            if config['checkpoints']['upload_best_only']:
-                current_reward = result.get("env_runners", {}).get(
-                    "episode_return_mean", float("-inf")
-                )
-                if current_reward is not None and current_reward > best_reward:
-                    best_reward = current_reward
-                    upload_checkpoint_artifact(checkpoint_path, i + 1, current_reward)
+                # Upload checkpoint as wandb artifact if performance improved
+                if config['checkpoints']['upload_best_only']:
+                    current_reward = result.get("env_runners", {}).get(
+                        "episode_return_mean", float("-inf")
+                    )
+                    if current_reward is not None and current_reward > best_reward:
+                        best_reward = current_reward
+                        upload_checkpoint_artifact(checkpoint_path, i + 1, current_reward)
+                else:
+                    # Upload only at every 25 iterations (25, 50, 75, etc.)
+                    if (i + 1) % 25 == 0:
+                        upload_checkpoint_artifact(checkpoint_path, i + 1, 0.0)
+
+                print(f"\nIteration {i+1} completed. Checkpoint saved to: {checkpoint_path}\n")
             else:
-                # Upload only at every 25 iterations (25, 50, 75, etc.)
-                if (i + 1) % 25 == 0:
-                    upload_checkpoint_artifact(checkpoint_path, i + 1, 0.0)
-
-            print(f"\nIteration {i+1} completed. Checkpoint saved to: {checkpoint_path}\n")
+                print(f"\nIteration {i+1} completed (checkpoint save skipped).\n")
 
     finally:
         if ray.is_initialized():
