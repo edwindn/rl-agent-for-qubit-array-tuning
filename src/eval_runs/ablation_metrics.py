@@ -61,11 +61,16 @@ def _sorted_steps(steps: Iterable[StepId]) -> List[StepId]:
     return sorted(steps, key=_key)
 
 
-def _load_distances(path: Path) -> np.ndarray:
+def _load_distances(path: Path) -> Optional[np.ndarray]:
+    """Load a per-episode distance trajectory.
+
+    Returns None for empty files (e.g. an algo.evaluate() reset that never
+    stepped) so the caller can skip the episode without aborting the run.
+    """
     distances = np.load(path)
     distances = np.asarray(distances).squeeze()
     if distances.size == 0:
-        raise ValueError(f"Loaded empty distance data from {path}")
+        return None
     if not np.isfinite(distances).all():
         raise ValueError(f"Distance data contains non-finite values: {path}")
     if distances.ndim != 1:
@@ -91,9 +96,16 @@ def _compute_run_metrics(run_dir: Path, radius: float, length: int) -> Optional[
 
     for step in _sorted_steps(common_steps):
         per_agent_series: List[np.ndarray] = []
+        skip_episode = False
         for agent_name, step_map in agent_steps.items():
             path = step_map[step]
-            per_agent_series.append(_load_distances(path))
+            series = _load_distances(path)
+            if series is None:
+                skip_episode = True
+                break
+            per_agent_series.append(series)
+        if skip_episode:
+            continue
 
         min_len = min(series.size for series in per_agent_series)
         if min_len < length:
