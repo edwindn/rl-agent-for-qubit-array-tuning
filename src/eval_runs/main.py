@@ -168,6 +168,7 @@ def create_env(
     scan_save_dir=None,
     is_collecting_data=False,
     capacitance_model_checkpoint=None,
+    return_global_state=False,
 ):
     """Create multi-agent quantum environment with JAX safety."""
     import os
@@ -194,6 +195,7 @@ def create_env(
     # RLlib handles temporal sequences via ConnectorV2, not via environment
     return ScanSavingWrapper(
         return_voltage=True,
+        return_global_state=return_global_state,
         gif_config=gif_config,
         distance_data_dir=distance_data_dir,
         env_config_path=env_config_path,
@@ -338,6 +340,7 @@ def main():
             capacitance_model_checkpoint=capacitance_weights_path,
             scan_save_dir=str(scan_save_dir),
             is_collecting_data=True,
+            return_global_state=(config['rl_config']['algorithm'].lower() == "mappo"),
         )
         register_env("qarray_multiagent_env", create_env_fn)
 
@@ -399,8 +402,8 @@ def main():
             # Remove PPO-only parameters when using SAC
             for param in ppo_only_params:
                 training_params.pop(param, None)
-        elif algo == 'ppo':
-            # Remove SAC-only parameters when using PPO
+        elif algo in ('ppo', 'mappo'):
+            # Remove SAC-only parameters when using PPO/MAPPO
             for param in sac_only_params:
                 training_params.pop(param, None)
 
@@ -408,13 +411,15 @@ def main():
         # log_images = config['wandb']['log_images']
         # custom_callbacks = partial(CustomCallbacks, log_images=log_images)
 
-        # Select algorithm config builder
-        if algo == "ppo":
+        # Select algorithm config builder. MAPPO uses PPOConfig with a
+        # centralized critic wired up via the custom RLModule spec; the algo
+        # builder is the same as plain PPO.
+        if algo in ("ppo", "mappo"):
             algo_config_builder = PPOConfig
         elif algo == "sac":
             algo_config_builder = SACConfig
         else:
-            raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, sac")
+            raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, mappo, sac")
 
         # Handle voltage parsing to memory manually
         use_deltas = env_config['simulator']['use_deltas']
@@ -482,7 +487,7 @@ def main():
                 # Code-level settings
                 learner_connector=learner_connector,
                 # Algorithm-specific learner classes
-                **({"learner_class": PPOLearnerWithValueStats} if algo == "ppo"
+                **({"learner_class": PPOLearnerWithValueStats} if algo in ("ppo", "mappo")
                    else {"learner_class": SACLearnerWithRewardScaling} if algo == "sac"
                    else {}),
             )
@@ -506,6 +511,16 @@ def main():
         print(f"\nBuilding {algo} algorithm...\n")
 
         algo = algo_config.build()
+
+        # Ray 2.51 race: build() returns before learner actor is registered as
+        # healthy in worker_manager. restore_from_path -> sync_weights ->
+        # learner_group.get_state() then crashes with IndexError because
+        # healthy_actor_ids() is empty. Force a probe with healthy_only=False +
+        # mark_healthy=True to flip the bit before restore.
+        wm = algo.learner_group._worker_manager
+        print(f"Pre-probe: actors={len(wm._actors)}, healthy={len(wm.healthy_actor_ids())}")
+        wm.foreach_actor(func=lambda w: True, healthy_only=False, mark_healthy=True)
+        print(f"Post-probe: healthy={len(wm.healthy_actor_ids())}")
 
         # Handle checkpoint loading if requested
         start_iteration = 0

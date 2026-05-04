@@ -28,6 +28,7 @@ class ScanSavingWrapper(MultiAgentEnvWrapper):
         self,
         training: bool = True,
         return_voltage: bool = False,
+        return_global_state: bool = False,
         gif_config: dict = None,
         distance_data_dir: str = None,
         env_config_path: str = None,
@@ -53,6 +54,7 @@ class ScanSavingWrapper(MultiAgentEnvWrapper):
         super().__init__(
             training=training,
             return_voltage=return_voltage,
+            return_global_state=return_global_state,
             gif_config=gif_config,
             distance_data_dir=distance_data_dir,
             env_config_path=env_config_path,
