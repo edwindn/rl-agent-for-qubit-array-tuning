@@ -84,6 +84,20 @@ algos:
     env_overrides: {}
     notes: "MAPPO benchmark — zany-cloud-648, 4 dots, 400 iters, update_method=null. Best ~iter 250-300."
 
-  # TODO: single_agent_sac (need wandb run number from user)
-  # TODO: facmac (need checkpoint dir / wandb run; pipeline=facmac wired up but no entry yet)
-  # TODO: maddpg (Step 3, deferred — need source/branch info)
+  single_agent_sac:
+    wandb_project: "rl_agents_for_tuning/SingleAgentBenchmark"
+    wandb_run_number: 72
+    pipeline: "single_agent"
+    env_overrides: {}
+    notes: "Single-agent SAC baseline — ethereal-sunset-72"
+
+  facmac:
+    # Local checkpoint (not from wandb). FACMAC was unstable; we eval the final
+    # saved policy at t=454200 to show converged-but-degraded performance in
+    # the table, with the instability narrative in the paper text.
+    pipeline: "facmac"
+    local_checkpoint: "/home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/facmac/results/models/facmac_quantum_full__2026-04-25_23-52-05/454200"
+    env_overrides: {}
+    notes: "FACMAC — local ckpt 454200 (converged); test_barrier degraded from peak 14.08@82k -> ~5.0 by 380k+"
+
+  # TODO: maddpg — training launching tonight on Modal; eval entry will be added once ckpt ready

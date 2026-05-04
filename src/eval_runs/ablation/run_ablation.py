@@ -291,13 +291,16 @@ def _run_eval(
     elif pipeline == "facmac":
         # FACMAC eval writes per-trial .npy files into the same
         # collected_data/{ts}_{algo} layout the rlmodel pipeline uses.
-        # FACMAC also requires an env_config yaml (num_dots, max_steps, etc.) —
-        # _prepare_checkpoint writes one to ckpt_dir.
+        # FACMAC also requires an env_config yaml (num_dots, max_steps, etc.).
+        # For wandb-sourced ckpts _prepare_checkpoint writes one; for local
+        # ckpts we fall back to the canonical FACMAC env_quantum_full.yaml.
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_dir = REPO_ROOT / "src" / "eval_runs" / "collected_data" / f"{ts}_{algo_name}"
         out_dir.mkdir(parents=True, exist_ok=True)
         env_cfg_path = ckpt_dir / "env_config.yaml"
+        if not env_cfg_path.exists():
+            env_cfg_path = REPO_ROOT / "benchmarks" / "facmac" / "configs" / "env_quantum_full.yaml"
         cmd = [
             "uv", "run", "--extra", "facmac", "python", "-u", str(FACMAC_EVAL),
             "--checkpoint-dir", str(ckpt_dir),
@@ -340,7 +343,13 @@ def main():
     weights_root = Path(args.weights_root).resolve()
     weights_root.mkdir(parents=True, exist_ok=True)
 
-    if args.skip_download and (weights_root / args.algo).exists():
+    if "local_checkpoint" in algo_cfg:
+        ckpt_dir = Path(algo_cfg["local_checkpoint"]).resolve()
+        if not ckpt_dir.exists():
+            print(f"[{args.algo}] local_checkpoint not found: {ckpt_dir}", file=sys.stderr)
+            sys.exit(3)
+        print(f"[{args.algo}] using local_checkpoint {ckpt_dir}")
+    elif args.skip_download and (weights_root / args.algo).exists():
         ckpt_dir = weights_root / args.algo
         print(f"[{args.algo}] reusing existing {ckpt_dir}")
     else:
