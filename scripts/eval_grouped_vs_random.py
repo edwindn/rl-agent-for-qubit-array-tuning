@@ -57,7 +57,14 @@ def run_episode(env, policy_split, modules, seed, mode="greedy", rng=None):
 
 
 def _render(G: np.ndarray, R: np.ndarray, out: Path, n_seeds: int, ckpt_name: str):
-    """Plot the convergence curve from precomputed arrays. Saves PNG + SVG."""
+    """Plot the convergence curve from precomputed arrays. Saves PNG + SVG.
+
+    G and R are (n_seeds, n_steps+1) arrays of per-step mean-across-qubits
+    reward. We plot the cumulative best ("closest the policy got, ever") along
+    the step axis so the curve reflects "score we'd record if we kept the best
+    configuration seen so far" — calibration is non-destructive: there's no
+    cost to rolling back to an earlier-seen better point.
+    """
     plt.rcParams.update({
         "font.family": "sans-serif",
         "font.sans-serif": ["DejaVu Sans"],
@@ -68,8 +75,12 @@ def _render(G: np.ndarray, R: np.ndarray, out: Path, n_seeds: int, ckpt_name: st
     })
     fig, ax = plt.subplots(figsize=(3.5, 2.6))
     x = np.arange(G.shape[1])
-    g_mean, g_std = G.mean(axis=0), G.std(axis=0)
-    r_mean, r_std = R.mean(axis=0), R.std(axis=0)
+
+    G_best = np.maximum.accumulate(G, axis=1)
+    R_best = np.maximum.accumulate(R, axis=1)
+
+    g_mean, g_std = G_best.mean(axis=0), G_best.std(axis=0)
+    r_mean, r_std = R_best.mean(axis=0), R_best.std(axis=0)
 
     QADAPT_C = "#3369c6"   # blue from benchmarks palette
     RANDOM_C = "#303030"   # near-black axis colour
