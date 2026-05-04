@@ -1,0 +1,83 @@
+# Ablation table config — single source of truth for which algos go in the
+# paper table and how each one is evaluated.
+#
+# To add an algo:
+#   1. Add an entry under `algos` with the run number (the integer suffix of
+#      the wandb display name, e.g. ethereal-surf-473 -> 473).
+#   2. Specify env_overrides as nested dict for any env_config.yaml fields that
+#      differ from the canonical run (use dotted keys for nesting).
+#   3. Run: uv run python run_ablation.py --algo <name> --gpu N
+#   4. After all runs are done: uv run python compute_table.py
+#
+# All RLModel runs use the same eval pipeline (qaduub-mappo main.py).
+# Single-agent and facmac variants are flagged with `pipeline:` for special
+# handling (placeholder — see TODO).
+
+defaults:
+  num_episodes: 100
+  episode_length: 49
+  radii: [2.0, 5.0, 10.0]
+  output_root: "/home/rahul/qaduub-mappo/src/eval_runs/collected_data/ablation"
+
+algos:
+  qadapt:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 473
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "Main QADAPT — IMPALA backbone, no memory layer, kalman updater"
+
+  nature_cnn:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 484
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "w/ Nature CNN backbone instead of IMPALA"
+
+  lstm:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 520
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "w/ LSTM memory layer"
+
+  transformer:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 555
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "w/ Transformer memory layer (was 0% conv at 2V)"
+
+  gamma_nonzero:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 511
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "Discount factor > 0 ablation (separate from main table)"
+
+  w_o_virtualization:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 496
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "IPPO-equivalent: trained with update_method=null (no virtualization)"
+
+  w_o_kalman:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 473      # SAME WEIGHTS as qadapt
+    pipeline: "rlmodel"
+    env_overrides:
+      capacitance_model.update_method: "direct"   # bypass Kalman smoothing
+    notes: "Same weights as qadapt; env with 'direct' updater (no Kalman)"
+
+  single_agent_ppo:
+    wandb_project: "rl_agents_for_tuning/SingleAgentBenchmark"
+    wandb_run_number: 57
+    pipeline: "single_agent"
+    env_overrides: {}
+    notes: "Single-agent PPO baseline"
+
+  # TODO: single_agent_sac (TBD)
+  # TODO: facmac (different codebase; needs facmac-benchmark branch / oxwhirl)
+  # TODO: maddpg (Step 3, deferred)
+  # TODO: mappo (re-pull iter_323; eval pipeline is rlmodel-compatible)
