@@ -90,7 +90,7 @@ def _render(G: np.ndarray, R: np.ndarray, out: Path, n_seeds: int, ckpt_name: st
     ax.plot(x, g_mean, color=QADAPT_C, lw=1.6)
     ax.plot(x, r_mean, color=RANDOM_C, lw=1.4, ls="--")
 
-    ax.set_xlabel("Step")
+    ax.set_xlabel("time step ($t$)")
     ax.set_ylabel("Score")
     ax.set_ylim(0.5, 1.0)
     ax.set_xlim(0, G.shape[1] - 1)
