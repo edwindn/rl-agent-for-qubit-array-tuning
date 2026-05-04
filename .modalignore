@@ -1,0 +1,114 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments (both with and without slash for safety)
+.venv
+.venv/
+.conda
+.conda/
+venv
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Logs and outputs
+*.log
+*.out
+logs/
+runs/
+wandb/
+tensorboard_logs/
+weights_symmetric_150k/
+
+# Ray session data
+/tmp/ray/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large data files
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.csv
+*.json
+*.png
+*.gif
+
+# Lock files
+poetry.lock
+Pipfile.lock
+
+# Large output files (use Modal Volumes instead)
+src/swarm/training/checkpoints/
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+
+# Large data directories
+data/
+symmetric_dataset_150k/
+logs/
+artifacts/
+collected_data/
+scan_captures/
+gif_captures/
+rollout_scans/
+src/swarm/qarray_dataset
+src/swarm/artifacts
+src/swarm/wandb
+src/swarm/training/wandb
+src/swarm/training/data
+src/swarm/training/checkpoints
+src/swarm/capacitance_model/wandb
+src/swarm/capacitance_model/weights
+src/swarm/capacitance_model/symmetric_weights_separate
+src/swarm/capacitance_model/symmetric_weights_impala
+src/swarm/capacitance_model/mobilenet_final_epoch_8
+src/swarm/environment/gui
+weights_symmetric_150k_impala/
+benchmarks/.venv
+benchmarks/checkpoints
+benchmarks/wandb
+benchmarks/dreamer
+benchmarks/single_agent
+benchmarks/*.log
+benchmarks/results
+benchmarks/20*
+checkpoints
+wandb
+
+# Claude Code
+CLAUDE.md
+.Claude
