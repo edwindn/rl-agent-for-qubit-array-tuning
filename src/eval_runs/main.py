@@ -323,10 +323,16 @@ def main():
         # Clean up any previous GIF capture lock files
         cleanup_gif_files(gif_config['save_dir'])
 
-        # Create scan save directory (use absolute path for Ray workers)
-        scan_save_dir = Path(__file__).parent.resolve() / "scan_captures"
-        scan_save_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Scan images will be saved to: {scan_save_dir}\n")
+        # Create scan save directory (use absolute path for Ray workers).
+        # Tie scan saving to gif_config.enabled — when both are off (e.g. ablation
+        # eval), skip the per-step PNG writes that cost ~2-3s/step in I/O.
+        if config["gif_config"].get("enabled", True):
+            scan_save_dir = Path(__file__).parent.resolve() / "scan_captures"
+            scan_save_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Scan images will be saved to: {scan_save_dir}\n")
+        else:
+            scan_save_dir = None
+            print("Scan saving disabled (gif_config.enabled=False)\n")
 
         # Load env config directly from YAML (no GPU initialization needed on driver).
         # Pass checkpoint_path so ablation runs that bundle a per-run env_config.yaml
@@ -354,7 +360,7 @@ def main():
             distance_data_dir=distance_data_dir,
             env_config_path=temp_env_config_path,
             capacitance_model_checkpoint=capacitance_weights_path,
-            scan_save_dir=str(scan_save_dir),
+            scan_save_dir=str(scan_save_dir) if scan_save_dir is not None else None,
             is_collecting_data=True,
             return_global_state=(config['rl_config']['algorithm'].lower() == "mappo"),
         )
