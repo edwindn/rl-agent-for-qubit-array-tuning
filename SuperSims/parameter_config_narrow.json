@@ -1,0 +1,27 @@
+{
+  "_comment": "10x narrowed ranges around the canonical midpoints for fast-converge diagnostic runs. Use this when verifying the RL plumbing before tackling the full distribution.",
+  "system": {
+    "N_QUBITS": 4,
+    "N": 3
+  },
+  "qubit": {
+    "omega_01_GHz": {"min": 4.95, "max": 5.05, "tuning_down_GHz": 0.15},
+    "alpha_GHz":    {"min": -0.255, "max": -0.245}
+  },
+  "crosstalk": {
+    "lambda_": {"min": 0.00, "max": 0.05}
+  },
+  "pulse": {
+    "t_g":         {"min": 19.5, "max": 20.5},
+    "omega_d_GHz": {"sigma_GHz": 0.001, "window_GHz": 0.05},
+    "phi":         {"min": -0.31415926535897932, "max": 0.31415926535897932},
+    "Omega":       {"sigma_frac": 0.01, "bound_frac": 0.30},
+    "_comment_beta": "Centered on the true raised-cosine DRAG optimum beta=0.5 (NOT 1.0 — the textbook beta=1 result assumes a Gaussian envelope). 10x narrower than full: half-span 0.05.",
+    "beta":        {"min": 0.45, "max": 0.55}
+  },
+  "hardware": {
+    "phi_hw":      {"min": -0.31415926535897932, "max": 0.31415926535897932},
+    "t_delay":     {"min": -0.2, "max": 0.2},
+    "Omega_scale": {"min": 0.985, "max": 1.015}
+  }
+}

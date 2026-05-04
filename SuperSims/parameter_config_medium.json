@@ -1,0 +1,27 @@
+{
+  "_comment": "3× narrowed ranges around the canonical midpoints. Used for diagnostic runs where we want a meaningful gradient signal (improvement budget ~0.08, not the 0.016 of the 10× narrow config) without the wrecking-ball regime of the full distribution.",
+  "system": {
+    "N_QUBITS": 4,
+    "N": 3
+  },
+  "qubit": {
+    "omega_01_GHz": {"min": 4.833, "max": 5.167, "tuning_down_GHz": 0.15},
+    "alpha_GHz":    {"min": -0.267, "max": -0.233}
+  },
+  "crosstalk": {
+    "lambda_": {"min": 0.00, "max": 0.167}
+  },
+  "pulse": {
+    "t_g":         {"min": 18.667, "max": 21.333},
+    "omega_d_GHz": {"sigma_GHz": 0.00333, "window_GHz": 0.05},
+    "phi":         {"min": -1.0471975511965976, "max": 1.0471975511965976},
+    "Omega":       {"sigma_frac": 0.0333, "bound_frac": 0.30},
+    "_comment_beta": "Centered on the true raised-cosine DRAG optimum beta=0.5 (NOT 1.0 — see docstring fix in parameter_config.json). 3x narrower than full: half-span 0.167.",
+    "beta":        {"min": 0.333, "max": 0.667}
+  },
+  "hardware": {
+    "phi_hw":      {"min": -1.0471975511965976, "max": 1.0471975511965976},
+    "t_delay":     {"min": -0.667, "max": 0.667},
+    "Omega_scale": {"min": 0.95, "max": 1.05}
+  }
+}

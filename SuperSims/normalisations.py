@@ -32,20 +32,19 @@ Typical usage per step:
 
 _2pi = 2.0 * jnp.pi
 
-# ----- Fixed bounds from config ----- #
-_cfg      = json.loads((Path(__file__).parent / "parameter_config.json").read_text())
-_BETA_MIN = _cfg["pulse"]["beta"]["min"]
-_BETA_MAX = _cfg["pulse"]["beta"]["max"]
+# ----- All bounds from parameter_config.json ----- #
+# Init ranges (sigma_GHz, sigma_frac, min/max) and tuning ranges
+# (tuning_down_GHz, window_GHz, bound_frac, min/max) live side-by-side per
+# parameter — see the _comment_* fields in parameter_config.json.
+_cfg = json.loads((Path(__file__).parent / "parameter_config.json").read_text())
 
-# ----- Normalisation-specific bound constants ----- #
-_OMEGA_01_DOWN    = _2pi * 0.15  # 150 MHz downward tuning range [rad/ns]
-                                 #   (halved from 300 MHz on 2026-05-02 per Cornelius;
-                                 #   real-device drift fits within 150 MHz, narrower
-                                 #   range gives finer per-step action precision.)
-_OMEGA_D_WINDOW   = _2pi * 0.05  # ±50 MHz window around omega_01 [rad/ns]
-_OMEGA_BOUND_FRAC = 0.30         # ±30% of estimated 2π/t_g for Omega bounds
-_PHI_MIN          = -jnp.pi      # phi lower bound [rad] — matches [-π, π] wrap target
-_PHI_MAX          =  jnp.pi      # phi upper bound [rad]
+_BETA_MIN         = _cfg["pulse"]["beta"]["min"]
+_BETA_MAX         = _cfg["pulse"]["beta"]["max"]
+_PHI_MIN          = _cfg["pulse"]["phi"]["min"]
+_PHI_MAX          = _cfg["pulse"]["phi"]["max"]
+_OMEGA_01_DOWN    = _2pi * _cfg["qubit"]["omega_01_GHz"]["tuning_down_GHz"]
+_OMEGA_D_WINDOW   = _2pi * _cfg["pulse"]["omega_d_GHz"]["window_GHz"]
+_OMEGA_BOUND_FRAC = _cfg["pulse"]["Omega"]["bound_frac"]
 
 
 def episode_bounds(omega_01_init, t_g):
