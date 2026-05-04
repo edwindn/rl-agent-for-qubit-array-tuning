@@ -248,8 +248,23 @@ def _prepare_checkpoint(
     return ckpt_dir
 
 
-def _run_eval(algo_name: str, ckpt_dir: Path, num_episodes: int, gpu: int | None):
-    """Invoke main.py for inference. Output dir is created automatically by main.py."""
+SINGLE_AGENT_TRAIN = REPO_ROOT / "src" / "swarm" / "single_agent_ablations" / "train.py"
+FACMAC_EVAL = REPO_ROOT / "benchmarks" / "facmac" / "run_eval_trials.py"
+
+
+def _run_eval(
+    algo_name: str,
+    ckpt_dir: Path,
+    num_episodes: int,
+    gpu: int | None,
+    pipeline: str = "rlmodel",
+):
+    """Invoke the appropriate eval entry point based on pipeline kind.
+
+    - rlmodel: src/eval_runs/main.py (PPO/MAPPO/SAC swarm)
+    - single_agent: src/swarm/single_agent_ablations/train.py --eval-only
+    - facmac: benchmarks/facmac/run_eval_trials.py --npy-output-dir
+    """
     env = os.environ.copy()
     if gpu is not None:
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
@@ -259,11 +274,40 @@ def _run_eval(algo_name: str, ckpt_dir: Path, num_episodes: int, gpu: int | None
     # (default block-buffering when redirected to a file makes runs look hung).
     env["PYTHONUNBUFFERED"] = "1"
 
-    cmd = [
-        "uv", "run", "python", "-u", str(EVAL_MAIN),
-        "--load-checkpoint", str(ckpt_dir),
-        "--disable-wandb",
-    ]
+    if pipeline == "rlmodel":
+        cmd = [
+            "uv", "run", "python", "-u", str(EVAL_MAIN),
+            "--load-checkpoint", str(ckpt_dir),
+            "--disable-wandb",
+        ]
+    elif pipeline == "single_agent":
+        cmd = [
+            "uv", "run", "python", "-u", str(SINGLE_AGENT_TRAIN),
+            "--load-checkpoint", str(ckpt_dir),
+            "--load-configs",
+            "--eval-only",
+            "--disable-wandb",
+        ]
+    elif pipeline == "facmac":
+        # FACMAC eval writes per-trial .npy files into the same
+        # collected_data/{ts}_{algo} layout the rlmodel pipeline uses.
+        # FACMAC also requires an env_config yaml (num_dots, max_steps, etc.) —
+        # _prepare_checkpoint writes one to ckpt_dir.
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = REPO_ROOT / "src" / "eval_runs" / "collected_data" / f"{ts}_{algo_name}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        env_cfg_path = ckpt_dir / "env_config.yaml"
+        cmd = [
+            "uv", "run", "--extra", "facmac", "python", "-u", str(FACMAC_EVAL),
+            "--checkpoint-dir", str(ckpt_dir),
+            "--env-config", str(env_cfg_path),
+            "--num-trials", str(num_episodes),
+            "--npy-output-dir", str(out_dir),
+        ]
+    else:
+        raise ValueError(f"Unknown pipeline: {pipeline}")
+
     print(f"[{algo_name}] running: {' '.join(cmd)}", flush=True)
     subprocess.check_call(cmd, env=env, cwd=str(REPO_ROOT))
 
@@ -286,9 +330,10 @@ def main():
         sys.exit(1)
 
     algo_cfg = cfg["algos"][args.algo]
-    if algo_cfg.get("pipeline", "rlmodel") != "rlmodel":
-        print(f"[{args.algo}] pipeline={algo_cfg['pipeline']} — only 'rlmodel' is wired up. "
-              f"Single-agent / facmac TODO.", file=sys.stderr)
+    pipeline = algo_cfg.get("pipeline", "rlmodel")
+    if pipeline not in ("rlmodel", "single_agent", "facmac"):
+        print(f"[{args.algo}] pipeline={pipeline} — supported: rlmodel, single_agent, facmac.",
+              file=sys.stderr)
         sys.exit(2)
 
     num_episodes = args.num_episodes or cfg["defaults"]["num_episodes"]
@@ -301,7 +346,7 @@ def main():
     else:
         ckpt_dir = _prepare_checkpoint(args.algo, algo_cfg, weights_root, num_episodes)
 
-    _run_eval(args.algo, ckpt_dir, num_episodes, args.gpu)
+    _run_eval(args.algo, ckpt_dir, num_episodes, args.gpu, pipeline=pipeline)
     print(f"[{args.algo}] done.")
 
 

@@ -104,6 +104,15 @@ def parse_arguments():
         help='Load training_config.yaml and env_config.yaml from checkpoint directory instead of default config files'
     )
 
+    parser.add_argument(
+        '--eval-only',
+        action='store_true',
+        help='Eval mode: each iteration calls algo.evaluate() (no gradient updates) '
+             'and per-iter checkpoint saves are skipped. Use with --load-checkpoint '
+             'to evaluate a trained policy and dump per-episode .npy distance '
+             'trajectories under collected_data/.'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -215,13 +224,25 @@ def main():
     if hasattr(args, 'config_overrides') and args.config_overrides:
         config = apply_config_overrides(config, args.config_overrides)
 
-    # Create timestamped data folder if save_distance_data is enabled
+    # Create timestamped data folder if save_distance_data is enabled.
+    # In --eval-only mode, write to src/eval_runs/collected_data/{ts}_{algo}
+    # so compute_table.py finds the .npy distance trajectories alongside the
+    # multi-agent ablation runs. Otherwise (training), keep the historical
+    # location next to single_agent_ablations/.
     distance_data_dir = None
     if config['defaults']['save_distance_data']:
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        data_parent_dir = Path(__file__).parent / "data"
-        distance_data_dir = data_parent_dir / timestamp
+        if args.eval_only and args.load_checkpoint:
+            checkpoint_name = Path(args.load_checkpoint).name
+            data_parent_dir = (
+                Path(__file__).resolve().parents[3]
+                / "src" / "eval_runs" / "collected_data"
+            )
+            distance_data_dir = data_parent_dir / f"{timestamp}_{checkpoint_name}"
+        else:
+            data_parent_dir = Path(__file__).parent / "data"
+            distance_data_dir = data_parent_dir / timestamp
 
         # Create parent data directory first with proper permissions
         data_parent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)
@@ -397,6 +418,19 @@ def main():
             # .callbacks([custom_callbacks] if use_wandb else [])
         )
 
+        # Evaluation block — only added when --eval-only so the training path
+        # is unchanged. Mirrors main.py's pattern: use local eval (no remote
+        # env runner) to avoid the Ray 2.51 race + the PPO+IMPALA stall we hit
+        # in the multi-agent pipeline.
+        if args.eval_only:
+            algo_config = algo_config.evaluation(
+                evaluation_num_env_runners=0,
+                evaluation_duration=1,
+                evaluation_duration_unit="episodes",
+                evaluation_sample_timeout_s=1800,
+                evaluation_config={"explore": True},
+            )
+
         # Build the algorithm
         print(f"\nBuilding {algo} algorithm...\n")
 
@@ -495,6 +529,18 @@ def main():
         best_reward = float("-inf")  # Track best performance for artifact upload
 
         for i in range(start_iteration, config['defaults']['num_iterations']):
+            # Eval mode runs algo.evaluate() — no gradient updates, no per-iter
+            # checkpoint save, no wandb upload. Used by run_ablation.py for the
+            # single_agent pipeline so the loaded weights stay frozen and the
+            # env wrapper still dumps per-episode .npy distance trajectories.
+            if args.eval_only:
+                result = algo.evaluate()
+                print_training_progress(result, i, training_start_time)
+                if use_wandb:
+                    log_to_wandb(result, i, distance_data_dir)
+                print(f"\nIteration {i+1} completed (eval-only).\n")
+                continue
+
             result = algo.train()
 
             # Clean console output and wandb logging

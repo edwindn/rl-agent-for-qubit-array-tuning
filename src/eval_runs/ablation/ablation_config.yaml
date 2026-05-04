@@ -77,7 +77,13 @@ algos:
     env_overrides: {}
     notes: "Single-agent PPO baseline"
 
-  # TODO: single_agent_sac (TBD)
-  # TODO: facmac (different codebase; needs facmac-benchmark branch / oxwhirl)
-  # TODO: maddpg (Step 3, deferred)
-  # TODO: mappo (re-pull iter_323; eval pipeline is rlmodel-compatible)
+  mappo:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 648
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "MAPPO benchmark — zany-cloud-648, 4 dots, 400 iters, update_method=null. Best ~iter 250-300."
+
+  # TODO: single_agent_sac (need wandb run number from user)
+  # TODO: facmac (need checkpoint dir / wandb run; pipeline=facmac wired up but no entry yet)
+  # TODO: maddpg (Step 3, deferred — need source/branch info)
