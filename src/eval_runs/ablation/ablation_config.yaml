@@ -17,7 +17,7 @@ defaults:
   num_episodes: 100
   episode_length: 49
   radii: [2.0, 5.0, 10.0]
-  output_root: "/home/rahul/qaduub-mappo/src/eval_runs/collected_data"
+  output_root: "/home/rahul/qaduub-mappo-bf/src/eval_runs/collected_data"
 
 algos:
   qadapt:

@@ -71,7 +71,7 @@ from swarm.training.train_utils import (  # noqa: E402
     create_env_to_module_connector,
 )
 
-from swarm.voltage_model import create_rl_module_spec
+from swarm.voltage_model import create_rl_module_spec, create_rl_module_spec_supersims
 from swarm.training.utils.custom_ppo_learner import PPOLearnerWithValueStats  # for logging
 from swarm.training.utils.custom_sac_learner import SACLearnerWithRewardScaling  # for reward scaling
 
@@ -129,13 +129,23 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None, return_global_state=False):
-    """Create multi-agent quantum environment with JAX safety.
+def create_env(
+    config=None,
+    gif_config=None,
+    distance_data_dir=None,
+    env_config_path=None,
+    return_global_state=False,
+    env_type: str = "dot",
+):
+    """Create the multi-agent env, dispatching on env_type.
 
-    When ``return_global_state=True`` (used by MAPPO), each agent's observation
-    Dict additionally includes ``global_image`` (full N-1 channel CSD stack)
-    and ``global_voltages`` (concatenated all-agent voltages) for the
-    centralized critic.
+    env_type:
+      - "dot"       (default): MultiAgentEnvWrapper around QuantumDeviceEnv.
+      - "supersims": SuperSimsMultiAgentWrapper around SuperSimsEnv (All-XY calibration).
+
+    When env_type=="dot" and return_global_state=True (MAPPO), each agent's
+    observation Dict additionally includes global_image + global_voltages for
+    the centralized critic.
     """
     import os
     import jax
@@ -145,8 +155,6 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.1")
     os.environ.setdefault("JAX_ENABLE_X64", "true")
 
-    assert gif_config is not None, "Gif config dict required to set up rollout visualisation"
-
     # Try to clear any existing JAX state
     try:
         # Force JAX to use a fresh backend in each worker
@@ -154,21 +162,30 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     except:
         pass
 
+    if env_type == "supersims":
+        from swarm.environment.supersims_multi_agent_wrapper import SuperSimsMultiAgentWrapper
+        kwargs = {}
+        if env_config_path:
+            # SuperSimsEnv resolves relative paths against its own __file__'s dir.
+            # Workers don't have access to the driver's cwd, so pass just the
+            # basename if the file lives next to supersims_env.py.
+            from os.path import basename
+            kwargs["config_path"] = basename(env_config_path)
+        return SuperSimsMultiAgentWrapper(**kwargs)
+
+    assert gif_config is not None, "Gif config dict required to set up rollout visualisation"
     from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
 
     # Path to capacitance model weights (hardcoded)
     capacitance_model_checkpoint = "eval_runs/mobilenet_barrier_weights.pth"
 
-    # Wrap in multi-agent wrapper (config unused but required by RLlib)
-    # need return_voltage=True if we are using deltas + LSTM/Transformer
-    # RLlib handles temporal sequences via ConnectorV2, not via environment
     return MultiAgentEnvWrapper(
         return_voltage=True,
         return_global_state=return_global_state,
         gif_config=gif_config,
         distance_data_dir=distance_data_dir,
         env_config_path=env_config_path,
-        capacitance_model_checkpoint=capacitance_model_checkpoint
+        capacitance_model_checkpoint=capacitance_model_checkpoint,
     )
 
 
@@ -297,12 +314,16 @@ def main():
     ray.init(**ray_config)
 
     try:
-        gif_config = config["gif_config"]
-        # Clean up any previous GIF capture lock files
-        cleanup_gif_files(gif_config['save_dir'])
-
         # Load env config directly from YAML (no GPU initialization needed on driver)
         env_config = load_env_config(checkpoint_path, env_config_override=args.env_config)
+        env_type = env_config.get("env_type", "dot")
+
+        if env_type == "supersims":
+            # SuperSims doesn't render GIFs; gif_config is unused but kept None.
+            gif_config = None
+        else:
+            gif_config = config["gif_config"]
+            cleanup_gif_files(gif_config['save_dir'])
 
         # Write env_config to a temporary file so workers can load it. Needed
         # whenever the driver's env_config differs from the on-disk default —
@@ -324,13 +345,20 @@ def main():
         algo_str = config['rl_config']['algorithm'].lower()
         return_global_state = algo_str == "mappo"
 
-        create_env_fn = partial(
-            create_env,
-            gif_config=gif_config,
-            distance_data_dir=distance_data_dir,
-            env_config_path=temp_env_config_path,
-            return_global_state=return_global_state,
-        )
+        if env_type == "supersims":
+            create_env_fn = partial(
+                create_env,
+                env_type="supersims",
+                env_config_path=args.env_config or temp_env_config_path,
+            )
+        else:
+            create_env_fn = partial(
+                create_env,
+                gif_config=gif_config,
+                distance_data_dir=distance_data_dir,
+                env_config_path=temp_env_config_path,
+                return_global_state=return_global_state,
+            )
         register_env("qarray_multiagent_env", create_env_fn)
 
         # Merge with training config for wandb logging
@@ -357,30 +385,56 @@ def main():
             os.unlink(merged_config_path)
 
         # Optionally update the rl module config to allow log_std clamping, shared log_std vector etc.
-        rl_module_config = {
-            "plunger_policy": {
-                **config['neural_networks']['plunger_policy'],
-                "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
-                "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
-            },
-            "barrier_policy": {
-                **config['neural_networks']['barrier_policy'],
-                "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
-                "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
-            }
-        }
-
         algo = config['rl_config']['algorithm'].lower()
-        # MAPPO is PPO with a centralized critic; the catalog reads the per-policy
-        # `centralized_critic` block to size its critic encoder + value head.
-        if algo == "mappo":
-            cc_cfg = config['neural_networks']
-            for policy_name in ("plunger_policy", "barrier_policy"):
-                rl_module_config[policy_name]["centralized_critic"] = (
-                    cc_cfg[policy_name]["centralized_critic"]
-                )
+        free_log_std = config['rl_config']['multi_agent']['free_log_std']
+        log_std_bounds = config['rl_config']['multi_agent']['log_std_bounds']
 
-        rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
+        if env_type == "supersims":
+            policy_split = env_config.get("policy_split", "per_qubit")
+            if policy_split == "per_qubit":
+                policy_ids = ["qubit_policy"]
+            elif policy_split == "per_param":
+                policy_ids = [f"{p}_policy" for p in ("omega01", "omegad", "phi", "drive", "beta")]
+            elif policy_split == "grouped":
+                policy_ids = ["freq_policy", "env_policy"]
+            else:
+                raise ValueError(
+                    f"Unknown policy_split={policy_split!r} for SuperSims env"
+                )
+            rl_module_config = {
+                pid: {
+                    **config['neural_networks'][pid],
+                    "free_log_std": free_log_std,
+                    "log_std_bounds": log_std_bounds,
+                }
+                for pid in policy_ids
+            }
+            rl_module_spec = create_rl_module_spec_supersims(
+                env_config, algo=algo, config=rl_module_config
+            )
+        else:
+            rl_module_config = {
+                "plunger_policy": {
+                    **config['neural_networks']['plunger_policy'],
+                    "free_log_std": free_log_std,
+                    "log_std_bounds": log_std_bounds,
+                },
+                "barrier_policy": {
+                    **config['neural_networks']['barrier_policy'],
+                    "free_log_std": free_log_std,
+                    "log_std_bounds": log_std_bounds,
+                }
+            }
+            # MAPPO is PPO with a centralized critic; the catalog reads the per-policy
+            # `centralized_critic` block to size its critic encoder + value head.
+            if algo == "mappo":
+                cc_cfg = config['neural_networks']
+                for policy_name in ("plunger_policy", "barrier_policy"):
+                    rl_module_config[policy_name]["centralized_critic"] = (
+                        cc_cfg[policy_name]["centralized_critic"]
+                    )
+
+            rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
 
         # Filter training parameters based on algorithm
         # PPO-specific parameters that should NOT be passed to SAC
@@ -420,17 +474,25 @@ def main():
             raise ValueError(f"Unsupported algorithm: {algo}. Supported: ppo, mappo, sac")
 
         # Handle voltage parsing to memory manually
-        use_deltas = env_config['simulator']['use_deltas']
-        memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
-        has_lstm = memory_layer == 'lstm'
-        has_transformer = memory_layer == 'transformer'
+        if env_type == "supersims":
+            # SuperSims has its own staircase observation; no delta-encoding pipeline.
+            use_deltas = False
+            has_lstm = False
+            has_transformer = False
+            use_frame_stacking = False
+            num_frames = 1
+        else:
+            use_deltas = env_config['simulator']['use_deltas']
+            memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
+            has_lstm = memory_layer == 'lstm'
+            has_transformer = memory_layer == 'transformer'
 
-        # Determine if we need frame stacking for temporal models (transformer)
-        use_frame_stacking = has_transformer
-        num_frames = 1
-        if use_frame_stacking:
-            num_frames = config['neural_networks']['plunger_policy']['backbone']['transformer']['max_seq_len']
-            print(f"\n[Frame Stacking] Enabled with {num_frames} frames for transformer\n")
+            # Determine if we need frame stacking for temporal models (transformer)
+            use_frame_stacking = has_transformer
+            num_frames = 1
+            if use_frame_stacking:
+                num_frames = config['neural_networks']['plunger_policy']['backbone']['transformer']['max_seq_len']
+                print(f"\n[Frame Stacking] Enabled with {num_frames} frames for transformer\n")
 
         # Build env-to-module connector
         # Note: We prioritize frame stacking over custom LSTM connector when both are applicable
@@ -602,8 +664,8 @@ def main():
             # Log metrics to wandb (EMA is calculated automatically in metrics_logger)
             log_to_wandb(result, i, distance_data_dir)
 
-            # Process and log GIFs if enabled
-            if config['gif_config']['enabled'] and use_wandb:
+            # Process and log GIFs if enabled (dot-tuning env only).
+            if env_type != "supersims" and config['gif_config']['enabled'] and use_wandb:
                 process_and_log_gifs(i + 1, config, use_wandb)
 
             # Save checkpoint using modern RLlib API
