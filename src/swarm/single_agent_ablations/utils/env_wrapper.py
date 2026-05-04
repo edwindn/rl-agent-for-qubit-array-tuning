@@ -42,6 +42,7 @@ class SingleAgentEnvWrapper(gym.Env):
         num_dots_override=None,
         use_barriers=True,
         distance_data_dir=None,
+        capacitance_model_checkpoint=None,
     ):
         """
         Initialize single-agent wrapper.
@@ -52,9 +53,16 @@ class SingleAgentEnvWrapper(gym.Env):
             num_dots_override: If provided, overrides num_dots from config
             use_barriers: Whether to include barrier voltages in action/observation space
             distance_data_dir: Optional path to directory for saving distance data
+            capacitance_model_checkpoint: Optional path to mobilenet weights, required
+                when env_config.capacitance_model.update_method == 'kalman'
         """
         super().__init__()
-        self.base_env = QuantumDeviceEnv(training=training, config_path=config_path, num_dots=num_dots_override)
+        self.base_env = QuantumDeviceEnv(
+            training=training,
+            config_path=config_path,
+            num_dots=num_dots_override,
+            capacitance_model_checkpoint=capacitance_model_checkpoint,
+        )
 
         self.use_barriers = use_barriers
         self.distance_data_dir = distance_data_dir

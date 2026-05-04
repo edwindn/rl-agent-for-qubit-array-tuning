@@ -87,7 +87,7 @@ algos:
   single_agent_sac:
     wandb_project: "rl_agents_for_tuning/SingleAgentBenchmark"
     wandb_run_number: 72
-    pipeline: "single_agent"
+    pipeline: "single_agent_sac"
     env_overrides: {}
     notes: "Single-agent SAC baseline — ethereal-sunset-72"
 

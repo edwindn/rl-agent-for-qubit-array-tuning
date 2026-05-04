@@ -124,7 +124,7 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None, use_barriers=True):
+def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_path=None, use_barriers=True, capacitance_model_checkpoint=None):
     """Create single-agent quantum environment with JAX safety."""
     import os
     import jax
@@ -152,6 +152,7 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
         config_path=env_config_path,
         distance_data_dir=distance_data_dir,
         use_barriers=use_barriers,
+        capacitance_model_checkpoint=capacitance_model_checkpoint,
     )
 
 
@@ -298,8 +299,9 @@ def main():
         # Load env config directly from YAML (no GPU initialization needed on driver)
         env_config = load_env_config(checkpoint_path)
 
-        # Get train_barriers setting from training config
-        train_barriers = config['rl_config']['train_barriers']
+        # Get train_barriers setting from training config (older runs lack the
+        # key — default True, matching create_env's default).
+        train_barriers = config['rl_config'].get('train_barriers', True)
 
         # Write env_config to a temporary file so workers can load it
         temp_env_config_path = None
@@ -313,11 +315,27 @@ def main():
             temp_env_config_file.close()
             print(f"Written env config to temporary file: {temp_env_config_path}")
 
+        # Pass capacitance_model weights through to the env wrapper. We try
+        # the env_config's relative weights_path first (matches main.py's
+        # rlmodel pipeline; relative to the worker cwd which Ray sets to
+        # `src/`), then fall back to the project-root symlink location.
+        candidates = []
+        cm_cfg = env_config.get("capacitance_model", {}) if isinstance(env_config, dict) else {}
+        if cm_cfg.get("weights_path"):
+            candidates.append(project_root / "src" / cm_cfg["weights_path"])
+        candidates.append(project_root / "src" / "src" / "eval_runs" / "mobilenet_barrier_weights.pth")
+        candidates.append(project_root / "src" / "eval_runs" / "mobilenet_barrier_weights.pth")
+        capacitance_model_checkpoint = next((str(p) for p in candidates if p.exists()), None)
+        if capacitance_model_checkpoint is None and cm_cfg.get("update_method") == "kalman":
+            print(f"[single_agent train] WARNING: Kalman update_method requested but no mobilenet "
+                  f"weights found. Tried: {[str(p) for p in candidates]}")
+
         create_env_fn = partial(
             create_env,
             env_config_path=temp_env_config_path,
             distance_data_dir=distance_data_dir,
             use_barriers=train_barriers,
+            capacitance_model_checkpoint=capacitance_model_checkpoint,
         )
         register_env("qarray_singleagent_env", create_env_fn)
 

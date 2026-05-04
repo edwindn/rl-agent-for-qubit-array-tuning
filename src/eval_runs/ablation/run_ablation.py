@@ -249,6 +249,7 @@ def _prepare_checkpoint(
 
 
 SINGLE_AGENT_TRAIN = REPO_ROOT / "src" / "swarm" / "single_agent_ablations" / "train.py"
+SINGLE_AGENT_SAC_TRAIN = REPO_ROOT / "src" / "swarm" / "single_agent_sac" / "train.py"
 FACMAC_EVAL = REPO_ROOT / "benchmarks" / "facmac" / "run_eval_trials.py"
 
 
@@ -288,6 +289,14 @@ def _run_eval(
             "--eval-only",
             "--disable-wandb",
         ]
+    elif pipeline == "single_agent_sac":
+        cmd = [
+            "uv", "run", "python", "-u", str(SINGLE_AGENT_SAC_TRAIN),
+            "--load-checkpoint", str(ckpt_dir),
+            "--load-configs",
+            "--eval-only",
+            "--disable-wandb",
+        ]
     elif pipeline == "facmac":
         # FACMAC eval writes per-trial .npy files into the same
         # collected_data/{ts}_{algo} layout the rlmodel pipeline uses.
@@ -300,7 +309,9 @@ def _run_eval(
         out_dir.mkdir(parents=True, exist_ok=True)
         env_cfg_path = ckpt_dir / "env_config.yaml"
         if not env_cfg_path.exists():
-            env_cfg_path = REPO_ROOT / "benchmarks" / "facmac" / "configs" / "env_quantum_full.yaml"
+            # env_quantum_full.yaml is the *sacred* wrapper (env_args.env_config_path);
+            # the underlying env_config.yaml that QArray actually consumes is this:
+            env_cfg_path = REPO_ROOT / "benchmarks" / "facmac" / "configs" / "env_config_full.yaml"
         cmd = [
             "uv", "run", "--extra", "facmac", "python", "-u", str(FACMAC_EVAL),
             "--checkpoint-dir", str(ckpt_dir),
@@ -334,9 +345,9 @@ def main():
 
     algo_cfg = cfg["algos"][args.algo]
     pipeline = algo_cfg.get("pipeline", "rlmodel")
-    if pipeline not in ("rlmodel", "single_agent", "facmac"):
-        print(f"[{args.algo}] pipeline={pipeline} — supported: rlmodel, single_agent, facmac.",
-              file=sys.stderr)
+    if pipeline not in ("rlmodel", "single_agent", "single_agent_sac", "facmac"):
+        print(f"[{args.algo}] pipeline={pipeline} — supported: rlmodel, single_agent, "
+              f"single_agent_sac, facmac.", file=sys.stderr)
         sys.exit(2)
 
     num_episodes = args.num_episodes or cfg["defaults"]["num_episodes"]
