@@ -38,7 +38,10 @@ _BETA_MIN = _cfg["pulse"]["beta"]["min"]
 _BETA_MAX = _cfg["pulse"]["beta"]["max"]
 
 # ----- Normalisation-specific bound constants ----- #
-_OMEGA_01_DOWN    = _2pi * 0.3   # 300 MHz downward tuning range [rad/ns]
+_OMEGA_01_DOWN    = _2pi * 0.15  # 150 MHz downward tuning range [rad/ns]
+                                 #   (halved from 300 MHz on 2026-05-02 per Cornelius;
+                                 #   real-device drift fits within 150 MHz, narrower
+                                 #   range gives finer per-step action precision.)
 _OMEGA_D_WINDOW   = _2pi * 0.05  # ±50 MHz window around omega_01 [rad/ns]
 _OMEGA_BOUND_FRAC = 0.30         # ±30% of estimated 2π/t_g for Omega bounds
 _PHI_MIN          = -jnp.pi      # phi lower bound [rad] — matches [-π, π] wrap target

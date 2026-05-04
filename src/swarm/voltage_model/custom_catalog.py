@@ -3,6 +3,7 @@ Custom neural networks for RL training
 """
 
 import gymnasium as gym
+import numpy as np
 from ray.rllib.algorithms.ppo.ppo_catalog import PPOCatalog
 from ray.rllib.algorithms.sac.sac_catalog import SACCatalog
 from ray.rllib.core.models.configs import ModelConfig
@@ -15,7 +16,10 @@ from .custom_neural_nets import (
     PolicyHeadConfig,
     ValueHeadConfig,
     TransformerConfig,
-    LSTMConfig
+    LSTMConfig,
+    MLPEncoderConfig,
+    MLPFlatPolicyHeadConfig,
+    MLPFlatValueHeadConfig,
 )
 
 class CustomPPOCatalog(PPOCatalog):
@@ -143,6 +147,23 @@ class CustomPPOCatalog(PPOCatalog):
         # No memory layer - just backbone
         backbone_type = backbone_config["type"]
 
+        if backbone_type == "MLP":
+            # Vector-obs path. observation_space is a Dict; extract per-key flat dims.
+            from gymnasium.spaces import Dict as DictSpace
+            if not isinstance(observation_space, DictSpace):
+                raise ValueError(
+                    f"MLP backbone expects a Dict observation_space, got {type(observation_space)}"
+                )
+            obs_keys = tuple(observation_space.spaces.keys())
+            obs_dims = tuple(int(np.prod(observation_space[k].shape)) for k in obs_keys)
+            return MLPEncoderConfig(
+                obs_keys=obs_keys,
+                obs_dims=obs_dims,
+                hidden_layers=backbone_config.get("hidden_layers"),
+                feature_size=backbone_config["feature_size"],
+                activation=backbone_config.get("activation", "relu"),
+            )
+
         if backbone_type == "IMPALA":
             return IMPALAConfig(
                 input_dims=observation_space.shape,
@@ -185,6 +206,27 @@ class CustomPPOCatalog(PPOCatalog):
         else:
             input_dim = backbone_config["feature_size"]
 
+        # MLP backbone uses a flat-input head (no per-step voltage embedding,
+        # since the encoder already concatenated everything). The default
+        # PolicyHead is image+voltage specific.
+        if backbone_config["type"] == "MLP":
+            free_log_std = bool(self._model_config_dict.get("free_log_std", False))
+            log_std_init = float(self._model_config_dict.get("log_std_init", -2.3))
+            action_dim = int(self.action_space.shape[0])
+            config = MLPFlatPolicyHeadConfig(
+                input_dims=(input_dim,),
+                hidden_layers=policy_config["hidden_layers"],
+                activation=policy_config["activation"],
+                # When free_log_std=True the config infers output_layer_dim = action_dim
+                # from action_dim in __post_init__; otherwise it stays at action_dim*2.
+                output_layer_dim=action_dim * 2,
+                action_dim=action_dim,
+                free_log_std=free_log_std,
+                log_std_init=log_std_init,
+                log_std_bounds=self._model_config_dict.get("log_std_bounds"),
+            )
+            return config.build(framework=framework)
+
         config = PolicyHeadConfig(
             input_dims=(input_dim,),
             hidden_layers=policy_config["hidden_layers"],
@@ -209,6 +251,14 @@ class CustomPPOCatalog(PPOCatalog):
             input_dim = backbone_config["transformer"]["latent_size"]
         else:
             input_dim = backbone_config["feature_size"]
+
+        if backbone_config["type"] == "MLP":
+            config = MLPFlatValueHeadConfig(
+                input_dims=(input_dim,),
+                hidden_layers=value_config["hidden_layers"],
+                activation=value_config["activation"],
+            )
+            return config.build(framework=framework)
 
         config = ValueHeadConfig(
             input_dims=(input_dim,),

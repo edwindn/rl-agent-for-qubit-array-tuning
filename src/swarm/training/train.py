@@ -312,7 +312,21 @@ def parse_arguments():
         action='store_true',
         help='Disable Weights & Biases logging'
     )
-    
+
+    parser.add_argument(
+        '--config',
+        type=str,
+        default=None,
+        help='Path to training config YAML (defaults to src/swarm/training/training_config.yaml)'
+    )
+
+    parser.add_argument(
+        '--env-config',
+        type=str,
+        default=None,
+        help='Path to env config YAML (defaults to src/swarm/environment/env_config.yaml)'
+    )
+
     # Parse known args to allow for dynamic config overrides
     args, unknown = parser.parse_known_args()
     
@@ -324,8 +338,14 @@ def parse_arguments():
 
 
 
-def create_env(config=None, gif_config=None, distance_data_dir=None):
-    """Create multi-agent quantum environment with JAX safety."""
+def create_env(config=None, gif_config=None, distance_data_dir=None, env_type: str = "dot",
+               env_config_path: str = None):
+    """Create multi-agent quantum environment with JAX safety.
+
+    env_type:
+      - "dot" (default): MultiAgentEnvWrapper around QuantumDeviceEnv (existing).
+      - "supersims":     SuperSimsMultiAgentWrapper around SuperSimsEnv (All-XY calibration).
+    """
     import os
     import jax
 
@@ -334,8 +354,6 @@ def create_env(config=None, gif_config=None, distance_data_dir=None):
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.1")
     os.environ.setdefault("JAX_ENABLE_X64", "true")
 
-    assert gif_config is not None, "Gif config dict required to set up rollout visualisation"
-
     # Try to clear any existing JAX state
     try:
         # Force JAX to use a fresh backend in each worker
@@ -343,6 +361,18 @@ def create_env(config=None, gif_config=None, distance_data_dir=None):
     except:
         pass
 
+    if env_type == "supersims":
+        from swarm.environment.supersims_multi_agent_wrapper import SuperSimsMultiAgentWrapper
+        kwargs = {}
+        if env_config_path:
+            # SuperSimsEnv resolves relative paths against its own __file__'s dir.
+            # Workers don't have access to the driver's cwd, so pass just the basename
+            # if the file lives next to supersims_env.py.
+            from os.path import basename
+            kwargs["config_path"] = basename(env_config_path)
+        return SuperSimsMultiAgentWrapper(**kwargs)
+
+    assert gif_config is not None, "Gif config dict required to set up rollout visualisation"
     from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
 
     # Wrap in multi-agent wrapper (config unused but required by RLlib)
@@ -370,9 +400,12 @@ def create_env_to_module_connector(env, spaces, device, use):
         return []
 
 
-def load_config():
+def load_config(config_path: str = None):
     """Load training configuration from YAML file."""
-    config_path = Path(__file__).parent / "training_config.yaml"
+    if config_path is None:
+        config_path = Path(__file__).parent / "training_config.yaml"
+    else:
+        config_path = Path(config_path)
 
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -380,9 +413,12 @@ def load_config():
     return config
 
 
-def load_env_config():
+def load_env_config(config_path: str = None):
     """Load environment configuration from YAML file."""
-    config_path = Path(__file__).parent.parent / "environment" / "env_config.yaml"
+    if config_path is None:
+        config_path = Path(__file__).parent.parent / "environment" / "env_config.yaml"
+    else:
+        config_path = Path(config_path)
 
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -398,8 +434,8 @@ def main():
 
     use_wandb = not args.disable_wandb
     
-    config = load_config()
-    
+    config = load_config(args.config)
+
     # Apply command line overrides to config
     if hasattr(args, 'config_overrides') and args.config_overrides:
         config = apply_config_overrides(config, args.config_overrides)
@@ -457,15 +493,25 @@ def main():
     ray.init(**ray_config)
 
     try:
-        gif_config = config["gif_config"]
-        # Clean up any previous GIF capture lock files
-        cleanup_gif_files(gif_config['save_dir'])
-
-        create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir)
-        register_env("qarray_multiagent_env", create_env_fn)
-
         # Load env config directly from YAML (no GPU initialization needed on driver)
-        env_config = load_env_config()
+        env_config = load_env_config(args.env_config)
+        env_type = env_config.get("env_type", "dot")
+
+        if env_type == "supersims":
+            # SuperSims doesn't render GIFs; gif_config is unused but kept None for safety.
+            gif_config = None
+            create_env_fn = partial(
+                create_env,
+                env_type="supersims",
+                env_config_path=args.env_config,
+            )
+        else:
+            gif_config = config["gif_config"]
+            # Clean up any previous GIF capture lock files
+            cleanup_gif_files(gif_config['save_dir'])
+            create_env_fn = partial(create_env, gif_config=gif_config, distance_data_dir=distance_data_dir)
+
+        register_env("qarray_multiagent_env", create_env_fn)
 
         # Merge with training config for wandb logging
         if use_wandb:
@@ -491,19 +537,61 @@ def main():
             os.unlink(merged_config_path)
 
         # Optionally update the rl module config to allow log_std clamping, shared log_std vector etc.
-        rl_module_config = {
-            "plunger_policy": {
-                **config['neural_networks']['plunger_policy'],
-                "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
-                "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
-            },
-            "barrier_policy": {
-                **config['neural_networks']['barrier_policy'],
-                "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
-                "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
+        if env_type == "supersims":
+            policy_split = env_config.get("policy_split", "per_qubit")
+            free_log_std = config['rl_config']['multi_agent']['free_log_std']
+            log_std_bounds = config['rl_config']['multi_agent']['log_std_bounds']
+            log_std_init = config['rl_config']['multi_agent'].get('log_std_init', -2.3)
+            if policy_split == "per_param":
+                # All five per-param policies share the architecture in `qubit_policy`.
+                # Replicate it under each per-param policy name.
+                _PARAM_NAMES = ["omega01", "omegad", "phi", "drive", "beta"]
+                qubit_arch = config['neural_networks']['qubit_policy']
+                rl_module_config = {
+                    f"{pname}_policy": {
+                        **qubit_arch,
+                        "free_log_std": free_log_std,
+                        "log_std_bounds": log_std_bounds,
+                        "log_std_init": log_std_init,
+                    } for pname in _PARAM_NAMES
+                }
+            elif policy_split == "grouped":
+                # Two grouped policies (freq, env) share the architecture in `qubit_policy`.
+                _GROUP_NAMES = ["freq", "env"]
+                qubit_arch = config['neural_networks']['qubit_policy']
+                rl_module_config = {
+                    f"{gname}_policy": {
+                        **qubit_arch,
+                        "free_log_std": free_log_std,
+                        "log_std_bounds": log_std_bounds,
+                        "log_std_init": log_std_init,
+                    } for gname in _GROUP_NAMES
+                }
+            else:
+                rl_module_config = {
+                    "qubit_policy": {
+                        **config['neural_networks']['qubit_policy'],
+                        "free_log_std": free_log_std,
+                        "log_std_bounds": log_std_bounds,
+                        "log_std_init": log_std_init,
+                    }
+                }
+        else:
+            rl_module_config = {
+                "plunger_policy": {
+                    **config['neural_networks']['plunger_policy'],
+                    "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
+                    "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
+                    "log_std_init": config['rl_config']['multi_agent'].get('log_std_init', -2.3),
+                },
+                "barrier_policy": {
+                    **config['neural_networks']['barrier_policy'],
+                    "free_log_std": config['rl_config']['multi_agent']['free_log_std'],
+                    "log_std_bounds": config['rl_config']['multi_agent']['log_std_bounds'],
+                    "log_std_init": config['rl_config']['multi_agent'].get('log_std_init', -2.3),
+                }
             }
-        }
-        
+
         algo = config['rl_config']['algorithm'].lower()
 
         rl_module_spec = create_rl_module_spec(env_config, algo=algo, config=rl_module_config)
@@ -548,8 +636,12 @@ def main():
             raise ValueError(f"Unsupported algorithm: {algo}")
 
         # Handle voltage parsing to memory manually
-        use_deltas = env_config['simulator']['use_deltas']
-        memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
+        if env_type == "supersims":
+            use_deltas = False
+            memory_layer = config['neural_networks']['qubit_policy']['backbone'].get('memory_layer')
+        else:
+            use_deltas = env_config['simulator']['use_deltas']
+            memory_layer = config['neural_networks']['plunger_policy']['backbone'].get('memory_layer')
         has_lstm = memory_layer == 'lstm'
         has_transformer = memory_layer == 'transformer'
 
@@ -557,7 +649,8 @@ def main():
         use_frame_stacking = has_transformer
         num_frames = 1
         if use_frame_stacking:
-            num_frames = config['neural_networks']['plunger_policy']['backbone']['transformer']['max_seq_len']
+            policy_for_frames = "qubit_policy" if env_type == "supersims" else "plunger_policy"
+            num_frames = config['neural_networks'][policy_for_frames]['backbone']['transformer']['max_seq_len']
             print(f"\n[Frame Stacking] Enabled with {num_frames} frames for transformer\n")
 
         # Build env-to-module connector
@@ -697,7 +790,10 @@ def main():
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
         
         # Also save environment config to checkpoint directory for inference
-        env_config_src = Path(__file__).parent.parent / "environment" / "env_config.yaml"
+        if args.env_config:
+            env_config_src = Path(args.env_config)
+        else:
+            env_config_src = Path(__file__).parent.parent / "environment" / "env_config.yaml"
         if env_config_src.exists():
             env_config_dst = checkpoint_base_dir / "env_config.yaml"
             import shutil

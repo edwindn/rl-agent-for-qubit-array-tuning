@@ -436,6 +436,240 @@ class ValueHead(TorchModel):
         return self.final_layer(x)
 
 
+# --------------------------------------------------------------------- #
+#  MLP encoder + heads (vector observations, e.g. SuperSims All-XY env)  #
+# --------------------------------------------------------------------- #
+
+
+@dataclass
+class MLPEncoderConfig(ModelConfig):
+    """MLP encoder for Dict({staircase, params}) observations.
+
+    Concatenates staircase + params into a flat vector, then runs a simple MLP.
+    Used for the SuperSims All-XY env where obs is a vector instead of an image.
+    """
+    input_dims: Optional[Tuple[int, ...]] = None  # unused; kept for ModelConfig API compat
+    obs_keys: Tuple[str, ...] = ("staircase", "params")
+    obs_dims: Optional[Tuple[int, ...]] = None    # per-key flat dim, in obs_keys order
+    hidden_layers: Optional[List[int]] = None
+    feature_size: int = 128
+    activation: str = "relu"
+
+    def __post_init__(self):
+        if self.hidden_layers is None:
+            self.hidden_layers = [128, 128]
+        if self.obs_dims is None:
+            raise ValueError("MLPEncoderConfig requires obs_dims (per-key flat dims).")
+
+    @property
+    def output_dims(self):
+        return (self.feature_size,)
+
+    def build(self, framework: str = "torch") -> "MLPEncoder":
+        if framework != "torch":
+            raise ValueError(f"Only torch framework supported, got {framework}")
+        return MLPEncoder(self)
+
+
+class MLPEncoder(TorchModel, Encoder):
+    """Flatten Dict obs → MLP → feature vector."""
+
+    def __init__(self, config: MLPEncoderConfig):
+        TorchModel.__init__(self, config)
+        Encoder.__init__(self, config)
+        self.config = config
+
+        in_dim = int(sum(config.obs_dims))
+        layers = []
+        for h in config.hidden_layers:
+            layers.extend([
+                nn.Linear(in_dim, h),
+                nn.ReLU() if config.activation == "relu" else nn.Tanh(),
+            ])
+            in_dim = h
+        # Terminal Linear with NO activation. A terminal ReLU would constrain the
+        # feature vector to ≥ 0 element-wise, which (combined with negative-drifting
+        # biases on the hidden layers) is the classic dead-encoder pathology — every
+        # unit clamps to 0 for every input, encoder output becomes constant, and no
+        # gradient can flow back. CleanRL/SB3 convention is no terminal nonlinearity.
+        layers.append(nn.Linear(in_dim, config.feature_size))
+        self.mlp = nn.Sequential(*layers)
+        self._output_dims = (config.feature_size,)
+
+    @property
+    def output_dims(self) -> Tuple[int, ...]:
+        return self._output_dims
+
+    def _forward(self, inputs, **kwargs):
+        if isinstance(inputs, dict) and "obs" in inputs:
+            inputs = inputs["obs"]
+        if not isinstance(inputs, dict):
+            raise ValueError(f"MLPEncoder expects Dict obs, got {type(inputs)}")
+        # Flatten each requested key, concat in declared order. Each tensor is (B, ...);
+        # flatten everything past the batch axis.
+        parts = []
+        for key in self.config.obs_keys:
+            t = inputs[key]
+            if t.dim() == 1:
+                t = t.unsqueeze(0)
+            parts.append(t.reshape(t.shape[0], -1))
+        x = torch.cat(parts, dim=-1)
+        return {ENCODER_OUT: self.mlp(x)}
+
+
+@dataclass
+class MLPFlatPolicyHeadConfig(MLPHeadConfig):
+    """Flat-input PPO policy head for MLP backbone.
+
+    Two output modes for the Gaussian action distribution:
+
+    * **State-dependent log_std** (`free_log_std=False`, default): final Linear
+      layer outputs `2 × action_dim`, the second half is treated as log_std.
+      Optionally clamped to `log_std_bounds` at every forward pass. **Note:** with
+      orthogonal-init (gain=0.01) + zero bias, raw log_std starts ~0, hits the
+      upper bound immediately, and the clamp's zero gradient at the boundary
+      prevents PPO from ever moving it. Use the free path instead.
+
+    * **State-independent log_std** (`free_log_std=True`): final Linear outputs
+      `action_dim` (mean only); log_std is a single learnable `nn.Parameter`
+      per action dim, broadcast to the batch. No clamp. Init via `log_std_init`.
+      This is the standard PPO continuous-control pattern (SB3 / OpenAI
+      baselines / CleanRL).
+    """
+    hidden_layers: Optional[List[int]] = None
+    activation: str = "relu"
+    log_std_bounds: Optional[Tuple[float, float]] = None
+    free_log_std: bool = False
+    log_std_init: float = -2.3        # std=exp(-2.3)≈0.1, modest exploration
+    action_dim: Optional[int] = None  # required when free_log_std=True
+
+    def __post_init__(self):
+        if self.hidden_layers is None:
+            self.hidden_layers = [128, 128]
+        self.hidden_layer_dims = self.hidden_layers
+        self.hidden_layer_activation = self.activation
+        self.output_layer_activation = "linear"
+        if self.free_log_std:
+            assert self.action_dim is not None, (
+                "MLPFlatPolicyHeadConfig.action_dim must be set when free_log_std=True"
+            )
+            self.output_layer_dim = self.action_dim
+
+    def build(self, framework: str = "torch") -> "MLPFlatPolicyHead":
+        if framework != "torch":
+            raise ValueError(f"Only torch framework supported, got {framework}")
+        return MLPFlatPolicyHead(self)
+
+
+class MLPFlatPolicyHead(TorchModel):
+    def __init__(self, config: MLPFlatPolicyHeadConfig):
+        super().__init__(config)
+        self.config = config
+        in_dim = config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims
+        layers = []
+        for h in config.hidden_layer_dims:
+            layers.extend([
+                nn.Linear(in_dim, h),
+                nn.ReLU() if config.activation == "relu" else nn.Tanh(),
+            ])
+            in_dim = h
+        # Final layer width depends on whether log_std is part of the network output
+        # (state-dependent) or a separate learnable parameter (free_log_std).
+        final_out_dim = config.output_layer_dim  # config sets this correctly per mode
+        final_layer = nn.Linear(in_dim, final_out_dim)
+        # RL convention: orthogonal init with gain 0.01 on the final policy layer so
+        # the untrained Gaussian mean is essentially zero. Without this the default
+        # Kaiming init produces means in the ±0.1 range, which under a tight log_std
+        # cap becomes systematic drift (each step pushes the same way), wrecking
+        # calibration over a 20-step episode. Bias zero matches CleanRL/SB3.
+        nn.init.orthogonal_(final_layer.weight, gain=0.01)
+        nn.init.zeros_(final_layer.bias)
+        layers.append(final_layer)
+        self.mlp = nn.Sequential(*layers)
+
+        self._free_log_std = bool(config.free_log_std)
+        if self._free_log_std:
+            self._action_dim = int(config.action_dim)
+            # State-independent log_std as a learnable parameter — broadcast to batch
+            # at forward time. No clamp: this single scalar moves slowly via SGD and
+            # there is no escape mechanism that re-introduces the dead-gradient pathology.
+            self.log_std_param = nn.Parameter(
+                torch.full((self._action_dim,), float(config.log_std_init))
+            )
+            self._output_dims = (2 * self._action_dim,)  # downstream sees [mean, log_std]
+            self._log_std_low = None
+            self._log_std_high = None
+        else:
+            self._output_dims = (config.output_layer_dim,)
+            self._log_std_low = None
+            self._log_std_high = None
+            if config.log_std_bounds is not None:
+                low, high = config.log_std_bounds
+                self._log_std_low = float(low)
+                self._log_std_high = float(high)
+
+    @property
+    def output_dims(self) -> Tuple[int, ...]:
+        return self._output_dims
+
+    def _forward(self, inputs, **kwargs):
+        out = self.mlp(inputs)
+        if self._free_log_std:
+            # `out` is the mean only. Concat with broadcast log_std parameter.
+            log_std = self.log_std_param.expand(out.shape[0], self._action_dim)
+            return torch.cat([out, log_std], dim=-1)
+        if self._log_std_high is not None:
+            half = out.shape[-1] // 2
+            mean, log_std = out[..., :half], out[..., half:]
+            log_std = log_std.clamp(min=self._log_std_low, max=self._log_std_high)
+            out = torch.cat([mean, log_std], dim=-1)
+        return out
+
+
+@dataclass
+class MLPFlatValueHeadConfig(MLPHeadConfig):
+    """Flat-input PPO value head for MLP backbone."""
+    hidden_layers: Optional[List[int]] = None
+    activation: str = "relu"
+
+    def __post_init__(self):
+        if self.hidden_layers is None:
+            self.hidden_layers = [128, 64]
+        self.hidden_layer_dims = self.hidden_layers
+        self.hidden_layer_activation = self.activation
+        self.output_layer_activation = "linear"
+        self.output_layer_dim = 1
+
+    def build(self, framework: str = "torch") -> "MLPFlatValueHead":
+        if framework != "torch":
+            raise ValueError(f"Only torch framework supported, got {framework}")
+        return MLPFlatValueHead(self)
+
+
+class MLPFlatValueHead(TorchModel):
+    def __init__(self, config: MLPFlatValueHeadConfig):
+        super().__init__(config)
+        self.config = config
+        in_dim = config.input_dims[0] if isinstance(config.input_dims, (list, tuple)) else config.input_dims
+        layers = []
+        for h in config.hidden_layer_dims:
+            layers.extend([
+                nn.Linear(in_dim, h),
+                nn.ReLU() if config.activation == "relu" else nn.Tanh(),
+            ])
+            in_dim = h
+        layers.append(nn.Linear(in_dim, 1))
+        self.mlp = nn.Sequential(*layers)
+        self._output_dims = (1,)
+
+    @property
+    def output_dims(self) -> Tuple[int, ...]:
+        return self._output_dims
+
+    def _forward(self, inputs, **kwargs):
+        return self.mlp(inputs)
+
+
 @dataclass
 class MobileNetConfig(CNNEncoderConfig):
     """MobileNet configuration for quantum charge stability diagrams with pretrained backbone."""
