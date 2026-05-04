@@ -123,6 +123,22 @@ def _apply_overrides(env_config: dict, overrides: dict) -> dict:
     return env_config
 
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge overlay onto base; overlay values win on conflicts.
+
+    Used to fill in any env_config keys that the env code now expects but the
+    wandb-logged config (from an older training run) didn't include — e.g.
+    reward.sparse_reward was added to env.py after run_473 was trained.
+    """
+    out = dict(base)
+    for k, v in overlay.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
 def _prepare_checkpoint(
     algo_name: str,
     algo_cfg: dict,
@@ -148,30 +164,64 @@ def _prepare_checkpoint(
     print(f"[{algo_name}] downloading to {ckpt_dir}...")
     art.download(root=str(ckpt_dir))
 
-    # Override training_config.yaml's defaults.num_iterations — main.py uses it
-    # as the episode count for eval rollouts.
-    train_cfg_path = ckpt_dir / "training_config.yaml"
-    if not train_cfg_path.exists():
-        raise RuntimeError(f"{train_cfg_path} not in artifact")
-    with train_cfg_path.open() as fh:
-        train_cfg = yaml.safe_load(fh)
-    train_cfg.setdefault("defaults", {})["num_iterations"] = int(num_episodes)
-    with train_cfg_path.open("w") as fh:
-        yaml.safe_dump(train_cfg, fh, default_flow_style=False)
-    print(f"[{algo_name}] set defaults.num_iterations = {num_episodes}")
+    # Reconstruct training_config.yaml + env_config.yaml from the run's
+    # wandb-logged config. Wandb artifacts only ship the RLlib checkpoint
+    # itself; the original yamls aren't in the artifact, but run.config holds
+    # the merged dict that train.py logged at startup. Splitting out the
+    # env_config sub-dict gives us a faithful pair of yamls that main.py can
+    # consume.
+    full_cfg = dict(run.config)
+    env_cfg = full_cfg.pop("env_config", None)
+    if env_cfg is None:
+        raise RuntimeError(f"run.config has no 'env_config' key for {run.display_name}")
 
-    # Apply env overrides if any
+    # Override num_iterations to ablation episode count.
+    full_cfg.setdefault("defaults", {})["num_iterations"] = int(num_episodes)
+
+    # Inference-friendly Ray topology: single local env runner + dedicated GPU
+    # for the learner. Training-time multi-runner setup (num_env_runners: 12
+    # @ 0.25 GPU each) trips a Ray 2.51 race in EnvRunnerGroup.get_spaces on
+    # this server.
+    rl_cfg = full_cfg.setdefault("rl_config", {})
+    rl_cfg.setdefault("env_runners", {})["num_env_runners"] = 0
+    rl_cfg["env_runners"]["num_gpus_per_env_runner"] = 0
+    rl_cfg.setdefault("learners", {})["num_gpus_per_learner"] = 1.0
+
+    # Patch ray.runtime_env.excludes — eval_runs/ accumulates >500MB of past
+    # collected_data on this machine and Ray's working_dir upload caps at 512MB.
+    # Older runs were logged before eval_runs ballooned, so their stored
+    # excludes don't cover it.
+    runtime_env = full_cfg.setdefault("ray", {}).setdefault("runtime_env", {})
+    excludes = list(runtime_env.get("excludes") or [])
+    for extra in ("eval_runs", "**/eval_runs/**", "**/scan_captures/**",
+                  "**/rollout_scans/**", "**/__pycache__/**", "**/collected_data/**"):
+        if extra not in excludes:
+            excludes.append(extra)
+    runtime_env["excludes"] = excludes
+
+    # Deep-merge canonical env_config underneath wandb-logged env_config:
+    # the wandb config wins on existing keys (preserves the run's training
+    # settings), but new keys added to env.py since the training run get sane
+    # defaults from the current canonical (e.g. reward.sparse_reward).
+    canonical_env_path = REPO_ROOT / "src" / "eval_runs" / "env_config.yaml"
+    if canonical_env_path.exists():
+        with canonical_env_path.open() as fh:
+            canonical_env_cfg = yaml.safe_load(fh)
+        env_cfg = _deep_merge(canonical_env_cfg, env_cfg)
+
+    # Apply user env_overrides on top of the merged env_config.
     overrides = algo_cfg.get("env_overrides") or {}
     if overrides:
-        env_config_path = ckpt_dir / "env_config.yaml"
-        if not env_config_path.exists():
-            raise RuntimeError(f"{env_config_path} not in artifact; cannot apply overrides")
-        with env_config_path.open() as fh:
-            env_config = yaml.safe_load(fh)
-        _apply_overrides(env_config, overrides)
-        with env_config_path.open("w") as fh:
-            yaml.safe_dump(env_config, fh, default_flow_style=False)
-        print(f"[{algo_name}] applied env overrides: {overrides}")
+        _apply_overrides(env_cfg, overrides)
+
+    train_cfg_path = ckpt_dir / "training_config.yaml"
+    env_cfg_path = ckpt_dir / "env_config.yaml"
+    with train_cfg_path.open("w") as fh:
+        yaml.safe_dump(full_cfg, fh, default_flow_style=False)
+    with env_cfg_path.open("w") as fh:
+        yaml.safe_dump(env_cfg, fh, default_flow_style=False)
+    print(f"[{algo_name}] wrote configs (num_iterations={num_episodes}, "
+          f"env_overrides={overrides or 'none'})")
 
     return ckpt_dir
 

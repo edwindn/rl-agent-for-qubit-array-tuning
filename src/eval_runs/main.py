@@ -224,13 +224,26 @@ def load_config(checkpoint_path=None):
     return config
 
 
-def load_env_config():
-    """Load environment configuration from eval_runs/env_config.yaml."""
+def load_env_config(checkpoint_path: str | None = None):
+    """Load environment configuration.
+
+    Prefers <checkpoint_path>/env_config.yaml when supplied — this lets each
+    eval run use the env_config that matches its checkpoint (e.g. ablation
+    rows that share weights but differ in env settings like update_method).
+    Falls back to eval_runs/env_config.yaml for callers that don't pass a
+    checkpoint path.
+    """
+    if checkpoint_path is not None:
+        ckpt_env_config = Path(checkpoint_path) / "env_config.yaml"
+        if ckpt_env_config.exists():
+            with open(ckpt_env_config, "r") as f:
+                return yaml.safe_load(f)
+
     config_file = Path(__file__).parent / "env_config.yaml"
     if not config_file.exists():
         raise FileNotFoundError(f"env_config.yaml not found in {config_file.parent}")
 
-    with open(config_file, 'r') as f:
+    with open(config_file, "r") as f:
         config = yaml.safe_load(f)
 
     return config
@@ -315,8 +328,11 @@ def main():
         scan_save_dir.mkdir(parents=True, exist_ok=True)
         print(f"Scan images will be saved to: {scan_save_dir}\n")
 
-        # Load env config directly from YAML (no GPU initialization needed on driver)
-        env_config = load_env_config()
+        # Load env config directly from YAML (no GPU initialization needed on driver).
+        # Pass checkpoint_path so ablation runs that bundle a per-run env_config.yaml
+        # alongside the checkpoint get respected (otherwise we'd silently use the
+        # global eval_runs/env_config.yaml for every algo).
+        env_config = load_env_config(checkpoint_path)
 
         capacitance_weights_path = env_config.get("capacitance_model", {}).get("weights_path")
 
