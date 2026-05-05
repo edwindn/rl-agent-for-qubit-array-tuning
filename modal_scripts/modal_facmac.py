@@ -33,9 +33,12 @@ if modalignore_path.exists():
                 ignore_patterns.append(line)
 
 # FACMAC needs the `[facmac]` extras (sacred, jsonpickle, tensorboard-logger,
-# gym==0.10.8). uv sync --extra facmac installs them.
+# gym==0.10.8). uv sync --extra facmac installs them. sacred's GitPython
+# dependency further requires the `git` binary at import time, so we add it
+# to the apt layer.
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    .apt_install("git")
     .pip_install("uv", "wandb")
     .add_local_dir(
         str(project_root),
