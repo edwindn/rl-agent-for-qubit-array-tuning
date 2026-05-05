@@ -93,7 +93,8 @@ def _plot_distance_grid(
             distances = np.load(npy_file)
             distances = np.asarray(distances).squeeze()
             if distances.size == 0:
-                raise ValueError(f"Loaded empty distance data from {npy_file}")
+                # algo.evaluate() can produce empty .npy artifacts; skip them.
+                continue
             if not np.isfinite(distances).all():
                 raise ValueError(f"Distance data contains non-finite values: {npy_file}")
             if distances.ndim != 1:
