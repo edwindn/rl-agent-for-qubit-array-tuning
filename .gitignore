@@ -117,6 +117,7 @@ dmypy.json
 *.weights
 checkpoints/
 models/
+!src/qadapt/voltage_model/models/
 weights/
 saved_models/
 *.png
@@ -125,8 +126,14 @@ saved_models/
 # Data directories
 data/
 datasets/
+collected_data/
 raw_data/
 processed_data/
+
+# Paper-figure inputs (small npz files needed to regenerate appendix plots).
+# Override the broader data/ + *.npz ignores above.
+!paper_plots/data/
+!paper_plots/data/**
 
 # Results and outputs
 results/
@@ -135,6 +142,27 @@ logs/
 runs/
 tensorboard_logs/
 wandb/
+sacred/
+**/sacred/
+
+# Local-only artefact dirs (never committed; preserve disk-space marker only)
+_archive/
+test_outputs/
+checkpoints_supersims*/
+
+# Convenience symlinks pointing at the rl-agent worktree's data dirs
+# (created locally to feed plot scripts; never committed)
+/data
+/benchmarks/results
+/benchmarks/domain/results
+
+# PyMARL/Sacred run logs
+benchmarks/MARL/facmac/results/
+benchmarks/MARL/facmac/tb_logs/
+
+# Stale src/qadapt/.egg-info / swarm_rl.egg-info directories that linger after
+# package rename
+src/swarm_rl.egg-info/
 
 # IDE
 .vscode/
@@ -157,8 +185,3 @@ Thumbs.db
 *.temp
 temp/
 tmp/
-
-# Claude Code
-
-CLAUDE.md 
-.Claude

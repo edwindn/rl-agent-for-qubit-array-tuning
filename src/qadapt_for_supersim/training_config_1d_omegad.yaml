@@ -1,0 +1,161 @@
+# Diagnostic training run: full sampling of omega_d, all other 4 params pinned at GT.
+# hw=0, λ=0. Ceiling = 0.998. Expected to converge fast (1-D problem).
+#
+# Run with:
+#   uv run python src/qadapt/training/train.py \
+#     --config src/qadapt_for_supersim/training_config_1d_omegad.yaml \
+#     --env-config src/qadapt_for_supersim/env_config_1d_omegad.yaml \
+#     --run-name supersims-1d-omegad
+#
+# Inherits the run8 architecture and PPO settings; only checkpoint dir + iter
+# count differ. The 5 per-param policies still exist but only `omegad_policy`
+# matters for navigation since the other 4 params are pinned.
+
+defaults:
+  num_iterations: 30          # 1-D problem; should converge well before 30 iters
+  delete_old_checkpoints: false
+  save_distance_data: false
+
+wandb:
+  entity: "rl_agents_for_tuning"
+  project: "RLModel"
+  ema_period: 10
+
+ray:
+  include_dashboard: false
+  log_to_driver: false
+  logging_level: 40
+  runtime_env:
+    excludes:
+      - "dataset"
+      - "dataset_v1"
+      - "wandb"
+      - "**/wandb/**"
+      - "outputs"
+      - "test_outputs"
+      - "checkpoints"
+      - "checkpoints_supersims*"
+      - "weights*"
+      - "*dataset*"
+      - "**/weights/**"
+      - "**/symmetric_weights_*/**"
+      - "**/mobilenet_*/**"
+      - "**/data/**"
+      - "**/scan_captures/**"
+      - "**/rollout_scans/**"
+      - "eval_runs"
+      - "**/eval_runs/**"
+      - "**/__pycache__/**"
+      - "plots_supersims_diagnostic"
+    env_vars:
+      JAX_PLATFORM_NAME: "cuda"
+      JAX_PLATFORMS: "cuda,cpu"
+      PYTHONWARNINGS: "ignore::DeprecationWarning,ignore::FutureWarning"
+      RAY_DISABLE_IMPORT_WARNING: "1"
+      RAY_METRICS_EXPORT_INTERVAL_MS: "0"
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+      XLA_PYTHON_CLIENT_MEM_FRACTION: "0.25"
+      JAX_ENABLE_X64: "true"
+
+rl_config:
+  algorithm: "PPO"
+
+  env_runners:
+    num_env_runners: 6
+    rollout_fragment_length: 20
+    sample_timeout_s: 1200.0
+    num_gpus_per_env_runner: 1.0
+
+  learners:
+    num_learners: 1
+    num_gpus_per_learner: 1.0
+
+  training:
+    train_batch_size: 10240
+    minibatch_size: 256
+    num_epochs: 10
+    grad_clip: 40.0
+    grad_clip_by: "norm"
+
+    lr: 0.0005
+    gamma: 0.0
+    lambda_: 0.95
+    clip_param: 0.2
+    # Zero entropy bonus on this 1-D pinned task: smooth single-optimum landscape,
+    # no premature-collapse risk, lets PPO drive log_std as low as the reward
+    # signal demands. With state-independent free_log_std (below) entropy_coeff>0
+    # is a constant upward force on log_std that prevents convergence to small std.
+    entropy_coeff: 0.0
+    vf_loss_coeff: 0.5
+    kl_target: 0.01
+
+    actor_lr: 0.0003
+    critic_lr: 0.0003
+    alpha_lr: 0.0003
+    twin_q: true
+    tau: 0.005
+    initial_alpha: 1.0
+    target_entropy: "auto"
+    n_step: 1
+    clip_actions: true
+    target_network_update_freq: 1
+    num_steps_sampled_before_learning_starts: 1000
+    replay_buffer_config: {
+      "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
+      "capacity": 1000000,
+      "alpha": 0.6,
+      "beta": 0.4,
+    }
+
+  multi_agent:
+    policies:
+      - "omega01_policy"
+      - "omegad_policy"
+      - "phi_policy"
+      - "drive_policy"
+      - "beta_policy"
+    policies_to_train:
+      - "omega01_policy"
+      - "omegad_policy"
+      - "phi_policy"
+      - "drive_policy"
+      - "beta_policy"
+    count_steps_by: "agent_steps"
+
+    # State-independent log_std: a single learnable nn.Parameter per action dim
+    # (broadcast to the batch). Standard PPO continuous-control pattern (SB3 /
+    # OpenAI baselines / CleanRL). Avoids the dead-gradient pathology of the
+    # state-dependent path where orth-init places raw log_std above the upper
+    # bound and the hard clamp kills its gradient (verified iter 30 of the prior
+    # 1-D run had all 5 policies' std locked at exp(-3)=0.05).
+    free_log_std: true
+    log_std_init: -2.3       # std=exp(-2.3)≈0.1, modest exploration to start
+    log_std_bounds: null     # bounds re-introduce the dead-gradient problem
+
+checkpoints:
+  save_dir: "./checkpoints_supersims_1d_omegad_freelogstd"
+  upload_best_only: true
+
+gif_config:
+  enabled: false
+  target_agent_type: "qubit"
+  target_agent_indices: []
+  save_dir: "/tmp/supersims_gifs"
+  fps: 0.5
+
+neural_networks:
+  qubit_policy:
+    backbone:
+      type: "MLP"
+      hidden_layers: [128, 128]
+      feature_size: 128
+      activation: "relu"
+      memory_layer: null
+    policy_head:
+      hidden_layers: [128, 64]
+      activation: "relu"
+      use_attention: false
+    value_head:
+      hidden_layers: [128, 64]
+      activation: "relu"
+      use_attention: false

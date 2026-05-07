@@ -1,0 +1,80 @@
+# MADDPG config for quantum device tuning.
+# Seeded from facmac_quantum.yaml: keep the grouped_mac + per-group CNN agents
+# and the env-specific tuning, but swap the learner to maddpg_learner and drop
+# the QMIX mixer (MADDPG uses centralized per-agent critics instead).
+
+# === OVERRIDES SPECIFIC TO THIS BENCHMARK ===
+obs_agent_id: False        # cross-size zero-shot eval safety (matches facmac_quantum)
+obs_last_action: True
+mac: grouped_mac
+agent: grouped
+agent_modules:
+  plunger: plunger_cnn
+  barrier: barrier_cnn
+
+# === MADDPG-specific ===
+learner: "maddpg_antizero_learner"   # M6: anti-zero penalty (-λ E[‖π‖²]) on actor loss
+mixer: ~                   # MADDPG: no value-decomposition mixer; central critic per agent
+critic_lr: 0.0003          # match actor lr
+
+# M6b — strong anti-zero (10× M6's 0.05)
+m6_anti_zero_lambda: 0.5
+
+# === INHERITED FROM facmac_quantum.yaml ===
+action_range: ~
+action_selector: ~
+agent_output_type: ~
+batch_size_run: 26          # ParallelRunner: 26 envs per H100 container — sweet spot 2026-05-05
+batch_size: 32
+buffer_size: 5000
+buffer_warmup: 0
+discretize_actions: False
+double_q: False
+exploration_mode: "gaussian"
+start_steps: 30000          # bigger warmup — buffer needs more random data than actor-near-zero data 2026-05-05
+act_noise: 0.3              # bumped to 0.3 so post-warmup actor noise stays meaningful 2026-05-05
+ou_theta: 0.15
+ou_sigma: 0.2
+ou_noise_scale: 0.3
+final_ou_noise_scale: 0.
+ou_stop_episode: 100
+gamma: 0.99
+grad_norm_clip: 0.5
+learn_interval: 1
+lr: 0.0003
+td_lambda: 0.8
+critic_train_reps: 1
+q_nstep: 0
+name: "maddpg_M6b_strongantizero"
+n_runners: ~
+n_train: 1
+optimizer: adam
+optimizer_epsilon: 0.01
+rnn_hidden_dim: 64
+run_mode: ~
+runner: "parallel"          # subproc env workers (Pipe/Process); 8x faster sample collection
+runner_scope: 'episodic'
+target_update_interval: ~
+target_update_mode: 'soft'
+target_update_tau: 0.005
+test_greedy: ~
+test_interval: 10000
+test_nepisode: 10
+testing_on: True
+t_max: 2000000
+save_model: True
+save_model_interval: 50000
+verbose: False
+weight_decay: True
+weight_decay_factor: 0.0001
+env_args:
+  state_last_action: False
+agent_return_logits: False
+q_embed_dim: 1
+noise_clip: 0.5
+
+# wandb
+use_wandb: True
+wandb_project: "FACMAC-rescue"
+wandb_entity: "rl_agents_for_tuning"
+wandb_ema_period: 20

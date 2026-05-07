@@ -1,0 +1,29 @@
+wandb run dir: /home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/facmac/wandb/run-20260424_114110-0gyfq1ik
+
+History rows: 2
+Sample logged keys (first 30): ['_runtime', '_step', '_timestamp', 'agent_grad_norm', 'barrier_return_avg', 'barrier_return_avg_mean', 'barrier_return_avg_mean_ema', 'barrier_return_mean', 'barrier_return_mean_ema', 'critic_grad_norm', 'critic_loss', 'ep_length_mean', 'episode_limit_mean', 'pg_loss', 'plunger_return_avg', 'plunger_return_avg_mean', 'plunger_return_avg_mean_ema', 'plunger_return_mean', 'plunger_return_mean_ema', 'return_mean', 'return_mean_ema', 'return_std', 'target_mean', 'test_barrier_return_avg', 'test_barrier_return_avg_mean', 'test_barrier_return_avg_mean_ema', 'test_barrier_return_mean', 'test_barrier_return_mean_ema', 'test_ep_length_mean', 'test_episode_limit_mean']
+
+=== required-key presence ===
+  return_mean                              n=1  last=+4.278e+01
+  plunger_return_mean                      n=1  last=+2.173e+01
+  barrier_return_mean                      n=1  last=+2.105e+01
+  plunger_return_avg_mean                  n=1  last=+5.434e+00
+  barrier_return_avg_mean                  n=1  last=+7.016e+00
+  plunger_return_avg                       n=1  last=+5.434e+00
+  barrier_return_avg                       n=1  last=+7.016e+00
+  critic_loss                              n=1  last=+1.583e+00
+  pg_loss                                  n=1  last=-4.785e-01
+  return_mean_ema                          n=1  last=+4.278e+01
+  plunger_return_avg_mean_ema              n=1  last=+5.434e+00
+  => ALL PRESENT
+
+=== sanity: plunger_return_avg_mean * n_plungers ≈ plunger_return_mean ===
+  inferred n_plungers from ratio: 4.00  (expect 4 for 4-dot)
+  plunger_return_mean last = +21.734
+  plunger_return_avg_mean last = +5.434
+  ratio = 4.00
+
+=== artifact upload ===
+  [found] wandb.Api: model/facmac-agents-facmac_quantum_smoke_grouped__2026-04-24_11-41-09:v0 (size=21373572)
+
+  [written] /home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/facmac/diagnostics/task_6/key_metrics.png

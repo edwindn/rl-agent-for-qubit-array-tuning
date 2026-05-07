@@ -39,10 +39,15 @@ build/
 
 # Logs and outputs
 *.log
+*.out
 logs/
 runs/
 wandb/
 tensorboard_logs/
+weights_symmetric_150k/
+
+# Ray session data
+/tmp/ray/
 
 # OS
 .DS_Store
@@ -60,17 +65,60 @@ Thumbs.db
 *.png
 *.gif
 
-# Lock files (dependencies installed from requirements.txt)
-uv.lock
+# Lock files
 poetry.lock
 Pipfile.lock
 
 # Large output files (use Modal Volumes instead)
-src/swarm/training/checkpoints/
+src/qadapt/training/checkpoints/
 checkpoints/
 *.pth
 *.pt
 *.ckpt
+
+# Large data directories
+data/
+symmetric_dataset_150k/
+logs/
+artifacts/
+collected_data/
+scan_captures/
+gif_captures/
+rollout_scans/
+src/eval_runs/collected_data/
+src/eval_runs/collected_data/**
+src/eval_runs/gif_captures/
+src/qadapt/qarray_dataset
+src/qadapt/artifacts
+src/qadapt/wandb
+src/qadapt/training/wandb
+src/qadapt/training/data
+src/qadapt/training/checkpoints
+src/qadapt/capacitance_model/wandb
+src/qadapt/capacitance_model/weights
+src/qadapt/capacitance_model/symmetric_weights_separate
+src/qadapt/capacitance_model/symmetric_weights_impala
+src/qadapt/capacitance_model/mobilenet_final_epoch_8
+src/qadapt/environment/gui
+weights_symmetric_150k_impala/
+benchmarks/.venv
+benchmarks/checkpoints
+benchmarks/wandb
+benchmarks/dreamer
+benchmarks/single_agent
+benchmarks/*.log
+benchmarks/results
+benchmarks/20*
+checkpoints
+wandb
+
+# FACMAC active training artefacts (must not be uploaded — they're written
+# by running local jobs and will fail Modal's "modified during build" check)
+benchmarks/MARL/facmac/results
+benchmarks/MARL/facmac/wandb
+benchmarks/MARL/facmac/tb_logs
+benchmarks/MARL/facmac/sacred
+**/sacred/
 
 # Claude Code
 CLAUDE.md

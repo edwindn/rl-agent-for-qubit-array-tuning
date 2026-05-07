@@ -1,0 +1,92 @@
+# Task-3 smoke-train config: stock CQMixMAC + stock MLP agent + QMix mixer.
+# Goal: prove FACMAC's training loop runs end-to-end on the quantum env with
+# finite losses and measurable weight drift. Performance is expected to be bad
+# because the MLP has no spatial prior — the CNN replacement lives in task 4.
+
+# --- stock PyMARL pieces (no custom code) ---
+mac: "cqmix_mac"
+agent: "mlp"
+agent_output_type: ~
+obs_agent_id: False        # pinned to False for future cross-size transfer
+obs_last_action: False     # simplify — no action history needed for MLP smoke test
+agent_return_logits: False
+
+# --- smoke-test downsizing ---
+mixer: "qmix"
+mixing_embed_dim: 16       # default 64; shrunk to keep QMix hypernet under ~10M params
+hypernet_layers: 1
+hypernet_embed: 64
+hyper_initialization_nonzeros: 0
+skip_connections: False
+gated: False
+q_embed_dim: 1
+
+batch_size_run: 1
+batch_size: 8              # default 32; shrunk with buffer
+buffer_size: 32            # default 5000; shrunk so buffer fits in ~800 MB
+buffer_warmup: 0
+t_max: 1500                # ~10 min on CPU
+test_interval: 500
+test_nepisode: 2
+testing_on: True
+runner: "episode"
+runner_scope: 'episodic'
+
+# --- FACMAC learner ---
+learner: "facmac_learner"
+learn_interval: 1
+n_train: 1
+critic_train_reps: 1
+
+# exploration
+action_range: ~
+action_selector: ~
+exploration_mode: "gaussian"
+start_steps: 0
+act_noise: 0.1
+ou_theta: 0.15
+ou_sigma: 0.2
+ou_noise_scale: 0.3
+final_ou_noise_scale: 0.
+ou_stop_episode: 100
+noise_clip: 0.5
+
+# optimisation
+optimizer: adam
+optimizer_epsilon: 0.01
+lr: 0.0003
+critic_lr: 0.0003
+gamma: 0.99
+grad_norm_clip: 0.5
+td_lambda: 0.8
+q_nstep: 0
+weight_decay: True
+weight_decay_factor: 0.0001
+
+# targets
+double_q: False
+target_update_interval: ~
+target_update_mode: 'soft'
+target_update_tau: 0.005
+
+# agent + misc
+discretize_actions: False
+n_runners: ~
+rnn_hidden_dim: 64
+run_mode: ~
+name: "facmac_quantum_smoke"
+epsilon_decay_mode: ~
+epsilon_start: ~
+epsilon_finish: ~
+epsilon_anneal_time: ~
+test_greedy: ~
+
+# smoke-test: save final checkpoint so diagnostic can diff against fresh init
+save_model: True
+save_model_interval: 1500
+use_tensorboard: False    # tensorboard_logger package is broken on modern protobuf; diagnostic reads sacred info.json instead
+use_cuda: False
+verbose: False
+
+env_args:
+  state_last_action: False

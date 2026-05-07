@@ -1,0 +1,3 @@
+=== Parameter-update isolation ===
+  loss on plunger only:  plunger grads non-zero = True, barrier grads non-zero = False  OK
+  loss on barrier only:  barrier grads non-zero = True, plunger grads non-zero = False  OK

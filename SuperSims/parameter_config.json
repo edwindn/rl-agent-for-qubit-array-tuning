@@ -4,7 +4,8 @@
     "N": 3
   },
   "qubit": {
-    "omega_01_GHz": {"min": 4.000, "max": 6.000},
+    "_comment_omega_01_tuning": "tuning_down_GHz is the asymmetric *agent* tuning range; flux-tunable transmons tune downward only from the flux sweet-spot, so the action moves omega_01 in [omega_01_init - tuning_down_GHz, omega_01_init].",
+    "omega_01_GHz": {"min": 4.000, "max": 6.000, "tuning_down_GHz": 0.15},
     "alpha_GHz":    {"min": -0.300, "max": -0.200}
   },
   "crosstalk": {
@@ -12,10 +13,13 @@
   },
   "pulse": {
     "t_g":       {"min": 16.0,  "max": 24.0},
-    "omega_d_GHz": {"sigma_GHz": 0.01},
+    "_comment_omega_d_GHz": "sigma_GHz is the *init* spread of omega_d around omega_01; window_GHz is the *agent* action half-span around the current omega_01 (action ±1 -> ±window_GHz). Tightened from 0.05 -> 0.02 GHz on 2026-05-04 so action range is 2x init sigma — fairer random baseline + finer per-step control.",
+    "omega_d_GHz": {"sigma_GHz": 0.01, "window_GHz": 0.02},
     "phi":       {"min": -3.141592653589793, "max": 3.141592653589793},
-    "Omega":     {"sigma_frac": 0.1},
-    "beta":      {"min": 0.5,  "max": 1.5}
+    "_comment_Omega": "sigma_frac is the *init* fractional spread around 2pi/t_g; bound_frac is the *agent* action half-span as a fraction of 2pi/t_g (action ±1 -> ±bound_frac · 2pi/t_g). Tightened from 0.30 -> 0.20 on 2026-05-04 so action range is 2x init sigma_frac — matches omega_d treatment.",
+    "Omega":     {"sigma_frac": 0.1, "bound_frac": 0.20},
+    "_comment_beta": "DRAG coefficient. Optimum is beta=0.5 for the raised-cosine envelope used in hamiltonian_definitions.s_Q (NOT 1.0 as the docstring there claims — the textbook beta=1 result is for a Gaussian envelope). Range [0, 1.5] gives the agent ±1.0 span around the true optimum (Cornelius's recommendation 2026-05-02). beta uses min/max for both init AND agent action range.",
+    "beta":      {"min": 0.0,  "max": 1.5}
   },
   "hardware": {
     "phi_hw":      {"min": -3.141592653589793, "max": 3.141592653589793},

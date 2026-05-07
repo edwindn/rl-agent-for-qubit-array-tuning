@@ -1,0 +1,15 @@
+# Sacred env config for the quantum device env registered in train.py.
+
+env: "pymarl_quantum"
+
+t_max: 2000000
+test_interval: 10000
+runner_log_interval: 2000
+learner_log_interval: 2000
+log_interval: 2000
+
+env_args:
+  # Passed through to PyMARLEnvWrapper.__init__ kwargs['env_args']
+  env_config_path: ../../src/qadapt/environment/env_config.yaml
+  capacitance_model_checkpoint: null   # set at runtime
+  # seed is injected by sacred

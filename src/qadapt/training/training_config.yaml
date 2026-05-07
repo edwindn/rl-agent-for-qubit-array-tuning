@@ -1,0 +1,199 @@
+# Training Configuration for Multi-Agent RL Quantum Device Tuning
+# This file contains all configurable parameters for the training pipeline
+
+# Default training parameters
+defaults:
+  num_iterations: 400        # Total training iterations
+  delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
+  save_distance_data: true # Save per-agent diagnostic state info
+
+# Weights & Biases configuration
+wandb:
+  entity: "rl_agents_for_tuning"
+  project: "RLModel"
+  ema_period: 20          # EMA smoothing length
+
+# Ray cluster configuration
+ray:
+  include_dashboard: false   # Disable Ray dashboard for cleaner output
+  log_to_driver: false       # Reduce driver logs
+  logging_level: 40         # WARNING level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR)
+  
+  # Runtime environment settings
+  runtime_env:
+    excludes:
+      - "dataset"
+      - "dataset_v1"
+      - "**/wandb/**"
+      - "outputs"
+      - "test_outputs"
+      - "**/checkpoints/**"
+      - "**/weights/**"
+      - "*dataset*"
+      - "**/data/**"
+      - "**/artifacts/**"
+      - "**/*.png"
+      - "**/*.pth"
+      - "**/*.pkl"
+    
+    env_vars:
+      JAX_PLATFORM_NAME: "cuda"
+      JAX_PLATFORMS: "cuda"
+
+      PYTHONWARNINGS: "ignore::DeprecationWarning,ignore::FutureWarning"
+      RAY_DISABLE_IMPORT_WARNING: "1"
+
+      # Suppress metrics exporter error (known Ray 2.53+ bug, doesn't affect training)
+      RAY_METRICS_EXPORT_INTERVAL_MS: "0"
+
+      # Memory contention
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+      XLA_PYTHON_CLIENT_MEM_FRACTION: "0.25"
+      JAX_ENABLE_X64: "true"
+
+# Algorithm Configuration
+rl_config:
+  algorithm: "PPO" # PPO or SAC
+
+  # Environment runners configuration
+  env_runners:
+    num_env_runners: 6              # Number of parallel environment runners
+
+    rollout_fragment_length: 50     # Steps per rollout fragment
+    sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
+    num_gpus_per_env_runner: 0.45
+
+  # Learner configuration  
+  learners:
+    num_learners: 1                 # Number of learner workers
+    num_gpus_per_learner: 0.95       # GPU allocation per learner
+
+  # Training hyperparameters
+  training:
+    train_batch_size: 16384          # Total batch size for training
+    minibatch_size: 2048             # Size of minibatches for SGD
+    num_epochs: 10                   # Number of SGD epochs per training iteration
+    grad_clip: 40.0                 # Amount of gradient clipping (set to null to disable) ~40.0 is the default
+    grad_clip_by: "norm"            # Gradient clipping method
+
+    # PPO-specific config
+    # lr: [[0, 0.0003], [400000, 0.0001], [800000, 0.00005]]
+    lr: 0.0005
+    # Learning rate: constant (e.g., 0.0003) or schedule as list of [timestep, lr] pairs (e.g., [[0, 0.0003], [100000, 0.0001]])
+    gamma: 0.0                      # Discount factor
+    lambda_: 0.95                   # GAE lambda parameter
+    clip_param: 0.2                 # PPO clipping parameter
+    entropy_coeff: 0.01             # Entropy regularization coefficient
+    vf_loss_coeff: 0.5              # Value function loss coefficient
+    kl_target: 0.01                 # Target size of KL penalty on policy updates
+
+    # SAC-specific config
+    actor_lr: 0.0003
+    critic_lr: 0.0003
+    alpha_lr: 0.0003
+    twin_q: true                   # Whether to use twin Q-networks
+    tau: 0.005                     # Target network update rate
+    initial_alpha: 1.0              # Initial entropy coefficient 
+    target_entropy: "auto"       # Target entropy ("auto" to use default based on action space)
+    n_step: 1                # Number of steps to look ahead for multi-step returns
+    clip_actions: true          # Whether to clip actions to the action space bounds
+    target_network_update_freq: 1  # Frequency of target network updates (in training steps)
+    num_steps_sampled_before_learning_starts: 1000  # Number of steps to sample before starting learning
+    replay_buffer_config: {
+      "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
+      "capacity": 1000000,                        # Replay buffer capacity
+      "alpha": 0.6,                               # Prioritization exponent
+      "beta": 0.4,                                # Importance sampling exponent
+    }
+
+
+  # Multi-agent configuration
+  multi_agent:
+    policies:
+      - "plunger_policy"
+      - "barrier_policy"
+    policies_to_train:
+      - "plunger_policy" 
+      - "barrier_policy"
+    count_steps_by: "agent_steps"
+
+    free_log_std: false         # Whether to predict the std (better exploration) or not (more stable)
+                                # Note this will affect how we extract the log std for logging
+    log_std_bounds: [-10, 2]    # Ranges within which to clip predicted log_std for the policy head
+
+# Checkpoint configuration
+checkpoints:
+  save_dir: "./checkpoints"         # Directory to save checkpoints
+  upload_best_only: true           # Only upload checkpoints with improved performance
+
+# GIF capture configuration for agent visualization
+gif_config:
+  enabled: true                     # Enable/disable GIF capture
+  target_agent_type: "plunger"     # Agent type to capture: "plunger" or "barrier"
+  target_agent_indices: [1]        # Which agents of that type (0-indexed list, e.g., [0, 1, 2])
+  save_dir: "/tmp/shared_gif_captures"  # Absolute path accessible to both main process and workers
+  fps: 0.5                          # Frame rate for GIFs (slower = easier to see)
+
+# Neural Network Architecture Configuration
+neural_networks:
+  # chose between SimpleCNN, IMPALA, MobileNet
+  plunger_policy:
+    backbone:
+      type: "IMPALA"
+      mobilenet_version: "small"
+      feature_size: 256
+      load_pretrained: true
+      freeze_backbone: false
+      adaptive_pooling: true  # Required for SimpleCNN/IMPALA
+      num_res_blocks: 2  # Required for IMPALA
+#       type: "IMPALA"
+#       # note custom backbone layers will only be applied for SimplCNN and IMPALA
+#       conv_layers:
+#         - {channels: 16, kernel: 3, stride: 1}
+#         - {channels: 32, kernel: 3, stride: 1}
+#         - {channels: 32, kernel: 3, stride: 1}
+#       feature_size: 256
+#       adaptive_pooling: true
+      memory_layer: null # null, 'lstm', 'transformer'
+      lstm:
+        hidden_dim: 256
+        num_layers: 1
+        max_seq_len: 1 # Leave at 1 due to Ray conventions, in reality the state will accumulate indefinitely
+        store_voltages: false
+        voltage_hidden_dim: 16
+      transformer:
+        latent_size: 128
+        num_attention_heads: 4
+        num_layers: 1
+        max_seq_len: 10
+        feedforward_dim: null  # FFN hidden dim (defaults to 4*latent_size=1024). The FFN expands then projects back.
+        dropout: 0.1
+        pooling_mode: "mean"  # "mean" or "max"
+        use_ctlpe: true  # Use Continuous Time Linear Positional Embedding (voltage-based)
+        add_pos_embeddings: false
+    policy_head:
+      hidden_layers: [64, 64, 32]
+      activation: "relu"
+      use_attention: false
+    value_head:
+      hidden_layers: [64, 64, 32]
+      activation: "relu"
+      use_attention: false
+
+  barrier_policy:
+    backbone:
+      type: "IMPALA"
+      mobilenet_version: "small" # Required for MobileNet
+      feature_size: 256
+      freeze_backbone: false
+      adaptive_pooling: true  # Required for SimpleCNN/IMPALA
+      num_res_blocks: 2  # Required for IMPALA
+      memory_layer: null # Barrier policy is not configured to use memory
+    policy_head:
+      hidden_layers: [32]
+      activation: "relu"
+      use_attention: false
+    value_head:
+      hidden_layers: [32]
+      activation: "relu"
+      use_attention: false

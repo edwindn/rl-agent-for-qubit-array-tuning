@@ -1,0 +1,112 @@
+# Ablation table config — single source of truth for which algos go in the
+# paper table and how each one is evaluated.
+#
+# To add an algo:
+#   1. Add an entry under `algos` with the run number (the integer suffix of
+#      the wandb display name, e.g. ethereal-surf-473 -> 473).
+#   2. Specify env_overrides as nested dict for any env_config.yaml fields that
+#      differ from the canonical run (use dotted keys for nesting).
+#   3. Run: uv run python run_ablation.py --algo <name> --gpu N
+#   4. After all runs are done: uv run python compute_table.py
+#
+# All RLModel runs use the same eval pipeline (qaduub-mappo main.py).
+# Single-agent and facmac variants are flagged with `pipeline:` for special
+# handling (placeholder — see TODO).
+
+defaults:
+  num_episodes: 100
+  episode_length: 49
+  radii: [2.0, 5.0, 10.0]
+  output_root: "/home/rahul/qaduub-mappo/benchmarks/Ablations/collected_data"
+
+algos:
+  qadapt:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 473
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "Main QADAPT — IMPALA backbone, no memory layer, kalman updater"
+
+  nature_cnn:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 484
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "w/ Nature CNN backbone instead of IMPALA"
+
+  lstm:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 520
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "w/ LSTM memory layer"
+
+  transformer:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 555
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "w/ Transformer memory layer (was 0% conv at 2V)"
+
+  gamma_nonzero:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 511
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "Discount factor > 0 ablation (separate from main table)"
+
+  w_o_virtualization:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 496
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "IPPO-equivalent: trained with update_method=null (no virtualization)"
+
+  w_o_kalman:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 473      # SAME WEIGHTS as qadapt
+    pipeline: "rlmodel"
+    env_overrides:
+      capacitance_model.update_method: "direct"   # bypass Kalman smoothing
+    notes: "Same weights as qadapt; env with 'direct' updater (no Kalman)"
+
+  single_agent_ppo:
+    wandb_project: "rl_agents_for_tuning/SingleAgentBenchmark"
+    wandb_run_number: 57
+    pipeline: "single_agent"
+    env_overrides: {}
+    notes: "Single-agent PPO baseline"
+
+  mappo:
+    wandb_project: "rl_agents_for_tuning/RLModel"
+    wandb_run_number: 648
+    pipeline: "rlmodel"
+    env_overrides: {}
+    notes: "MAPPO benchmark — zany-cloud-648, 4 dots, 400 iters, update_method=null. Best ~iter 250-300."
+
+  single_agent_sac:
+    wandb_project: "rl_agents_for_tuning/SingleAgentBenchmark"
+    wandb_run_number: 72
+    pipeline: "single_agent_sac"
+    env_overrides: {}
+    notes: "Single-agent SAC baseline — ethereal-sunset-72"
+
+  facmac:
+    # Local checkpoint (not from wandb). FACMAC was unstable; we eval the final
+    # saved policy at t=454200 to show converged-but-degraded performance in
+    # the table, with the instability narrative in the paper text.
+    pipeline: "facmac"
+    local_checkpoint: "/home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/MARL/facmac/results/models/facmac_quantum_full__2026-04-25_23-52-05/454200"
+    env_overrides: {}
+    notes: "FACMAC — local ckpt 454200 (converged); test_barrier degraded from peak 14.08@82k -> ~5.0 by 380k+"
+
+  facmac_peak:
+    # Same training run as `facmac`, but at t=101400 (closest saved ckpt to the
+    # test_barrier peak at t≈82k). Reported as a separate entry so the paper
+    # can show both "best the algo achieved" and "converged final" framings.
+    pipeline: "facmac"
+    local_checkpoint: "/home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/MARL/facmac/results/models/facmac_quantum_full__2026-04-25_23-52-05/101400"
+    env_overrides: {}
+    notes: "FACMAC at t=101400 (near peak test_barrier at t≈82k); for 'best achieved' comparison"
+
+  # TODO: maddpg — training launching tonight on Modal; eval entry will be added once ckpt ready

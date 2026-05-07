@@ -1,0 +1,15 @@
+# Sacred env config for the task-3 smoke test.
+# env_args.env_config_path and capacitance_model_checkpoint are injected by train.py
+# at runtime as absolute paths (sacred CLI `with ...` overrides).
+
+env: "pymarl_quantum"
+
+test_interval: 500
+runner_log_interval: 500
+learner_log_interval: 500
+log_interval: 500
+
+env_args:
+  env_config_path: null
+  capacitance_model_checkpoint: null
+  training: true

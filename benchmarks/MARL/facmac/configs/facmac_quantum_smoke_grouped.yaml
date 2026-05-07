@@ -1,0 +1,99 @@
+# Task-4c smoke-train config: GroupedMAC + per-group CNN agents + QMix mixer.
+# Same env (resolution=48, max_steps=30) and same training budget as the
+# facmac_quantum_smoke (stock MLP) run, so task-4 diagnostic can compare them.
+
+# --- custom GroupedMAC + CNN agents ---
+mac: "grouped_mac"
+agent: "grouped"                           # sentinel — real per-group nets live in agent_modules
+agent_modules:
+  plunger: "plunger_cnn"
+  barrier: "barrier_cnn"
+obs_agent_id: False
+obs_last_action: False
+agent_output_type: ~
+agent_return_logits: False
+
+# --- smoke-test downsizing (matches facmac_quantum_smoke.yaml) ---
+mixer: "qmix"
+mixing_embed_dim: 16
+hypernet_layers: 1
+hypernet_embed: 64
+hyper_initialization_nonzeros: 0
+skip_connections: False
+gated: False
+q_embed_dim: 1
+
+batch_size_run: 1
+batch_size: 8
+buffer_size: 32
+buffer_warmup: 0
+t_max: 1500
+test_interval: 500
+test_nepisode: 2
+testing_on: True
+runner: "episode"
+runner_scope: 'episodic'
+
+# --- FACMAC learner ---
+learner: "facmac_learner"
+learn_interval: 1
+n_train: 1
+critic_train_reps: 1
+
+# exploration
+action_range: ~
+action_selector: ~
+exploration_mode: "gaussian"
+start_steps: 0
+act_noise: 0.1
+ou_theta: 0.15
+ou_sigma: 0.2
+ou_noise_scale: 0.3
+final_ou_noise_scale: 0.
+ou_stop_episode: 100
+noise_clip: 0.5
+
+# optimisation
+optimizer: adam
+optimizer_epsilon: 0.01
+lr: 0.0003
+critic_lr: 0.0003
+gamma: 0.99
+grad_norm_clip: 0.5
+td_lambda: 0.8
+q_nstep: 0
+weight_decay: True
+weight_decay_factor: 0.0001
+
+# targets
+double_q: False
+target_update_interval: ~
+target_update_mode: 'soft'
+target_update_tau: 0.005
+
+discretize_actions: False
+n_runners: ~
+rnn_hidden_dim: 64
+run_mode: ~
+name: "facmac_quantum_smoke_grouped"
+epsilon_decay_mode: ~
+epsilon_start: ~
+epsilon_finish: ~
+epsilon_anneal_time: ~
+test_greedy: ~
+
+save_model: True
+save_model_interval: 1500
+use_tensorboard: False
+use_cuda: False
+verbose: False
+
+# wandb: off by default for smoke. Enable via CLI: `with use_wandb=True`.
+# Project is stable across smoke + real runs so the wandb UI can overlay them.
+use_wandb: False
+wandb_project: "FACMAC-benchmark"
+wandb_entity: "rl_agents_for_tuning"
+wandb_ema_period: 20
+
+env_args:
+  state_last_action: False

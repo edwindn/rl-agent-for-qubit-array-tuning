@@ -17,55 +17,100 @@ from pathlib import Path
 script_dir = Path(__file__).parent
 project_root = script_dir.parent
 
+# Read ignore patterns from .modalignore file
+modalignore_path = project_root / ".modalignore"
+ignore_patterns = []
+if modalignore_path.exists():
+    with open(modalignore_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            # Skip empty lines and comments
+            if line and not line.startswith("#"):
+                ignore_patterns.append(line)
+
 # Create image with project dependencies
 # Modal automatically caches this based on requirements.txt hash
 # Only rebuilds if requirements.txt changes
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")  # Required for pip_install_private_repos
-    .pip_install_private_repos(
-        # Install qarray-latched from private repo at specific commit
-        "github.com/b-vanstraaten/qarray-latched@fcc472276f27e7633bb3aafc6f0d6c92966875d7",
-        git_user="rahul-marchand",  # Your GitHub username
-        secrets=[modal.Secret.from_name("github-private")],
+    .pip_install("uv", "wandb")
+    .add_local_dir(
+        str(project_root),
+        remote_path="/root/quantum-rl-project",
+        ignore=ignore_patterns,
+        copy=True,
     )
-    .pip_install_from_requirements(str(project_root / "requirements.txt"))
-    .add_local_dir(str(project_root), remote_path="/root/quantum-rl-project")
+    .env({"MODAL_MOUNT_TIMEOUT": "600"})  # 10 min mount timeout
+    .run_commands(
+        "cd /root/quantum-rl-project && uv sync --frozen"
+    )
+    .add_local_file(
+        str(project_root / "src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
+        remote_path="/root/quantum-rl-project/src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
+    )
 )
 
 app = modal.App("quantum-rl-training")
 
 
 @app.function(
-    gpu="H100:8",  # Single GPU - Change to "A100:2", "A100:4", or "A100:8" for multiple GPUs
+    gpu="A100:5",  # Single GPU - Change to "A100:2", "A100:4", or "A100:8" for multiple GPUs
     # Options: "A100", "H100", "L40S", "L4", "T4", etc.
     # Multi-GPU: "A100:2" (2 GPUs), "H100:8" (8 GPUs), etc.
     # Note: H100, A100, L40S, L4, T4 support up to 8 GPUs; A10 supports up to 4
     image=image,
     timeout=86400,  # 24 hour timeout
-    secrets=[
-        modal.Secret.from_name("wandb-secret"),  # W&B logging
-    ],
+    secrets=[modal.Secret.from_name("wandb-secret")],
 )
-def train():
-    """Run the training script inside Modal container."""
+def train(checkpoint_artifact: str = None, config_path: str = "src/qadapt/training/configs/ppo_impala.yaml"):
+    """Run the training script inside Modal container.
+
+    Args:
+        checkpoint_artifact: Optional wandb artifact path to resume from
+                            e.g. 'rl_agents_for_tuning/RLModel/rl_checkpoint_best:v3510'
+        config_path: Path to config file relative to project root
+    """
     import subprocess
     import os
 
     # Change to project directory
     os.chdir("/root/quantum-rl-project")
 
-    # Run the training script
-    # You can add any command-line arguments here
-    subprocess.run(
-        ["python", "src/swarm/training/train.py"],
-        check=True
-    )
+    # Build command
+    cmd = ["uv", "run", "python", "src/qadapt/training/train.py", "--config", config_path]
+
+    # If checkpoint artifact specified, download it first
+    if checkpoint_artifact:
+        import wandb
+        print(f"Downloading checkpoint artifact: {checkpoint_artifact}")
+        run = wandb.init(project="RLModel", entity="rl_agents_for_tuning")
+        artifact = run.use_artifact(checkpoint_artifact, type='model_checkpoint')
+        artifact_dir = artifact.download()
+        wandb.finish()
+        print(f"Checkpoint downloaded to: {artifact_dir}")
+
+        # Add checkpoint loading argument
+        cmd.extend(["--load-checkpoint", artifact_dir])
+
+    # Run the training script using uv to use the virtual environment
+    subprocess.run(cmd, check=True)
 
 @app.local_entrypoint()
-def main():
-    """Entry point when running 'modal run modal_train.py'"""
+def main(
+    checkpoint: str = None,
+    config: str = "src/qadapt/training/configs/ppo_impala.yaml",
+):
+    """Entry point when running 'modal run modal_train.py'
+
+    Args:
+        checkpoint: Optional wandb artifact path to resume from
+                   e.g. 'rl_agents_for_tuning/RLModel/rl_checkpoint_best:v3510'
+        config: Path to config file relative to project root
+    """
     print("Starting quantum device RL training on Modal...")
     print("This will run train.py on cloud GPUs")
-    train.remote()
+    print(f"Using config: {config}")
+    if checkpoint:
+        print(f"Resuming from checkpoint: {checkpoint}")
+    train.remote(checkpoint_artifact=checkpoint, config_path=config)
     print("Training completed!")

@@ -1,0 +1,47 @@
+# Smoke-test env override — identical to src/qadapt/environment/env_config.yaml
+# except resolution dropped to 48 and max_steps shortened, so the buffer and
+# QMixer hypernet fit in CPU RAM and the training loop completes in ~10 min.
+# Task-6 (full training) uses the original env_config.yaml.
+
+simulator:
+  max_steps: 30
+  num_dots: 4
+  use_barriers: true
+  use_deltas: false
+  delta_max: 5.0
+  constant_voltage_offset: {"min": 0, "max": 0}
+  full_plunger_range_width: {"min": 80, "max": 100}
+  window_delta_range: {"min": 1.5, "max": 2.0}
+  full_barrier_range_width: {"min": 20, "max": 30}
+  resolution: 48
+  radial_noise:
+    enabled: true
+    lower: {"min": 20, "max": 30}
+    ramp_range: {"min": 5, "max": 10}
+    total_noise_range: {"min": 30, "max": 40}
+    max_amplitude: 0.05
+
+reward:
+  sparse_reward: False
+  outer_plunger_radius: 10
+  outer_plunger_reward_max: 0.5
+  plunger_radius: 2
+  barrier_radius: 2
+  gate_ramp_start: 40.0
+  gate_quadratic_start: 1.0
+  gate_curve_type: "constant"
+  gate_curve_exponent: 2.0
+  barrier_ramp_start: 6.0
+
+capacitance_model:
+  # Disabled for FACMAC benchmarks — VGM stays at identity, no learned
+  # virtualization. Keeps the env simpler and makes per-agent behavior directly
+  # interpretable. Set update_method: "kalman" to re-enable.
+  update_method: null
+  nearest_neighbour: false
+  variance_threshold: 0.05
+  process_noise: 0.0
+
+init:
+  debug: false
+  seed: 42
