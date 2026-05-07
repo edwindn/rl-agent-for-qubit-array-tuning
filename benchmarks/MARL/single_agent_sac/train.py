@@ -161,7 +161,7 @@ def create_env(config=None, env_config_path=None, distance_data_dir=None, num_do
     except:
         pass
 
-    from qadapt.single_agent_sac.utils.multiagent_wrapper import SingleAsMultiAgentWrapper
+    from single_agent_sac.utils.multiagent_wrapper import SingleAsMultiAgentWrapper
 
     # Default config path
     if env_config_path is None:
@@ -256,7 +256,7 @@ def main():
         config['rl_config']['algorithm'] = "SAC"
 
     # Create timestamped data folder if save_distance_data is enabled.
-    # In --eval-only mode, write to src/eval_runs/collected_data/{ts}_{algo}
+    # In --eval-only mode, write to benchmarks/Ablations/collected_data/{ts}_{algo}
     # so compute_table.py finds the .npy distance trajectories alongside the
     # multi-agent ablation runs. Otherwise (training), keep the historical
     # location next to single_agent_sac/.

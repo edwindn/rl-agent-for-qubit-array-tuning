@@ -9,7 +9,7 @@ continuous action space setup.
 from gymnasium import spaces
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 
-from qadapt.single_agent_sac.utils.env_wrapper import SingleAgentEnvWrapper
+from single_agent_sac.utils.env_wrapper import SingleAgentEnvWrapper
 
 
 class SingleAsMultiAgentWrapper(MultiAgentEnv):

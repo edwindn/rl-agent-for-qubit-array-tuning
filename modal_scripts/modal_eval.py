@@ -97,7 +97,7 @@ def run_eval(
         shutil.copy(default_config, training_config_path)
 
     # Create modified env_config with num_dots override
-    env_config_path = Path("src/eval_runs/env_config.yaml")
+    env_config_path = Path("benchmarks/Ablations/env_config.yaml")
     with open(env_config_path, "r") as f:
         env_config = yaml.safe_load(f)
 
@@ -117,7 +117,7 @@ def run_eval(
 
     # Build command - uses config values for env_runners/learners (same as training)
     cmd = [
-        "uv", "run", "python", "src/eval_runs/main.py",
+        "uv", "run", "python", "benchmarks/Ablations/main.py",
         "--load-checkpoint", artifact_dir,
         "--collect-data",
         "--upload-to-wandb",

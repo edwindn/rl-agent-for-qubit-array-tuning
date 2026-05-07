@@ -4,7 +4,7 @@ Pull a wandb checkpoint + run the ablation eval for one algo.
 
 Reads ablation_config.yaml, looks up `--algo`, downloads the latest
 'rl_checkpoint_best' artifact for that run, applies any env_overrides, and
-invokes src/eval_runs/main.py for `--num-episodes` rollouts.
+invokes benchmarks/Ablations/main.py for `--num-episodes` rollouts.
 
 Usage:
   uv run python run_ablation.py --algo qadapt --gpu 7
@@ -248,9 +248,9 @@ def _prepare_checkpoint(
     return ckpt_dir
 
 
-SINGLE_AGENT_TRAIN = REPO_ROOT / "src" / "qadapt" / "single_agent_ablations" / "train.py"
-SINGLE_AGENT_SAC_TRAIN = REPO_ROOT / "src" / "qadapt" / "single_agent_sac" / "train.py"
-FACMAC_EVAL = REPO_ROOT / "benchmarks" / "facmac" / "run_eval_trials.py"
+SINGLE_AGENT_TRAIN = REPO_ROOT / "benchmarks" / "MARL" / "single_agent_ppo" / "train.py"
+SINGLE_AGENT_SAC_TRAIN = REPO_ROOT / "benchmarks" / "MARL" / "single_agent_sac" / "train.py"
+FACMAC_EVAL = REPO_ROOT / "benchmarks" / "MARL" / "facmac" / "run_eval_trials.py"
 
 
 def _run_eval(
@@ -262,8 +262,8 @@ def _run_eval(
 ):
     """Invoke the appropriate eval entry point based on pipeline kind.
 
-    - rlmodel: src/eval_runs/main.py (PPO/MAPPO/SAC swarm)
-    - single_agent: src/qadapt/single_agent_ablations/train.py --eval-only
+    - rlmodel: benchmarks/Ablations/main.py (PPO/MAPPO/SAC swarm)
+    - single_agent: benchmarks/MARL/single_agent_ppo/train.py --eval-only
     - facmac: benchmarks/MARL/facmac/run_eval_trials.py --npy-output-dir
     """
     env = os.environ.copy()

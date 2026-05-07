@@ -271,7 +271,7 @@ def main():
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     checkpoint_name = Path(checkpoint_path).name
-    data_parent_dir = Path("src/eval_runs/collected_data")
+    data_parent_dir = Path("benchmarks/Ablations/collected_data")
     distance_data_dir = data_parent_dir / f"{timestamp}_{checkpoint_name}"
 
     data_parent_dir.mkdir(parents=True, exist_ok=True, mode=0o777)

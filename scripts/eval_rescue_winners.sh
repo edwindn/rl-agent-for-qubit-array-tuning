@@ -91,7 +91,7 @@ ls -l "$RESULT_DIR/"
 
 # --- 4. Convergence-percent table at radii 2, 5, 10V (paper table format) -----
 echo "[summary] computing convergence percentages"
-uv run python "$REPO/src/eval_runs/ablation_metrics.py" \
+uv run python "$REPO/benchmarks/Ablations/ablation_metrics.py" \
   --data-dir "$NPY_ROOT" \
   --radius 2,5,10 \
   --length 30 \

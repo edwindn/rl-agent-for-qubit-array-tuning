@@ -141,7 +141,7 @@ def create_env(config=None, gif_config=None, distance_data_dir=None, env_config_
     except:
         pass
 
-    from qadapt.single_agent_ablations.utils.env_wrapper import SingleAgentEnvWrapper
+    from single_agent_ppo.utils.env_wrapper import SingleAgentEnvWrapper
 
     # Wrap in single-agent env wrapper
     if env_config_path is None:
@@ -226,7 +226,7 @@ def main():
         config = apply_config_overrides(config, args.config_overrides)
 
     # Create timestamped data folder if save_distance_data is enabled.
-    # In --eval-only mode, write to src/eval_runs/collected_data/{ts}_{algo}
+    # In --eval-only mode, write to benchmarks/Ablations/collected_data/{ts}_{algo}
     # so compute_table.py finds the .npy distance trajectories alongside the
     # multi-agent ablation runs. Otherwise (training), keep the historical
     # location next to single_agent_ablations/.

@@ -1,7 +1,7 @@
 """
 Modal wrapper for running single-agent PPO training on cloud GPUs.
 
-Uses the training code in src/qadapt/single_agent_ablations/
+Uses the training code in benchmarks/MARL/single_agent_ppo/
 
 Usage (from project root):
     modal run modal_scripts/modal_single_agent.py
@@ -62,7 +62,7 @@ def train(num_dots: int = 2, num_iterations: int = 150):
     os.chdir("/root/quantum-rl-project")
 
     cmd = [
-        "uv", "run", "python", "src/qadapt/single_agent_ablations/train.py",
+        "uv", "run", "python", "benchmarks/MARL/single_agent_ppo/train.py",
         "--num-dots", str(num_dots),
         "--defaults.num_iterations", str(num_iterations),
         "--rl_config.env_runners.sample_timeout_s", "1800",

@@ -95,7 +95,7 @@ def run_inference(
         shutil.copy(default_config, training_config_path)
 
     # Update env_config with Modal-specific paths
-    env_config_path = Path("/root/quantum-rl-project/src/eval_runs/env_config.yaml")
+    env_config_path = Path("/root/quantum-rl-project/benchmarks/Ablations/env_config.yaml")
     with open(env_config_path, 'r') as f:
         env_config = yaml.safe_load(f)
 
@@ -109,7 +109,7 @@ def run_inference(
 
     # Build command
     cmd = [
-        "uv", "run", "python", "src/eval_runs/inference.py",
+        "uv", "run", "python", "benchmarks/Ablations/inference.py",
         "--checkpoint", checkpoint_dir,
         "--num-dots", str(num_dots),
         "--num-rollouts", str(num_rollouts),
