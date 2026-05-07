@@ -3,9 +3,9 @@ Task 4a+4b diagnostics — static unit tests on the CNN agents and GroupedMAC.
 No training required. Run BEFORE kicking off the grouped smoke training.
 
 Usage:
-    uv run --extra facmac python benchmarks/facmac/tests/task_4_diagnostics.py
+    uv run --extra facmac python benchmarks/MARL/facmac/tests/task_4_diagnostics.py
 
-Produces under benchmarks/facmac/diagnostics/task_4/:
+Produces under benchmarks/MARL/facmac/diagnostics/task_4/:
 
     1. summary.txt               — all assertion results + per-layer param counts
     2. shape_trace.txt           — detailed shape walk through each CNN agent

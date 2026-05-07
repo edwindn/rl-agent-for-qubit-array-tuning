@@ -114,10 +114,10 @@ wandb
 
 # FACMAC active training artefacts (must not be uploaded — they're written
 # by running local jobs and will fail Modal's "modified during build" check)
-benchmarks/facmac/results
-benchmarks/facmac/wandb
-benchmarks/facmac/tb_logs
-benchmarks/facmac/sacred
+benchmarks/MARL/facmac/results
+benchmarks/MARL/facmac/wandb
+benchmarks/MARL/facmac/tb_logs
+benchmarks/MARL/facmac/sacred
 **/sacred/
 
 # Claude Code

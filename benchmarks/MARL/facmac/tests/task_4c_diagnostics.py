@@ -3,9 +3,9 @@ Task 4c diagnostics — post-training analysis of the GroupedMAC + CNN smoke run
 plus overlay comparison against task 3's stock-MLP run.
 
 Usage:
-    uv run --extra facmac python benchmarks/facmac/tests/task_4c_diagnostics.py
+    uv run --extra facmac python benchmarks/MARL/facmac/tests/task_4c_diagnostics.py
 
-Produces under benchmarks/facmac/diagnostics/task_4c/:
+Produces under benchmarks/MARL/facmac/diagnostics/task_4c/:
 
     1. summary.txt         — metric inventory, drift magnitudes, convergence deltas
     2. loss_curves.png     — critic_loss / grad_norms / pg_loss over t_env (CNN only)

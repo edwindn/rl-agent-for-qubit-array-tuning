@@ -1,7 +1,7 @@
 """
 Task 2 diagnostics — data-rich validation of PyMARLEnvWrapper.
 
-Produces four artifacts under benchmarks/facmac/diagnostics/task_2/:
+Produces four artifacts under benchmarks/MARL/facmac/diagnostics/task_2/:
 
     1. env_info.txt         — get_env_info() dict + agent_groups printout
     2. obs_routing.png      — global scan vs each agent's local obs, labeled
@@ -9,7 +9,7 @@ Produces four artifacts under benchmarks/facmac/diagnostics/task_2/:
     4. state_reconstruction.png — global state vector reshaped back to per-agent tiles
 
 Usage:
-    cd benchmarks/facmac
+    cd benchmarks/MARL/facmac
     uv run --extra facmac python tests/task_2_diagnostics.py
 """
 

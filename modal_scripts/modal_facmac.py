@@ -1,9 +1,9 @@
 """
 Modal wrapper for running FACMAC / MADDPG training in the cloud.
 
-Both algorithms share the same entrypoint (benchmarks/facmac/train.py); only
+Both algorithms share the same entrypoint (benchmarks/MARL/facmac/train.py); only
 the --config and --env-config flags differ. Pass `algo` to pick the alg config
-under benchmarks/facmac/vendor/config/algs/.
+under benchmarks/MARL/facmac/vendor/config/algs/.
 
 Usage (from project root):
     # MADDPG training, default env_quantum
@@ -67,7 +67,7 @@ volume = modal.Volume.from_name("facmac-results", create_if_missing=True)
     volumes={"/results": volume},
 )
 def train(algo: str = "maddpg_quantum", env: str = "env_quantum", t_max: int | None = None):
-    """Run benchmarks/facmac/train.py inside Modal.
+    """Run benchmarks/MARL/facmac/train.py inside Modal.
 
     Args:
         algo: name of vendor/config/algs/<algo>.yaml (without extension)
@@ -83,7 +83,7 @@ def train(algo: str = "maddpg_quantum", env: str = "env_quantum", t_max: int | N
 
     cmd = [
         "uv", "run", "--extra", "facmac", "python",
-        "benchmarks/facmac/train.py",
+        "benchmarks/MARL/facmac/train.py",
         f"--config={algo}",
         f"--env-config={env}",
     ]
@@ -94,7 +94,7 @@ def train(algo: str = "maddpg_quantum", env: str = "env_quantum", t_max: int | N
     subprocess.run(cmd, check=True)
 
     # Copy results out to the persistent volume so they survive container exit.
-    src = Path("benchmarks/facmac/results")
+    src = Path("benchmarks/MARL/facmac/results")
     dst = Path("/results") / algo
     dst.mkdir(parents=True, exist_ok=True)
     if src.exists():

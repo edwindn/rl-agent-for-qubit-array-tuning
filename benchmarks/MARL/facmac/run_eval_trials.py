@@ -4,11 +4,11 @@ MultiAgentEnvWrapper, records per-step distance-to-ground-truth, and writes
 JSON matching the schema used by benchmarks/results/final_Ndot/*.json.
 
 Usage:
-    uv run --extra facmac python benchmarks/facmac/run_eval_trials.py \\
-        --checkpoint-dir benchmarks/facmac/results/models/<run>/1500 \\
-        --env-config benchmarks/facmac/configs/env_config_smoke.yaml \\
+    uv run --extra facmac python benchmarks/MARL/facmac/run_eval_trials.py \\
+        --checkpoint-dir benchmarks/MARL/facmac/results/models/<run>/1500 \\
+        --env-config benchmarks/MARL/facmac/configs/env_config_smoke.yaml \\
         --num-trials 100 \\
-        --output benchmarks/facmac/results/facmac_4dots.json
+        --output benchmarks/MARL/facmac/results/facmac_4dots.json
 
 Output JSON schema (matches ppo_4dots.json etc.):
     {

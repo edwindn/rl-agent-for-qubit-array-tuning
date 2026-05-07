@@ -31,7 +31,7 @@ RESULT_DIR=/tmp/eval_results
 NPY_ROOT=/tmp/eval_npy
 # IMPORTANT: env-config must be absolute — env.py resolves it relative to its own
 # package dir, not the cwd, so a relative path silently breaks.
-ENV_CFG="$REPO/benchmarks/facmac/configs/env_config_smoke.yaml"
+ENV_CFG="$REPO/benchmarks/MARL/facmac/configs/env_config_smoke.yaml"
 NUM_TRIALS=${NUM_TRIALS:-100}
 
 mkdir -p "$CKPT_ROOT" "$RESULT_DIR" "$NPY_ROOT"
@@ -53,7 +53,7 @@ done
 
 # --- 2. Random baseline (run once at num_dots=4) ------------------------------
 echo "[eval] random baseline"
-uv run --extra facmac python benchmarks/facmac/run_eval_trials.py \
+uv run --extra facmac python benchmarks/MARL/facmac/run_eval_trials.py \
   --checkpoint-dir /dev/null \
   --env-config "$ENV_CFG" \
   --num-trials "$NUM_TRIALS" \
@@ -77,7 +77,7 @@ for algo in "${ALGOS[@]}"; do
   fi
   step=$(basename "$latest")
   echo "[eval] $algo @ step=$step"
-  uv run --extra facmac python benchmarks/facmac/run_eval_trials.py \
+  uv run --extra facmac python benchmarks/MARL/facmac/run_eval_trials.py \
     --checkpoint-dir "$latest" \
     --env-config "$ENV_CFG" \
     --num-trials "$NUM_TRIALS" \

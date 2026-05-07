@@ -96,7 +96,7 @@ algos:
     # saved policy at t=454200 to show converged-but-degraded performance in
     # the table, with the instability narrative in the paper text.
     pipeline: "facmac"
-    local_checkpoint: "/home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/facmac/results/models/facmac_quantum_full__2026-04-25_23-52-05/454200"
+    local_checkpoint: "/home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/MARL/facmac/results/models/facmac_quantum_full__2026-04-25_23-52-05/454200"
     env_overrides: {}
     notes: "FACMAC — local ckpt 454200 (converged); test_barrier degraded from peak 14.08@82k -> ~5.0 by 380k+"
 
@@ -105,7 +105,7 @@ algos:
     # test_barrier peak at t≈82k). Reported as a separate entry so the paper
     # can show both "best the algo achieved" and "converged final" framings.
     pipeline: "facmac"
-    local_checkpoint: "/home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/facmac/results/models/facmac_quantum_full__2026-04-25_23-52-05/101400"
+    local_checkpoint: "/home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/MARL/facmac/results/models/facmac_quantum_full__2026-04-25_23-52-05/101400"
     env_overrides: {}
     notes: "FACMAC at t=101400 (near peak test_barrier at t≈82k); for 'best achieved' comparison"
 

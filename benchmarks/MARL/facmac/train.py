@@ -4,17 +4,17 @@ Thin wrapper around vendor/main.py that:
   2. Registers PyMARLEnvWrapper under "pymarl_quantum" in vendor's env REGISTRY.
   3. Copies our task-specific config YAMLs into vendor/config/{algs,envs}/ so
      sacred's config loader can find them.
-  4. chdir's into benchmarks/facmac so `local_results_path: results` ends up
+  4. chdir's into benchmarks/MARL/facmac so `local_results_path: results` ends up
      co-located with the sacred observer output.
   5. Delegates to vendor/main.py via runpy.run_path, preserving sacred CLI semantics.
 
 Usage:
     # task-3 smoke run, CPU, ~10 min
-    uv run --extra facmac python benchmarks/facmac/train.py \\
+    uv run --extra facmac python benchmarks/MARL/facmac/train.py \\
         --config=facmac_quantum_smoke --env-config=env_quantum_smoke
 
     # add extra sacred overrides after `with`:
-    uv run --extra facmac python benchmarks/facmac/train.py \\
+    uv run --extra facmac python benchmarks/MARL/facmac/train.py \\
         --config=facmac_quantum_smoke --env-config=env_quantum_smoke \\
         with seed=7 t_max=800
 """

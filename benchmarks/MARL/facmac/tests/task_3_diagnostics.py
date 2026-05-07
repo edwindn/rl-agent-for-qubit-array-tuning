@@ -3,14 +3,14 @@ Task 3 diagnostics — post-hoc analysis of the stock-MLP smoke training run.
 
 Run task-3 training FIRST:
 
-    uv run --extra facmac python benchmarks/facmac/train.py \\
+    uv run --extra facmac python benchmarks/MARL/facmac/train.py \\
         --config=facmac_quantum_smoke --env-config=env_quantum_smoke
 
 Then this script:
 
-    uv run --extra facmac python benchmarks/facmac/tests/task_3_diagnostics.py
+    uv run --extra facmac python benchmarks/MARL/facmac/tests/task_3_diagnostics.py
 
-Produces under benchmarks/facmac/diagnostics/task_3/:
+Produces under benchmarks/MARL/facmac/diagnostics/task_3/:
 
     1. summary.txt      — pass/fail checks (finiteness of losses, weight drift > 0,
                           save_0 and save_{t_max} both present)

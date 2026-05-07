@@ -264,7 +264,7 @@ def _run_eval(
 
     - rlmodel: src/eval_runs/main.py (PPO/MAPPO/SAC swarm)
     - single_agent: src/qadapt/single_agent_ablations/train.py --eval-only
-    - facmac: benchmarks/facmac/run_eval_trials.py --npy-output-dir
+    - facmac: benchmarks/MARL/facmac/run_eval_trials.py --npy-output-dir
     """
     env = os.environ.copy()
     if gpu is not None:

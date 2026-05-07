@@ -7,12 +7,12 @@ Usage:
   1) Kick off a short training run with wandb enabled (offline is fine for local
      validation; online works too if you're logged in):
 
-     WANDB_MODE=offline uv run --extra facmac python benchmarks/facmac/train.py \\
+     WANDB_MODE=offline uv run --extra facmac python benchmarks/MARL/facmac/train.py \\
          --config=facmac_quantum_smoke_grouped --env-config=env_quantum_smoke \\
          with use_cuda=True use_wandb=True t_max=200 save_model_interval=200 \\
               batch_size=4 buffer_size=8 test_interval=100
 
-  2) Run this diagnostic. It finds the latest wandb run under benchmarks/facmac/wandb/
+  2) Run this diagnostic. It finds the latest wandb run under benchmarks/MARL/facmac/wandb/
      and writes artifacts to diagnostics/task_6/.
 
 Produces:

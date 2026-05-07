@@ -29,7 +29,7 @@ fi
 
 echo "[rescue_launch] $(date '+%H:%M:%S') algo=$ALGO gpu=$GPU t_max=$TMAX bsr=${BSR:-default} → $LOG" | tee "$LOG"
 
-CUDA_VISIBLE_DEVICES=$GPU nohup uv run --extra facmac python benchmarks/facmac/train.py \
+CUDA_VISIBLE_DEVICES=$GPU nohup uv run --extra facmac python benchmarks/MARL/facmac/train.py \
   --config=$ALGO \
   --env-config=env_quantum \
   with "${WITH_ARGS[@]}" \

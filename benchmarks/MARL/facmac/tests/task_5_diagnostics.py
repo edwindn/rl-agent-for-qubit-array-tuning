@@ -15,9 +15,9 @@ policy and (b) a uniform-random policy on the same seeds, then:
 
 Usage (after running task-4c training):
 
-    uv run --extra facmac python benchmarks/facmac/tests/task_5_diagnostics.py \\
-        --checkpoint-dir benchmarks/facmac/results/models/<run>/<step>/ \\
-        --env-config benchmarks/facmac/configs/env_config_smoke.yaml \\
+    uv run --extra facmac python benchmarks/MARL/facmac/tests/task_5_diagnostics.py \\
+        --checkpoint-dir benchmarks/MARL/facmac/results/models/<run>/<step>/ \\
+        --env-config benchmarks/MARL/facmac/configs/env_config_smoke.yaml \\
         --num-trials 10
 """
 
