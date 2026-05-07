@@ -1,0 +1,26 @@
+# SuperSims environment configuration.
+# Drives src/swarm/environment/supersims_env.py.
+
+simulator:
+  # Episode horizon (tuning steps per episode).
+  max_steps: 20
+
+  # Whether to also run the alone-driving simulation each step (for diagnostics only).
+  # When False, only `simultaneous=True` is run — half the per-step sim cost.
+  alone_enabled: false
+
+env_type: "supersims"
+
+# Optional: override SuperSims's canonical parameter_config.json with a different
+# file under SuperSims/. Use "parameter_config_narrow.json" for fast-convergence
+# diagnostic runs (10× narrower ranges around the optimum). Comment out to use the
+# canonical (full-range) distribution.
+parameter_config_filename: "parameter_config_narrow.json"
+
+# How to split agents under the multi-agent wrapper:
+#   "per_qubit"  — one agent per qubit, each emits a 5-d action; single shared `qubit_policy`.
+#   "per_param"  — one agent per (qubit, param); each emits a 1-d action; five shared
+#                  policies (omega01_policy, omegad_policy, phi_policy, drive_policy,
+#                  beta_policy) each shared across qubits. Mirrors the barrier/plunger
+#                  split from the dot env.
+policy_split: "per_param"

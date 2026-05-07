@@ -1,0 +1,130 @@
+defaults:
+  num_iterations: 50
+  delete_old_checkpoints: true
+  save_distance_data: false
+wandb:
+  entity: rl_agents_for_tuning
+  project: RLModel
+  ema_period: 20
+ray:
+  include_dashboard: false
+  log_to_driver: false
+  logging_level: 40
+  runtime_env:
+    excludes:
+    - dataset
+    - dataset_v1
+    - wandb
+    - '**/wandb/**'
+    - outputs
+    - test_outputs
+    - checkpoints
+    - checkpoints_supersims
+    - weights*
+    - '*dataset*'
+    - '**/weights/**'
+    - '**/symmetric_weights_*/**'
+    - '**/mobilenet_*/**'
+    - '**/data/**'
+    - '**/scan_captures/**'
+    - '**/rollout_scans/**'
+    - eval_runs
+    - '**/eval_runs/**'
+    - '**/__pycache__/**'
+    env_vars:
+      JAX_PLATFORM_NAME: cuda
+      JAX_PLATFORMS: cuda,cpu
+      PYTHONWARNINGS: ignore::DeprecationWarning,ignore::FutureWarning
+      RAY_DISABLE_IMPORT_WARNING: '1'
+      RAY_METRICS_EXPORT_INTERVAL_MS: '0'
+      XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
+      XLA_PYTHON_CLIENT_MEM_FRACTION: '0.25'
+      JAX_ENABLE_X64: 'true'
+rl_config:
+  algorithm: PPO
+  env_runners:
+    num_env_runners: 6
+    rollout_fragment_length: 20
+    sample_timeout_s: 1200.0
+    num_gpus_per_env_runner: 1.0
+  learners:
+    num_learners: 1
+    num_gpus_per_learner: 1.0
+  training:
+    train_batch_size: 10240
+    minibatch_size: 256
+    num_epochs: 10
+    grad_clip: 40.0
+    grad_clip_by: norm
+    lr: 0.0005
+    gamma: 0.0
+    lambda_: 0.95
+    clip_param: 0.2
+    entropy_coeff: 0.01
+    vf_loss_coeff: 0.5
+    kl_target: 0.01
+    actor_lr: 0.0003
+    critic_lr: 0.0003
+    alpha_lr: 0.0003
+    twin_q: true
+    tau: 0.005
+    initial_alpha: 1.0
+    target_entropy: auto
+    n_step: 1
+    clip_actions: true
+    target_network_update_freq: 1
+    num_steps_sampled_before_learning_starts: 1000
+    replay_buffer_config:
+      type: MultiAgentPrioritizedEpisodeReplayBuffer
+      capacity: 1000000
+      alpha: 0.6
+      beta: 0.4
+  multi_agent:
+    policies:
+    - omega01_policy
+    - omegad_policy
+    - phi_policy
+    - drive_policy
+    - beta_policy
+    policies_to_train:
+    - omega01_policy
+    - omegad_policy
+    - phi_policy
+    - drive_policy
+    - beta_policy
+    count_steps_by: agent_steps
+    free_log_std: false
+    log_std_bounds:
+    - -10
+    - -1.5
+checkpoints:
+  save_dir: ./checkpoints_supersims
+  upload_best_only: true
+gif_config:
+  enabled: false
+  target_agent_type: qubit
+  target_agent_indices: []
+  save_dir: /tmp/supersims_gifs
+  fps: 0.5
+neural_networks:
+  qubit_policy:
+    backbone:
+      type: MLP
+      hidden_layers:
+      - 128
+      - 128
+      feature_size: 128
+      activation: relu
+      memory_layer: null
+    policy_head:
+      hidden_layers:
+      - 128
+      - 64
+      activation: relu
+      use_attention: false
+    value_head:
+      hidden_layers:
+      - 128
+      - 64
+      activation: relu
+      use_attention: false
