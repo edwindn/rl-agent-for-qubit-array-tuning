@@ -13,9 +13,12 @@ agent_modules:
   barrier: barrier_cnn
 
 # === MADDPG-specific ===
-learner: "maddpg_learner"
+learner: "maddpg_antizero_learner"   # M6: anti-zero penalty (-λ E[‖π‖²]) on actor loss
 mixer: ~                   # MADDPG: no value-decomposition mixer; central critic per agent
 critic_lr: 0.0003          # match actor lr
+
+# M6b — strong anti-zero (10× M6's 0.05)
+m6_anti_zero_lambda: 0.5
 
 # === INHERITED FROM facmac_quantum.yaml ===
 action_range: ~
@@ -42,7 +45,7 @@ lr: 0.0003
 td_lambda: 0.8
 critic_train_reps: 1
 q_nstep: 0
-name: "maddpg_quantum"
+name: "maddpg_M6b_strongantizero"
 n_runners: ~
 n_train: 1
 optimizer: adam
@@ -69,3 +72,9 @@ env_args:
 agent_return_logits: False
 q_embed_dim: 1
 noise_clip: 0.5
+
+# wandb
+use_wandb: True
+wandb_project: "FACMAC-rescue"
+wandb_entity: "rl_agents_for_tuning"
+wandb_ema_period: 20

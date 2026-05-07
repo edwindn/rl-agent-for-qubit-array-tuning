@@ -519,7 +519,10 @@ def main():
                 evaluation_duration_unit="episodes",
                 evaluation_sample_timeout_s=1800,
                 evaluation_config={
-                    "explore": True,  # Use stochastic actions
+                    # ABLATION_EXPLORE=0 selects deterministic actions for the
+                    # qadapt-vs-nature_cnn comparison (see investigation
+                    # 2026-05-05). Default True preserves prior behavior.
+                    "explore": os.environ.get("ABLATION_EXPLORE", "1") != "0",
                 },
             )
             # .callbacks([custom_callbacks] if use_wandb else [])

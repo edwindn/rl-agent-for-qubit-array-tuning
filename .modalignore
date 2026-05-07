@@ -85,6 +85,9 @@ collected_data/
 scan_captures/
 gif_captures/
 rollout_scans/
+src/eval_runs/collected_data/
+src/eval_runs/collected_data/**
+src/eval_runs/gif_captures/
 src/swarm/qarray_dataset
 src/swarm/artifacts
 src/swarm/wandb
@@ -108,6 +111,14 @@ benchmarks/results
 benchmarks/20*
 checkpoints
 wandb
+
+# FACMAC active training artefacts (must not be uploaded — they're written
+# by running local jobs and will fail Modal's "modified during build" check)
+benchmarks/facmac/results
+benchmarks/facmac/wandb
+benchmarks/facmac/tb_logs
+benchmarks/facmac/sacred
+**/sacred/
 
 # Claude Code
 CLAUDE.md

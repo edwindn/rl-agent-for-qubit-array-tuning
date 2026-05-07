@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""
+Pull training reward curves from wandb for all baselines/ablations and the
+rescue runs, render two appendix figures:
+
+  Fig 1 — QADAPT-family curves (PPO iterations):
+    qadapt (473), nature_cnn (484), lstm (520), transformer (555),
+    gamma_nonzero (511), w_o_virtualization (496), MAPPO (648),
+    single_agent_ppo (57), single_agent_sac (72)
+    x = iteration (0-150), y = episode_return_mean
+
+  Fig 2 — MADDPG / FACMAC rescue curves (env steps):
+    M6 anti-zero, M1 TD3, M3 lowcriticlr, M6b strong,
+    F1 lowcriticlr, F2 VDN, F2b nomixer, F3 slowtau, F4 rewardnorm
+    x = t_env (0-500k), y = test_return_mean
+
+Outputs both PNG and SVG to plots_supersims_diagnostic/ (or --out-dir).
+
+Usage:
+  uv run python scripts/plot_reward_curves.py
+"""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import wandb
+
+# QADAPT-family runs. Some methods chain multiple wandb runs (resumed training);
+# we stitch them on the `iteration` axis. Format: (project, [run_numbers...], label, y_key).
+QADAPT_FAMILY = [
+    ("rl_agents_for_tuning/RLModel", [473],            "QADAPT",                    "episode_return_mean"),
+    ("rl_agents_for_tuning/RLModel", [479, 484],       "Nature CNN backbone",       "episode_return_mean"),
+    ("rl_agents_for_tuning/RLModel", [477, 509, 520],  "LSTM memory",               "episode_return_mean"),
+    ("rl_agents_for_tuning/RLModel", [555],            "Transformer memory",        "episode_return_mean"),
+    ("rl_agents_for_tuning/RLModel", [511],            r"$\gamma > 0$",             "episode_return_mean"),
+    ("rl_agents_for_tuning/RLModel", [478, 482, 496],  "IPPO",                      "episode_return_mean"),
+    ("rl_agents_for_tuning/RLModel", [647, 648],       "MAPPO",                     "episode_return_mean"),
+    ("rl_agents_for_tuning/SingleAgentBenchmark", [57], "single-agent PPO",         "episode_return_mean"),
+]
+
+# Rescue runs (from FACMAC-rescue wandb project) — only the two best, matching
+# the eval-table picks: best MADDPG = M6 anti-zero, best FACMAC = F3 slow-tau.
+RESCUE_RUNS = [
+    ("rl_agents_for_tuning/FACMAC-rescue", "maddpg_M6_antizero", "MADDPG"),
+    ("rl_agents_for_tuning/FACMAC-rescue", "facmac_F3_slowtau",  "FACMAC"),
+]
+
+
+def _resolve_run(api, project: str, run_number: int):
+    """For RLModel-style: find run by display_name suffix '-<number>'."""
+    runs = list(api.runs(project, per_page=500))
+    suffix = f"-{run_number}"
+    hits = [r for r in runs if (r.display_name or "").endswith(suffix)]
+    if not hits:
+        return None
+    return hits[0]
+
+
+def _resolve_run_by_name_prefix(api, project: str, name_prefix: str):
+    """For FACMAC-rescue: find run whose display_name starts with the algo name."""
+    runs = list(api.runs(project, per_page=500))
+    hits = [r for r in runs if (r.display_name or "").startswith(name_prefix)]
+    if not hits:
+        return None
+    # If multiple, pick the most recently created.
+    hits.sort(key=lambda r: r.created_at, reverse=True)
+    return hits[0]
+
+
+def _scan_history(run, x_key: str, y_key: str) -> tuple[np.ndarray, np.ndarray]:
+    xs, ys = [], []
+    for row in run.scan_history(keys=[x_key, y_key]):
+        x = row.get(x_key)
+        y = row.get(y_key)
+        if x is None or y is None:
+            continue
+        xs.append(float(x))
+        ys.append(float(y))
+    return np.asarray(xs), np.asarray(ys)
+
+
+def _smooth(y: np.ndarray, window: int = 5) -> np.ndarray:
+    if len(y) < window:
+        return y
+    kernel = np.ones(window) / window
+    return np.convolve(y, kernel, mode="valid")
+
+
+def _stitch_chained_runs(api, project: str, run_numbers: list[int],
+                          y_key: str) -> tuple[np.ndarray, np.ndarray]:
+    """Pull chained (resumed) runs in order, concatenate into a single curve.
+
+    Each segment's iteration counter may restart at 0 — we offset by the
+    cumulative max-iteration so the resulting x-axis is monotonically increasing.
+    """
+    seg_x: list[np.ndarray] = []
+    seg_y: list[np.ndarray] = []
+    offset = 0.0
+    for num in run_numbers:
+        run = _resolve_run(api, project, num)
+        if run is None:
+            print(f"    [skip seg] -{num}: not found")
+            continue
+        x, y = _scan_history(run, "iteration", y_key)
+        if len(x) == 0:
+            x, y = _scan_history(run, "_step", y_key)
+        if len(x) == 0:
+            print(f"    [skip seg] -{num}: no history rows")
+            continue
+        order = np.argsort(x); x, y = x[order], y[order]
+        # If this segment's iteration counter restarted at <= offset, shift up.
+        if len(seg_x) > 0 and float(x[0]) <= offset:
+            shift = offset - float(x[0]) + 1.0
+            x = x + shift
+        seg_x.append(x); seg_y.append(y)
+        offset = float(x.max())
+        print(f"    [seg] -{num}: {len(x)} pts, iters {x.min():.0f}->{x.max():.0f}")
+    if not seg_x:
+        return np.empty(0), np.empty(0)
+    return np.concatenate(seg_x), np.concatenate(seg_y)
+
+
+def render_qadapt_family(api, out_stem: Path, max_iter: int = 150) -> None:
+    plt.rcParams.update({"font.size": 14})
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+
+    import colorcet as cc
+    palette_idx = (np.linspace(0.0, 0.95, len(QADAPT_FAMILY)) * 256).astype(int)
+    colors = [cc.gouldian[int(i)] for i in palette_idx]
+
+    plotted = 0
+    for (project, run_nums, label, y_key), color in zip(QADAPT_FAMILY, colors):
+        print(f"  [pull] {label}: runs {run_nums}")
+        x, y = _stitch_chained_runs(api, project, run_nums, y_key)
+        if len(x) == 0:
+            print(f"  [skip] {label}: no data")
+            continue
+        mask = x <= max_iter
+        x, y = x[mask], y[mask]
+        if len(x) < 2:
+            continue
+        ax.plot(x, y, color=color, lw=1.6, label=label, alpha=0.9)
+        plotted += 1
+        print(f"  [plot] {label}: {len(x)} stitched points (max iter {x.max():.0f})")
+
+    ax.set_xlim(0, max_iter)
+    ax.set_xlabel("Training iteration")
+    ax.set_ylabel("Episode return")
+    for spine in ("top", "bottom", "left", "right"):
+        ax.spines[spine].set_visible(True)
+        ax.spines[spine].set_color("#303030")
+        ax.spines[spine].set_linewidth(1.6)
+    ax.tick_params(axis="both", which="both", direction="in", length=8, width=1.2,
+                   colors="#303030", top=True, bottom=True, left=True, right=True)
+    ax.grid(axis="y", alpha=0.18)
+    ax.legend(loc="lower right", fontsize=10, frameon=False, ncol=2)
+
+    fig.tight_layout()
+    out_png = out_stem.with_suffix(".png")
+    out_svg = out_stem.with_suffix(".svg")
+    fig.savefig(out_png, dpi=300, bbox_inches="tight")
+    fig.savefig(out_svg, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out_png} (+ .svg)  — {plotted} runs plotted")
+
+
+def _parse_rescue_log(log_path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Parse PyMARL Recent Stats from rescue log → (t_env, test_return_mean)."""
+    import re
+    HEADER = re.compile(r"Recent Stats \| t_env:\s+(\d+)")
+    METRIC = re.compile(r"test_return_mean:\s+([\d.]+)")
+    cur_t = None; pts: dict[int, float] = {}
+    text = log_path.read_text(errors="ignore")
+    for line in text.splitlines():
+        h = HEADER.search(line)
+        if h:
+            cur_t = int(h.group(1)); continue
+        if cur_t is None: continue
+        m = METRIC.search(line)
+        if m:
+            pts[cur_t] = float(m.group(1))
+            cur_t = None
+    ts = sorted(pts)
+    return np.asarray(ts), np.asarray([pts[t] for t in ts])
+
+
+def render_rescue(_api_unused, out_stem: Path, max_t_env: int = 500_000,
+                   logs_dir: Path = Path("/tmp/claude_runs/rescue_modal")) -> None:
+    """Render rescue training curves from local PyMARL logs.
+
+    Wandb's scan_history is too slow on these runs; the local logs have the same
+    Recent Stats blocks PyMARL emitted, so we parse those directly.
+    """
+    plt.rcParams.update({"font.size": 14})
+    fig, ax = plt.subplots(figsize=(9.5, 5.5))
+
+    import colorcet as cc
+    palette_idx = (np.linspace(0.0, 0.95, len(RESCUE_RUNS)) * 256).astype(int)
+    colors = [cc.gouldian[int(i)] for i in palette_idx]
+
+    plotted = 0
+    for (_project, name_prefix, label), color in zip(RESCUE_RUNS, colors):
+        log_path = logs_dir / f"{name_prefix}.log"
+        if not log_path.exists():
+            print(f"  [skip] {label}: no log at {log_path}")
+            continue
+        x, y = _parse_rescue_log(log_path)
+        if len(x) < 2:
+            print(f"  [skip] {label}: only {len(x)} points")
+            continue
+        mask = x <= max_t_env
+        x, y = x[mask], y[mask]
+        ls = "--" if "MADDPG" in label else "-"
+        ax.plot(x / 1000, y, color=color, lw=1.6, ls=ls, label=label, alpha=0.9)
+        plotted += 1
+        print(f"  [plot] {label}: {len(x)} points (max t_env {x.max():.0f})  y=[{y.min():.1f},{y.max():.1f}]")
+
+    ax.set_xlim(0, max_t_env / 1000)
+    ax.set_ylim(15, 56)   # captures M6b's collapse (~19) up to FACMAC peaks (~55)
+    ax.set_xlabel(r"Environment steps ($\times 10^{3}$)")
+    ax.set_ylabel("Test return")
+    for spine in ("top", "bottom", "left", "right"):
+        ax.spines[spine].set_visible(True)
+        ax.spines[spine].set_color("#303030")
+        ax.spines[spine].set_linewidth(1.6)
+    ax.tick_params(axis="both", which="both", direction="in", length=8, width=1.2,
+                   colors="#303030", top=True, bottom=True, left=True, right=True)
+    ax.grid(axis="y", alpha=0.18)
+    ax.legend(loc="lower right", fontsize=9, frameon=False, ncol=2)
+
+    fig.tight_layout()
+    out_png = out_stem.with_suffix(".png")
+    out_svg = out_stem.with_suffix(".svg")
+    fig.savefig(out_png, dpi=300, bbox_inches="tight")
+    fig.savefig(out_svg, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out_png} (+ .svg)  — {plotted} runs plotted")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out-dir", type=Path,
+                    default=Path("/home/rahul/qaduub-mappo/plots_appendix"))
+    ap.add_argument("--max-iter", type=int, default=150)
+    ap.add_argument("--max-t-env", type=int, default=500_000)
+    args = ap.parse_args()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    api = wandb.Api()
+    print("== QADAPT family ==")
+    render_qadapt_family(api, args.out_dir / "fig_qadapt_family_curves",
+                         max_iter=args.max_iter)
+    print()
+    print("== MADDPG/FACMAC rescue ==")
+    render_rescue(api, args.out_dir / "fig_rescue_curves", max_t_env=args.max_t_env)
+
+
+if __name__ == "__main__":
+    main()

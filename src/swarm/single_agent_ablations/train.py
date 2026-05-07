@@ -446,7 +446,9 @@ def main():
                 evaluation_duration=1,
                 evaluation_duration_unit="episodes",
                 evaluation_sample_timeout_s=1800,
-                evaluation_config={"explore": True},
+                evaluation_config={
+                    "explore": os.environ.get("ABLATION_EXPLORE", "1") != "0",
+                },
             )
 
         # Build the algorithm

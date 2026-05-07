@@ -13,9 +13,14 @@ agent_modules:
   barrier: barrier_cnn
 
 # === MADDPG-specific ===
-learner: "maddpg_learner"
+learner: "td3_learner"     # M1: TD3 stack (twin critics, target smoothing, delayed actor)
 mixer: ~                   # MADDPG: no value-decomposition mixer; central critic per agent
 critic_lr: 0.0003          # match actor lr
+
+# TD3 hyperparams (read by td3_learner)
+td3_target_policy_noise: 0.2
+td3_target_policy_clip:  0.5
+td3_policy_delay:        2
 
 # === INHERITED FROM facmac_quantum.yaml ===
 action_range: ~
@@ -42,7 +47,7 @@ lr: 0.0003
 td_lambda: 0.8
 critic_train_reps: 1
 q_nstep: 0
-name: "maddpg_quantum"
+name: "maddpg_M1_td3"
 n_runners: ~
 n_train: 1
 optimizer: adam
@@ -69,3 +74,9 @@ env_args:
 agent_return_logits: False
 q_embed_dim: 1
 noise_clip: 0.5
+
+# wandb
+use_wandb: True
+wandb_project: "FACMAC-rescue"
+wandb_entity: "rl_agents_for_tuning"
+wandb_ema_period: 20

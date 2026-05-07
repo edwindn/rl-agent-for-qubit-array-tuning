@@ -88,6 +88,16 @@ class PyMARLEnvWrapper(MultiAgentEnv):
         self._episode_plunger_return = 0.0
         self._episode_barrier_return = 0.0
 
+        # F4 (rescue campaign): optional running-mean/std reward normalisation.
+        # When enabled, team_reward returned by step() is replaced by
+        # (r - running_mean) / sqrt(running_var + eps). Useful when raw reward
+        # scale destabilises the critic. Default off — existing runs unaffected.
+        self._reward_normalize = bool(getattr(args, "reward_normalize", False))
+        self._rn_count = 0
+        self._rn_mean = 0.0
+        self._rn_M2 = 0.0   # Welford-style running second moment
+        self._rn_eps = 1e-6
+
     def reset(self) -> None:
         global_obs_dict, _ = self._inner.reset()
         self._latest_global_obs = global_obs_dict
@@ -112,6 +122,19 @@ class PyMARLEnvWrapper(MultiAgentEnv):
         self._steps_in_episode += 1
 
         team_reward = float(sum(reward_dict[a] for a in self.ordered_agent_ids))
+
+        # F4: optional running-mean/std normalisation of team_reward.
+        if self._reward_normalize:
+            self._rn_count += 1
+            delta = team_reward - self._rn_mean
+            self._rn_mean += delta / self._rn_count
+            self._rn_M2 += delta * (team_reward - self._rn_mean)
+            if self._rn_count >= 2:
+                var = self._rn_M2 / (self._rn_count - 1)
+                team_reward = (team_reward - self._rn_mean) / max(np.sqrt(var), self._rn_eps)
+            else:
+                team_reward = 0.0
+
         terminated = bool(term_dict["__all__"])
         truncated = bool(trunc_dict["__all__"])
         done = terminated or truncated
