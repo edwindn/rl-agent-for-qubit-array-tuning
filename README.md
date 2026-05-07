@@ -36,15 +36,8 @@ QArray 1.6, dynamiqs 0.3.4.
 ## Reproducing paper results
 
 Large training artefacts (checkpoints, ~13 GB of domain-benchmark JSONs, ~15 GB
-of capacitance episode rollouts, wandb run histories) are not committed. The two
-SuperSims appendix plots can be re-rendered immediately from `paper_plots/data/`:
-
-```bash
-uv run python scripts/plot_allxy_violins.py
-uv run python scripts/plot_convergence_multiN.py
-```
-
-Reproducing every other number / figure requires retraining and regenerating data.
+of capacitance episode rollouts, wandb run histories) are not committed.
+Reproducing the numbers and figures requires retraining and regenerating data.
 
 ### Table 1 — QADAPT, ablations, MARL baselines
 
@@ -99,11 +92,20 @@ and execute the script.
    uv run python scripts/plot_kalman_calibration.py
    ```
 
-### SuperSims appendix data (regenerate the committed `.npz`)
+### SuperSims appendix figures
 
-1. Train QADAPT on the SuperSims env using `src/qadapt_for_supersim/training_config.yaml`.
-2. `bash scripts/run_all_N.sh` (wraps `scripts/eval_multi_N.py`) to roll out 100
-   seeds × N qubits for N ∈ {2, 4, 6, 8}.
+The committed `paper_plots/data/staircase_scan_N{2,4,6,8}.npz` rollouts let the
+two appendix figures be re-rendered immediately:
+
+```bash
+uv run python scripts/plot_allxy_violins.py
+uv run python scripts/plot_convergence_multiN.py
+```
+
+To regenerate the rollouts from scratch, train QADAPT on the SuperSims env using
+`src/qadapt_for_supersim/training_config.yaml`, then run
+`bash scripts/run_all_N.sh` (wraps `scripts/eval_multi_N.py`) for 100 seeds × N
+qubits, N ∈ {2, 4, 6, 8}.
 
 Modal cloud entry points for hero training runs live in `modal_scripts/`.
 
