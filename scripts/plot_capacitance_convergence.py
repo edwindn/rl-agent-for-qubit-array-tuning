@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 import colorcet as cc
 from pathlib import Path
 from collections import defaultdict
-from matplotlib.colors import ListedColormap
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "episode_data.npy"
@@ -109,141 +108,6 @@ def reconstruct_kalman_variances(samples, n_dots=4, prior_variance=0.1,
     return kalman_vars
 
 
-def make_plots(samples, kalman_vars, save_path, average_per_step=False):
-    cmap = ListedColormap(cc.gouldian)
-    label_size = 8
-    tick_size = 7
-    tick_length = 3
-    tick_width = 0.8
-
-    # Extract all data points
-    records = []
-    for i, s in enumerate(samples):
-        est = np.array(s['current_estimate'])
-        delta = np.array(s['model_values'])
-        truth = np.array(s['capacitance'])
-        cnn_sigma = np.exp(0.5 * np.array(s['model_log_vars']))
-        kv = kalman_vars[i]
-        step = s.get('step', 0)
-
-        if kv is None:
-            continue
-
-        kalman_sigma = np.sqrt(np.maximum(kv, 0))
-
-        for k in range(len(est)):
-            is_edge = abs(truth[k]) < 1e-6 and abs(est[k]) < 1e-6
-            records.append({
-                'kalman_err': abs(est[k] - truth[k]),
-                'cnn_err': abs(est[k] + delta[k] - truth[k]),
-                'cnn_sigma': cnn_sigma[k],
-                'kalman_sigma': kalman_sigma[k],
-                'step': step,
-                'is_nn': k == 0,
-                'is_edge': is_edge,
-            })
-
-    records = [r for r in records if not r['is_edge']]
-
-    all_steps = sorted(set(r['step'] for r in records))
-    max_step = max(all_steps)
-    min_step = min(all_steps)
-    step_range = max_step - min_step if max_step > min_step else 1
-
-    # Filters
-    filters = {
-        'All': lambda r: True,
-        'NN': lambda r: r['is_nn'],
-        'NNN': lambda r: not r['is_nn'],
-    }
-
-    # Plot configs: (y_key, x_key, ylabel, xlabel)
-    plot_cfgs = [
-        ('kalman_err', 'cnn_sigma', r'$|\mathrm{est} - \mathrm{truth}|$', r'CNN $\sigma$'),
-        ('kalman_err', 'kalman_sigma', r'$|\mathrm{est} - \mathrm{truth}|$', r'Kalman $\sigma$'),
-        ('cnn_err', 'cnn_sigma', r'$|\hat{c} - \mathrm{truth}|$', r'CNN $\sigma$'),
-        ('cnn_err', 'kalman_sigma', r'$|\hat{c} - \mathrm{truth}|$', r'Kalman $\sigma$'),
-    ]
-
-    fig, axes = plt.subplots(3, 4, figsize=(12, 8))
-    fig.subplots_adjust(left=0.06, right=0.97, bottom=0.07, top=0.90, wspace=0.35, hspace=0.4)
-
-    for row, (filter_name, filter_fn) in enumerate(filters.items()):
-        subset = [r for r in records if filter_fn(r)]
-
-        for col, (y_key, x_key, ylabel, xlabel) in enumerate(plot_cfgs):
-            ax = axes[row, col]
-
-            if average_per_step:
-                # Average per timestep: one point per step
-                step_groups = defaultdict(list)
-                for r in subset:
-                    step_groups[r['step']].append(r)
-
-                avg_xs, avg_ys, avg_steps = [], [], []
-                for step in all_steps:
-                    grp = step_groups.get(step, [])
-                    if not grp:
-                        continue
-                    avg_xs.append(np.mean([r[x_key] for r in grp]))
-                    avg_ys.append(np.mean([r[y_key] for r in grp]))
-                    avg_steps.append(step)
-
-                avg_xs = np.array(avg_xs)
-                avg_ys = np.array(avg_ys)
-                norm_steps = (np.array(avg_steps) - min_step) / step_range
-
-                colors = cmap(norm_steps)
-                ax.plot(avg_xs, avg_ys, '-', color='gray', linewidth=0.5, alpha=0.5, zorder=1)
-                ax.scatter(avg_xs, avg_ys, s=15, c=colors, edgecolors='k',
-                          linewidths=0.3, zorder=5)
-                max_val = avg_xs.max() * 1.1 if len(avg_xs) > 0 else 0.3
-            else:
-                # Raw scatter: one point per datapoint
-                xs = np.array([r[x_key] for r in subset])
-                ys = np.array([r[y_key] for r in subset])
-                steps = np.array([r['step'] for r in subset])
-                norm_steps = (steps - min_step) / step_range
-
-                colors = cmap(norm_steps)
-                ax.scatter(xs, ys, alpha=0.3, s=1, c=colors)
-                max_val = np.percentile(xs, 99.5) * 1.1
-
-            # Calibration line
-            x_line = np.linspace(0, max_val, 100)
-            ax.plot(x_line, x_line * np.sqrt(2 / np.pi), '--', color='k', linewidth=0.8)
-
-            ax.set_xlim(0, max_val)
-            ax.set_ylim(0, 0.4)
-            ax.set_xlabel(xlabel, fontsize=label_size)
-            ax.set_ylabel(ylabel, fontsize=label_size)
-
-            if row == 0:
-                titles = ['Kalman err vs CNN σ', 'Kalman err vs Kalman σ',
-                          'CNN err vs CNN σ', 'CNN err vs Kalman σ']
-                ax.set_title(titles[col], fontsize=label_size)
-
-            if col == 0:
-                ax.annotate(filter_name, xy=(-0.35, 0.5), xycoords='axes fraction',
-                           fontsize=10, fontweight='bold', va='center', rotation=90)
-
-            for spine in ax.spines.values():
-                spine.set_linewidth(tick_width)
-            ax.tick_params(which='both', direction='in', labelsize=tick_size,
-                          top=True, right=True, length=tick_length, width=tick_width)
-
-    # Colorbar
-    cax = fig.add_axes((0.35, 0.94, 0.3, 0.015))
-    cbar = fig.colorbar(plt.cm.ScalarMappable(cmap=cmap), cax=cax, orientation='horizontal')
-    cbar.set_ticks([0, 1])
-    cbar.set_ticklabels(['Early', 'Late'])
-    cbar.set_label('Step in episode', fontsize=label_size, labelpad=-12)
-
-    save_path = Path(save_path)
-    plt.savefig(save_path, transparent=True, format="svg")
-    plt.savefig(save_path.with_suffix('.png'), dpi=300, format="png")
-    plt.close()
-    print(f"Saved '{save_path}' and '{save_path.with_suffix('.png')}'")
 
 
 def make_convergence_plot(samples, kalman_vars, save_path):
@@ -323,11 +187,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default=str(DEFAULT_DATA_PATH))
     parser.add_argument("--output", type=str,
-                        default=str(PROJECT_ROOT / "paper_plots" / "capacitance_calibration_grid.svg"))
-    parser.add_argument("--convergence-output", type=str,
                         default=str(PROJECT_ROOT / "paper_plots" / "capacitance_convergence.svg"))
-    parser.add_argument("--average", action="store_true",
-                        help="Average per timestep (one point per step) instead of raw scatter")
     args = parser.parse_args()
 
     print(f"Loading: {args.data}")
@@ -337,8 +197,7 @@ def main():
     print("Reconstructing Kalman variances...")
     kalman_vars = reconstruct_kalman_variances(samples)
 
-    make_plots(samples, kalman_vars, args.output, average_per_step=True)
-    make_convergence_plot(samples, kalman_vars, args.convergence_output)
+    make_convergence_plot(samples, kalman_vars, args.output)
 
 
 if __name__ == "__main__":
