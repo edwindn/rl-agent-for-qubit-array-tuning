@@ -23,7 +23,7 @@ ALGOS=(
   "facmac_F4_rewardnorm"
 )
 
-REPO=/home/rahul/qaduub-mappo
+REPO=<repo>
 CKPT_ROOT=/tmp/eval_ckpts
 RESULT_DIR=/tmp/eval_results
 # Per-trial .npy distance trajectories live here in the layout

@@ -27,7 +27,7 @@ import wandb
 import yaml
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]   # qaduub-mappo
+REPO_ROOT = Path(__file__).resolve().parents[3]   # <repo>
 EVAL_MAIN = REPO_ROOT / "src" / "eval_runs" / "main.py"
 CONFIG_PATH = Path(__file__).resolve().parent / "ablation_config.yaml"
 
@@ -199,7 +199,7 @@ def _prepare_checkpoint(
 
     # Skip per-iteration checkpoint saves. The eval loop runs algo.evaluate()
     # which doesn't change weights, so saving each iteration is wasteful. More
-    # importantly, parallel ablation runs share cwd=qaduub-mappo and would
+    # importantly, parallel ablation runs share cwd=<repo> and would
     # all race on the same ./checkpoints/iteration_N/ path — observed crash:
     # FileNotFoundError on .../iteration_5/learner_group/state.pkl when two
     # processes save concurrently.

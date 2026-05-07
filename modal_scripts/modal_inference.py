@@ -11,7 +11,7 @@ Key difference from modal_eval.py:
 Usage:
     modal run modal_scripts/modal_inference.py
     modal run modal_scripts/modal_inference.py --num-dots 8 --num-rollouts 100
-    modal run modal_scripts/modal_inference.py --checkpoint "rl_agents_for_tuning/RLModel/rl_checkpoint_best:v3482"
+    modal run modal_scripts/modal_inference.py --checkpoint "anon-entity/RLModel/rl_checkpoint_best:v3482"
 """
 import modal
 from pathlib import Path
@@ -81,7 +81,7 @@ def run_inference(
     import wandb
     import shutil
     print(f"Downloading checkpoint artifact: {checkpoint_artifact}")
-    run = wandb.init(project="RLModel", entity="rl_agents_for_tuning", job_type="inference")
+    run = wandb.init(project="RLModel", entity="anon-entity", job_type="inference")
     artifact = run.use_artifact(checkpoint_artifact, type='model_checkpoint')
     checkpoint_dir = artifact.download()
     wandb.finish()
@@ -127,7 +127,7 @@ def run_inference(
 
 @app.local_entrypoint()
 def main(
-    checkpoint: str = "rl_agents_for_tuning/RLModel/rl_checkpoint_best:v3482",
+    checkpoint: str = "anon-entity/RLModel/rl_checkpoint_best:v3482",
     num_dots: int = 8,
     num_rollouts: int = 10,
 ):

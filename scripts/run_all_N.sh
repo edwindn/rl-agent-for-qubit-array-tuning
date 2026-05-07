@@ -8,7 +8,7 @@
 # Auto-mode invocation:
 #   nohup bash scripts/run_all_N.sh > /tmp/claude_runs/run_all_N.log 2>&1 &
 set -euo pipefail
-cd /home/rahul/rl-agent-for-qubit-array-tuning
+cd <repo>
 source .venv/bin/activate
 
 CKPT=checkpoints_supersims_grouped/iteration_28

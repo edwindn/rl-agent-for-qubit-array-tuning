@@ -14,7 +14,7 @@ defaults:
   save_distance_data: false   # not yet plumbed for supersims agents
 
 wandb:
-  entity: "rl_agents_for_tuning"
+  entity: "anon-entity"
   project: "RLModel"
   ema_period: 20
 

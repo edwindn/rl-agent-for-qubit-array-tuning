@@ -18,7 +18,7 @@
     "phi":       {"min": -3.141592653589793, "max": 3.141592653589793},
     "_comment_Omega": "sigma_frac is the *init* fractional spread around 2pi/t_g; bound_frac is the *agent* action half-span as a fraction of 2pi/t_g (action ±1 -> ±bound_frac · 2pi/t_g). Tightened from 0.30 -> 0.20 on 2026-05-04 so action range is 2x init sigma_frac — matches omega_d treatment.",
     "Omega":     {"sigma_frac": 0.1, "bound_frac": 0.20},
-    "_comment_beta": "DRAG coefficient. Optimum is beta=0.5 for the raised-cosine envelope used in hamiltonian_definitions.s_Q (NOT 1.0 as the docstring there claims — the textbook beta=1 result is for a Gaussian envelope). Range [0, 1.5] gives the agent ±1.0 span around the true optimum (Cornelius's recommendation 2026-05-02). beta uses min/max for both init AND agent action range.",
+    "_comment_beta": "DRAG coefficient. Optimum is beta=0.5 for the raised-cosine envelope used in hamiltonian_definitions.s_Q (NOT 1.0 as the docstring there claims — the textbook beta=1 result is for a Gaussian envelope). Range [0, 1.5] gives the agent ±1.0 span around the true optimum (empirical recommendation). beta uses min/max for both init AND agent action range.",
     "beta":      {"min": 0.0,  "max": 1.5}
   },
   "hardware": {

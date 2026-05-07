@@ -22,7 +22,7 @@ defaults:
 
 # Weights & Biases configuration
 wandb:
-  entity: "rl_agents_for_tuning"
+  entity: "anon-entity"
   project: "RLModel"
   ema_period: 20          # EMA smoothing length
 

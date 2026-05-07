@@ -5,7 +5,7 @@
 # Force CPU-only (no GPU usage)
 export CUDA_VISIBLE_DEVICES=""
 
-cd /home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/nelder_mead
+cd <repo>/benchmarks/nelder_mead
 
 OUTPUT_DIR="../results/nelder_mead_ablation"
 NUM_TRIALS=100

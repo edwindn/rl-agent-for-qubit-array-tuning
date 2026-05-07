@@ -94,7 +94,7 @@ verbose: False
 
 use_wandb: True
 wandb_project: "FACMAC-benchmark"
-wandb_entity: "rl_agents_for_tuning"
+wandb_entity: "anon-entity"
 wandb_ema_period: 20
 
 env_args:

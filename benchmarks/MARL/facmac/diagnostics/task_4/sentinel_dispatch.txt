@@ -1,7 +1,0 @@
-=== Sentinel dispatch test ===
-  plunger sentinel = +1.0, barrier sentinel = -1.0
-  action_out shape = (3, 7, 1)   (expected (3, 7, 1))
-  mean plunger slots = +1.0000   (expect +1.0)
-  mean barrier slots = -1.0000   (expect -1.0)
-  plunger routing OK: True
-  barrier routing OK: True

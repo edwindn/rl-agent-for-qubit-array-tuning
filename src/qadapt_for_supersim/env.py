@@ -1,5 +1,5 @@
 """
-Single-agent gym wrapper around Cornelius's SuperSims All-XY calibration sim.
+Single-agent gym wrapper around the SuperSims All-XY calibration sim.
 
 Mirrors the role of QuantumDeviceEnv (env.py) for the dot tuning task. Per-step:
   1. Apply the agent's normalised delta through the compensation tensor.

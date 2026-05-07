@@ -92,7 +92,7 @@ verbose: False
 # Project is stable across smoke + real runs so the wandb UI can overlay them.
 use_wandb: False
 wandb_project: "FACMAC-benchmark"
-wandb_entity: "rl_agents_for_tuning"
+wandb_entity: "anon-entity"
 wandb_ema_period: 20
 
 env_args:

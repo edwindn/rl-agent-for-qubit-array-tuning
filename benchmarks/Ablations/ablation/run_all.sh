@@ -30,7 +30,7 @@ for algo in $ALGOS; do
   gpu="${GPUS[$((i % ${#GPUS[@]}))]}"
   log="/tmp/ablation_${algo}.log"
   echo "Launching $algo on GPU $gpu -> $log"
-  nohup bash -c "cd /home/rahul/qaduub-mappo && uv run python $SCRIPT_DIR/run_ablation.py --algo $algo --gpu $gpu" \
+  nohup bash -c "cd <repo> && uv run python $SCRIPT_DIR/run_ablation.py --algo $algo --gpu $gpu" \
     > "$log" 2>&1 < /dev/null &
   disown
   echo "  PID=$!"

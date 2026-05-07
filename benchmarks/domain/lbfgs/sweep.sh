@@ -12,7 +12,7 @@
 # Force CPU-only (no GPU usage)
 export CUDA_VISIBLE_DEVICES=""
 
-cd /home/rahul/rl-agent-for-qubit-array-tuning/benchmarks/lbfgs
+cd <repo>/benchmarks/lbfgs
 
 OUTPUT_DIR="../results/lbfgs_ablation"
 NUM_TRIALS=100

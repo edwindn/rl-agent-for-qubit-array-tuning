@@ -111,6 +111,6 @@ Modal cloud entry points for hero training runs live in `modal_scripts/`.
 
 ## Citation
 
-> De Nicolo, E., Marchand, R., Carlsson, C., Vaidhyanathan, P., Ares, N.
+> Anonymous Authors.
 > *Action-Factored Multi-Agent Reinforcement Learning for Scalable Quantum Device Tuning.*
 > 2026.

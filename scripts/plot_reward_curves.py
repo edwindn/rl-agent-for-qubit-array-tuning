@@ -27,14 +27,14 @@ import wandb
 # QADAPT-family runs. Some methods chain multiple wandb runs (resumed training);
 # we stitch them on the `iteration` axis. Format: (project, [run_numbers...], label, y_key).
 QADAPT_FAMILY = [
-    ("rl_agents_for_tuning/RLModel", [473],            "QADAPT",                    "episode_return_mean"),
-    ("rl_agents_for_tuning/RLModel", [479, 484],       "Nature CNN backbone",       "episode_return_mean"),
-    ("rl_agents_for_tuning/RLModel", [477, 509, 520],  "LSTM memory",               "episode_return_mean"),
-    ("rl_agents_for_tuning/RLModel", [555],            "Transformer memory",        "episode_return_mean"),
-    ("rl_agents_for_tuning/RLModel", [511],            r"$\gamma > 0$",             "episode_return_mean"),
-    ("rl_agents_for_tuning/RLModel", [478, 482, 496],  "IPPO",                      "episode_return_mean"),
-    ("rl_agents_for_tuning/RLModel", [647, 648],       "MAPPO",                     "episode_return_mean"),
-    ("rl_agents_for_tuning/SingleAgentBenchmark", [57], "single-agent PPO",         "episode_return_mean"),
+    ("anon-entity/RLModel", [473],            "QADAPT",                    "episode_return_mean"),
+    ("anon-entity/RLModel", [479, 484],       "Nature CNN backbone",       "episode_return_mean"),
+    ("anon-entity/RLModel", [477, 509, 520],  "LSTM memory",               "episode_return_mean"),
+    ("anon-entity/RLModel", [555],            "Transformer memory",        "episode_return_mean"),
+    ("anon-entity/RLModel", [511],            r"$\gamma > 0$",             "episode_return_mean"),
+    ("anon-entity/RLModel", [478, 482, 496],  "IPPO",                      "episode_return_mean"),
+    ("anon-entity/RLModel", [647, 648],       "MAPPO",                     "episode_return_mean"),
+    ("anon-entity/SingleAgentBenchmark", [57], "single-agent PPO",         "episode_return_mean"),
 ]
 
 def _resolve_run(api, project: str, run_number: int):

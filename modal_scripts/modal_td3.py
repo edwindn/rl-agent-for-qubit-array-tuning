@@ -66,7 +66,7 @@ def train(checkpoint_artifact: str = None):
 
     Args:
         checkpoint_artifact: Optional wandb artifact path to resume from
-                           e.g. 'rl_agents_for_tuning/AlgorithmAblations/rl_checkpoint_best:v6'
+                           e.g. 'anon-entity/AlgorithmAblations/rl_checkpoint_best:v6'
     """
     import subprocess
     import os
@@ -84,7 +84,7 @@ def train(checkpoint_artifact: str = None):
         # Create a small script to download the artifact
         download_script = f'''
 import wandb
-run = wandb.init(project="AlgorithmAblations", entity="rl_agents_for_tuning", job_type="checkpoint_download")
+run = wandb.init(project="AlgorithmAblations", entity="anon-entity", job_type="checkpoint_download")
 artifact = run.use_artifact("{checkpoint_artifact}", type="model_checkpoint")
 artifact_dir = artifact.download()
 wandb.finish()
@@ -113,7 +113,7 @@ def main(checkpoint: str = None):
 
     Args:
         checkpoint: Optional wandb artifact to resume from
-                   e.g. --checkpoint 'rl_agents_for_tuning/AlgorithmAblations/rl_checkpoint_best:v6'
+                   e.g. --checkpoint 'anon-entity/AlgorithmAblations/rl_checkpoint_best:v6'
     """
     print("Starting TD3 (Twin Delayed DDPG) training on Modal...")
     print("This will run td3_train.py on cloud GPUs")
