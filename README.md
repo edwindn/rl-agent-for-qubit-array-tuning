@@ -73,4 +73,4 @@ committed under `paper_plots/data/`.
 
 > De Nicolo, E., Marchand, R., Carlsson, C., Vaidhyanathan, P., Ares, N.
 > *Action-Factored Multi-Agent Reinforcement Learning for Scalable Quantum Device Tuning.*
-> NeurIPS 2026.
+> 2026.
