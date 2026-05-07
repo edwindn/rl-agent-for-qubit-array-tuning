@@ -31,11 +31,11 @@ _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 sys.path.insert(0, str(_REPO / "SuperSims"))
 
-from qadapt.voltage_model.eval_supersims import (  # noqa: E402
+from qadapt_for_supersim.eval import (  # noqa: E402
     load_modules_from_checkpoint,
     greedy_action,
 )
-from qadapt.environment.supersims_env import SuperSimsEnv  # noqa: E402
+from qadapt_for_supersim.env import SuperSimsEnv  # noqa: E402
 
 
 def _build_env_config_for_param_cfg(param_cfg_name: str) -> str:

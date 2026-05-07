@@ -1,5 +1,5 @@
 # SuperSims environment configuration.
-# Drives src/qadapt/environment/supersims_env.py.
+# Drives src/qadapt_for_supersim/env.py.
 
 simulator:
   # Episode horizon (tuning steps per episode).

@@ -9,7 +9,7 @@ from __future__ import annotations
 from ray.rllib.algorithms.ppo.torch.default_ppo_torch_rl_module import DefaultPPOTorchRLModule
 from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec, RLModuleSpec
 
-from qadapt.voltage_model.supersims_catalog import CustomPPOCatalog
+from qadapt_for_supersim.catalog import CustomPPOCatalog
 
 
 _SUPERSIMS_PARAM_NAMES = ["omega01", "omegad", "phi", "drive", "beta"]

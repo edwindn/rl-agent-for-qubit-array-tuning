@@ -28,7 +28,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 sys.path.insert(0, str(_REPO_ROOT / "SuperSims"))
 
-from qadapt.environment.supersims_env import SuperSimsEnv  # noqa: E402
+from qadapt_for_supersim.env import SuperSimsEnv  # noqa: E402
 from qadapt.voltage_model.factory import create_rl_module_spec  # noqa: E402
 from all_xy_sequence import ALLXY_GATES, ALLXY_IDEAL  # noqa: E402
 

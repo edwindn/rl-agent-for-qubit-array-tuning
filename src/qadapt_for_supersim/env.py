@@ -22,13 +22,18 @@ import numpy as np
 import yaml
 from gymnasium import spaces
 
-# SuperSims is a sibling top-level directory of src/. Ship it to Ray workers by
-# symlinking it under src/qadapt/_supersims (so it rides along with working_dir).
-# At runtime, the symlink target resolves to either the real SuperSims/ (locally)
-# or the unpacked working_dir copy (on workers). Both look the same to Python.
-_SUPERSIMS_DIR = Path(__file__).resolve().parent.parent / "_supersims"
-if _SUPERSIMS_DIR.exists() and str(_SUPERSIMS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SUPERSIMS_DIR))
+# SuperSims is a sibling top-level directory of src/. Try the repo-root layout
+# first, then fall back to the legacy `_supersims` symlink (kept under src/qadapt/
+# so it rides along with Ray's working_dir on remote workers).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SUPERSIMS_CANDIDATES = [
+    _REPO_ROOT / "SuperSims",
+    _REPO_ROOT / "src" / "qadapt" / "_supersims",
+]
+for _cand in _SUPERSIMS_CANDIDATES:
+    if _cand.exists() and str(_cand) not in sys.path:
+        sys.path.insert(0, str(_cand))
+        break
 
 import parameter_generation as pg  # noqa: E402
 from parameter_generation import N_QUBITS  # noqa: E402

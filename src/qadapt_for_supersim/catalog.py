@@ -9,7 +9,7 @@ from ray.rllib.algorithms.sac.sac_catalog import SACCatalog
 from ray.rllib.core.models.configs import ModelConfig
 from ray.rllib.utils.annotations import override
 
-from .supersims_neural_nets import (
+from .neural_nets import (
     SimpleCNNConfig,
     IMPALAConfig,
     MobileNetConfig,

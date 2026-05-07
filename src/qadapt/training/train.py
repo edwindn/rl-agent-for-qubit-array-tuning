@@ -163,7 +163,7 @@ def create_env(
         pass
 
     if env_type == "supersims":
-        from qadapt.environment.supersims_multi_agent_wrapper import SuperSimsMultiAgentWrapper
+        from qadapt_for_supersim.multi_agent_wrapper import SuperSimsMultiAgentWrapper
         kwargs = {}
         if env_config_path:
             # SuperSimsEnv resolves relative paths against its own __file__'s dir.

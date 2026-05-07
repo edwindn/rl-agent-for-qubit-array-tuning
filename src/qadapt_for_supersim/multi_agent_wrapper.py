@@ -29,7 +29,7 @@ from ray.rllib.env.multi_agent_env import MultiAgentEnv
 src_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(src_dir))
 
-from qadapt.environment.supersims_env import SuperSimsEnv  # noqa: E402
+from qadapt_for_supersim.env import SuperSimsEnv  # noqa: E402
 
 
 PARAM_NAMES = ["omega01", "omegad", "phi", "drive", "beta"]
