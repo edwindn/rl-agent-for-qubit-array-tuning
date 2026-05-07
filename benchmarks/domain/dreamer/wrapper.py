@@ -63,7 +63,7 @@ class DreamerEnvWrapper(gym.Env):
         self._step_in_iteration = 0
         self._plunger_history = []
         self._barrier_history = []
-        self._dreamer_dir = Path("/home/edn/<repo>/benchmarks/dreamer")
+        self._dreamer_dir = Path(__file__).resolve().parent
         self._local_plot_dir = None
         if self.eval:
             self._local_plot_dir = self._dreamer_dir / "eval_distance_plots"

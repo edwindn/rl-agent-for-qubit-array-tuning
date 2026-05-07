@@ -150,8 +150,8 @@ _archive/
 test_outputs/
 checkpoints_supersims*/
 
-# Convenience symlinks pointing at the rl-agent worktree's data dirs
-# (created locally to feed plot scripts; never committed)
+# Convenience symlinks pointing at sibling-worktree data dirs (created locally
+# to feed plot scripts; never committed).
 /data
 /benchmarks/results
 /benchmarks/domain/results

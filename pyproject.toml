@@ -133,8 +133,8 @@ extra-index-url = [
     "https://download.pytorch.org/whl/cu128",
 ]
 # dynamiqs 0.3.4's metadata caps jax<0.7, but it actually works with jax 0.7.2
-# at runtime (verified on supersims-qadapt). Override the upper bound so uv lets
-# both coexist. Drop this once a dynamiqs release relaxes the pin.
+# at runtime (verified locally). Override the upper bound so uv lets both
+# coexist. Drop this once a dynamiqs release relaxes the pin.
 override-dependencies = [
     "jax>=0.4.36",
 ]
