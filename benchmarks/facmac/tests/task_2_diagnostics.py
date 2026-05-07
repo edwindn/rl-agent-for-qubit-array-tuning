@@ -33,7 +33,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def make_env() -> PyMARLEnvWrapper:
-    checkpoint = _PROJECT_SRC / "swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
+    checkpoint = _PROJECT_SRC / "qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
     env_args = {
         "env_config_path": None,
         "capacitance_model_checkpoint": str(checkpoint),

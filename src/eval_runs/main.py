@@ -38,17 +38,17 @@ logging.getLogger("ray.rllib").setLevel(logging.ERROR)
 # Add src directory to path for clean imports
 current_dir = Path(__file__).resolve().parent
 src_dir = current_dir.parent  # src directory
-swarm_package_dir = src_dir / "swarm"  # swarm package directory
+swarm_package_dir = src_dir / "qadapt"  # qadapt package directory
 project_root = src_dir.parent  # project root directory
 sys.path.insert(0, str(src_dir))
 
 # Apply patch for Ray 2.49.0 replay buffer bug with complex observations (DQN/SAC)
 # See: https://github.com/ray-project/ray/pull/57017
 # Remove after upgrading to Ray >= 2.51.0
-from swarm.training.patches.ray_episode_patch import apply_patch  # noqa: E402
+from qadapt.training.patches.ray_episode_patch import apply_patch  # noqa: E402
 apply_patch()
 
-from swarm.training.utils import (  # noqa: E402
+from qadapt.training.utils import (  # noqa: E402
     log_to_wandb,
     print_training_progress,
     setup_wandb_metrics,
@@ -117,7 +117,7 @@ def save_scans_to_iteration_folder(iteration_num, config, save_dir=None):
         import traceback
         traceback.print_exc()
 
-from swarm.training.train_utils import (  # noqa: E402
+from qadapt.training.train_utils import (  # noqa: E402
     parse_config_overrides,
     map_sweep_parameters,
     apply_config_overrides,
@@ -127,9 +127,9 @@ from swarm.training.train_utils import (  # noqa: E402
     create_env_to_module_connector,
 )
 
-from swarm.voltage_model import create_rl_module_spec
-from swarm.training.utils.custom_ppo_learner import PPOLearnerWithValueStats  # for logging
-from swarm.training.utils.custom_sac_learner import SACLearnerWithRewardScaling  # for reward scaling
+from qadapt.voltage_model import create_rl_module_spec
+from qadapt.training.utils.custom_ppo_learner import PPOLearnerWithValueStats  # for logging
+from qadapt.training.utils.custom_sac_learner import SACLearnerWithRewardScaling  # for reward scaling
 
 
 def parse_arguments():
@@ -188,7 +188,7 @@ def create_env(
     except:
         pass
 
-    from swarm.environment.scan_saving_wrapper import ScanSavingWrapper
+    from qadapt.environment.scan_saving_wrapper import ScanSavingWrapper
 
     # Wrap in scan-saving wrapper (which inherits from MultiAgentEnvWrapper)
     # need return_voltage=True if we are using deltas + LSTM/Transformer
@@ -307,7 +307,7 @@ def main():
             "excludes": config['ray']['runtime_env']['excludes'],
             "env_vars": {
                 **config['ray']['runtime_env']['env_vars'],
-                "SWARM_PROJECT_ROOT": str(swarm_package_dir),
+                "QADAPT_PROJECT_ROOT": str(swarm_package_dir),
                 "EVAL_RUNS_DIR": str(current_dir),
             },
         },

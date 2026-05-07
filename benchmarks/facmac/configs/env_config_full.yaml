@@ -1,5 +1,5 @@
 # Full-scale env config for FACMAC task-7 training.
-# Same as src/swarm/environment/env_config.yaml except VGM virtualization is off
+# Same as src/qadapt/environment/env_config.yaml except VGM virtualization is off
 # (matches FACMAC benchmark convention agreed in task-6 planning).
 
 simulator:

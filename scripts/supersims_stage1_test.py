@@ -28,7 +28,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 sys.path.insert(0, str(_REPO_ROOT / "SuperSims"))
 
-from swarm.environment.supersims_env import SuperSimsEnv  # noqa: E402
+from qadapt.environment.supersims_env import SuperSimsEnv  # noqa: E402
 from all_xy_sequence import ALLXY_GATES, ALLXY_IDEAL  # noqa: E402
 from compensation_matrix import build_compensation  # noqa: E402
 from reward import allxy_rewards  # noqa: E402

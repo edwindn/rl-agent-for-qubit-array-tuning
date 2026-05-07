@@ -31,11 +31,11 @@ _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 sys.path.insert(0, str(_REPO / "SuperSims"))
 
-from swarm.inference.eval_supersims import (  # noqa: E402
+from qadapt.inference.eval_supersims import (  # noqa: E402
     load_modules_from_checkpoint,
     greedy_action,
 )
-from swarm.environment.supersims_env import SuperSimsEnv  # noqa: E402
+from qadapt.environment.supersims_env import SuperSimsEnv  # noqa: E402
 
 
 def _build_env_config_for_param_cfg(param_cfg_name: str) -> str:
@@ -46,7 +46,7 @@ def _build_env_config_for_param_cfg(param_cfg_name: str) -> str:
     N when we override SUPERSIMS_PARAM_CFG. Mirror the canonical config but swap
     parameter_config_filename to match.
     """
-    canonical = (_REPO / "src" / "swarm" / "environment"
+    canonical = (_REPO / "src" / "qadapt" / "environment"
                  / "supersims_env_config.yaml")
     cfg = yaml.safe_load(canonical.read_text())
     cfg["parameter_config_filename"] = param_cfg_name

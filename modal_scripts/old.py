@@ -58,7 +58,7 @@ def train():
     # Run the training script
     # You can add any command-line arguments here
     subprocess.run(
-        ["python", "src/swarm/training/train.py"],
+        ["python", "src/qadapt/training/train.py"],
         check=True
     )
 

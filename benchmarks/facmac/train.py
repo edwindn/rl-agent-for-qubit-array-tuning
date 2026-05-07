@@ -63,7 +63,7 @@ ENV_CONFIGS_DEST = VENDOR_DIR / "config" / "envs"
 
 ENV_CONFIG_SMOKE = CONFIGS_SRC / "env_config_smoke.yaml"
 ENV_CONFIG_FULL = CONFIGS_SRC / "env_config_full.yaml"
-CAPACITANCE_CKPT = PROJECT_SRC / "swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
+CAPACITANCE_CKPT = PROJECT_SRC / "qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
 
 
 def _pick_default_env_config(argv: list[str]) -> Path:

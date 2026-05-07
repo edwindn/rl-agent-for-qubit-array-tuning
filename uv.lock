@@ -1932,6 +1932,86 @@ wheels = [
 ]
 
 [[package]]
+name = "qadapt"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "cleanrl" },
+    { name = "dynamiqs" },
+    { name = "gputil" },
+    { name = "gymnasium" },
+    { name = "jax" },
+    { name = "jaxlib" },
+    { name = "matplotlib" },
+    { name = "modal" },
+    { name = "numpy" },
+    { name = "pyyaml" },
+    { name = "qarray" },
+    { name = "qarray-latched" },
+    { name = "ray", extra = ["rllib"] },
+    { name = "scienceplots" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "stable-baselines3" },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "wandb", extra = ["media"] },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "black" },
+    { name = "mypy" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "types-pyyaml" },
+]
+facmac = [
+    { name = "gym" },
+    { name = "jsonpickle" },
+    { name = "sacred" },
+    { name = "tensorboard-logger" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
+    { name = "cleanrl", specifier = ">=0.4.8" },
+    { name = "dynamiqs", specifier = "==0.3.4" },
+    { name = "gputil", specifier = ">=1.4.0" },
+    { name = "gym", marker = "extra == 'facmac'", specifier = "==0.10.8" },
+    { name = "gymnasium", specifier = "==1.1.1" },
+    { name = "jax", extras = ["cuda12"], specifier = "==0.7.2" },
+    { name = "jaxlib", specifier = "==0.7.2" },
+    { name = "jsonpickle", marker = "extra == 'facmac'" },
+    { name = "matplotlib", specifier = "==3.10.3" },
+    { name = "modal", specifier = ">=1.3.0.post1" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "numpy", specifier = "==2.2.4" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
+    { name = "pyyaml", specifier = "==6.0.2" },
+    { name = "qarray", specifier = "==1.6.0" },
+    { name = "qarray-latched", git = "ssh://git@github.com/b-vanstraaten/qarray-latched.git?rev=fcc472276f27e7633bb3aafc6f0d6c92966875d7" },
+    { name = "ray", extras = ["rllib"], specifier = "==2.51" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "sacred", marker = "extra == 'facmac'" },
+    { name = "scienceplots" },
+    { name = "scikit-learn", specifier = "==1.7.1" },
+    { name = "scipy", specifier = "==1.16.2" },
+    { name = "stable-baselines3", specifier = ">=2.7.1" },
+    { name = "tensorboard-logger", marker = "extra == 'facmac'" },
+    { name = "torch", specifier = "==2.8.0" },
+    { name = "torchvision", specifier = "==0.23.0" },
+    { name = "types-pyyaml", marker = "extra == 'dev'" },
+    { name = "wandb", extras = ["media"] },
+]
+provides-extras = ["dev", "facmac"]
+
+[[package]]
 name = "qarray"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1952,6 +2032,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/69/eb/7e41188fe123558a64623f5ed92ca32f2888ce13ca9f814db39bccb2ce30/qarray-1.6.0.tar.gz", hash = "sha256:8f9d9aa5223f6c292c754207cf292c15d2cafd70d1b4d95e5281a7327c6f00bd", size = 4965772, upload-time = "2025-04-04T08:03:54.842Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/58/dd/61180bd39d920235e498ef3d0c9ccffa56611f5f4a6131cef8b17ab7cf0a/qarray-1.6.0-py3-none-any.whl", hash = "sha256:dbcf762cd6937ef3fe6e24054927575ea357aa267945f5498338c6a29848acb9", size = 60714, upload-time = "2025-04-04T08:03:53.435Z" },
+]
+
+[[package]]
+name = "qarray-latched"
+version = "0.1.0"
+source = { git = "ssh://git@github.com/b-vanstraaten/qarray-latched.git?rev=fcc472276f27e7633bb3aafc6f0d6c92966875d7#fcc472276f27e7633bb3aafc6f0d6c92966875d7" }
+dependencies = [
+    { name = "jax" },
+    { name = "jaxopt" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "qarray" },
 ]
 
 [[package]]
@@ -2331,84 +2423,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/28/e3/55dcc2cfbc3ca9c29
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/7b/ce1eafaf1a76852e2ec9b22edecf1daa58175c090266e9f6c64afcd81d91/stack_data-0.6.3-py3-none-any.whl", hash = "sha256:d5558e0c25a4cb0853cddad3d77da9891a08cb85dd9f9f91b9f8cd66e511e695", size = 24521, upload-time = "2023-09-30T13:58:03.53Z" },
 ]
-
-[[package]]
-name = "swarm-rl"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "cleanrl" },
-    { name = "dynamiqs" },
-    { name = "gputil" },
-    { name = "gymnasium" },
-    { name = "jax" },
-    { name = "jaxlib" },
-    { name = "matplotlib" },
-    { name = "modal" },
-    { name = "numpy" },
-    { name = "pyyaml" },
-    { name = "qarray" },
-    { name = "ray", extra = ["rllib"] },
-    { name = "scienceplots" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "stable-baselines3" },
-    { name = "torch" },
-    { name = "torchvision" },
-    { name = "wandb", extra = ["media"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "types-pyyaml" },
-]
-facmac = [
-    { name = "gym" },
-    { name = "jsonpickle" },
-    { name = "sacred" },
-    { name = "tensorboard-logger" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
-    { name = "cleanrl", specifier = ">=0.4.8" },
-    { name = "dynamiqs", specifier = "==0.3.4" },
-    { name = "gputil", specifier = ">=1.4.0" },
-    { name = "gym", marker = "extra == 'facmac'", specifier = "==0.10.8" },
-    { name = "gymnasium", specifier = "==1.1.1" },
-    { name = "jax", extras = ["cuda12"], specifier = "==0.7.2" },
-    { name = "jaxlib", specifier = "==0.7.2" },
-    { name = "jsonpickle", marker = "extra == 'facmac'" },
-    { name = "matplotlib", specifier = "==3.10.3" },
-    { name = "modal", specifier = ">=1.3.0.post1" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "numpy", specifier = "==2.2.4" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "pyyaml", specifier = "==6.0.2" },
-    { name = "qarray", specifier = "==1.6.0" },
-    { name = "ray", extras = ["rllib"], specifier = "==2.51" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "sacred", marker = "extra == 'facmac'" },
-    { name = "scienceplots" },
-    { name = "scikit-learn", specifier = "==1.7.1" },
-    { name = "scipy", specifier = "==1.16.2" },
-    { name = "stable-baselines3", specifier = ">=2.7.1" },
-    { name = "tensorboard-logger", marker = "extra == 'facmac'" },
-    { name = "torch", specifier = "==2.8.0" },
-    { name = "torchvision", specifier = "==0.23.0" },
-    { name = "types-pyyaml", marker = "extra == 'dev'" },
-    { name = "wandb", extras = ["media"] },
-]
-provides-extras = ["dev", "facmac"]
 
 [[package]]
 name = "sympy"

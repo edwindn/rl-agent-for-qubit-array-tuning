@@ -70,7 +70,7 @@ poetry.lock
 Pipfile.lock
 
 # Large output files (use Modal Volumes instead)
-src/swarm/training/checkpoints/
+src/qadapt/training/checkpoints/
 checkpoints/
 *.pth
 *.pt
@@ -88,18 +88,18 @@ rollout_scans/
 src/eval_runs/collected_data/
 src/eval_runs/collected_data/**
 src/eval_runs/gif_captures/
-src/swarm/qarray_dataset
-src/swarm/artifacts
-src/swarm/wandb
-src/swarm/training/wandb
-src/swarm/training/data
-src/swarm/training/checkpoints
-src/swarm/capacitance_model/wandb
-src/swarm/capacitance_model/weights
-src/swarm/capacitance_model/symmetric_weights_separate
-src/swarm/capacitance_model/symmetric_weights_impala
-src/swarm/capacitance_model/mobilenet_final_epoch_8
-src/swarm/environment/gui
+src/qadapt/qarray_dataset
+src/qadapt/artifacts
+src/qadapt/wandb
+src/qadapt/training/wandb
+src/qadapt/training/data
+src/qadapt/training/checkpoints
+src/qadapt/capacitance_model/wandb
+src/qadapt/capacitance_model/weights
+src/qadapt/capacitance_model/symmetric_weights_separate
+src/qadapt/capacitance_model/symmetric_weights_impala
+src/qadapt/capacitance_model/mobilenet_final_epoch_8
+src/qadapt/environment/gui
 weights_symmetric_150k_impala/
 benchmarks/.venv
 benchmarks/checkpoints

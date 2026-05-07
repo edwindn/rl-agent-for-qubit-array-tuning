@@ -38,7 +38,7 @@ for p in (_BENCH_DIR, _PROJECT_SRC):
 
 from eval_adapter import load_policy
 from run_eval_trials import run_trials, _random_policy
-from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
+from qadapt.environment.multi_agent_wrapper import MultiAgentEnvWrapper
 
 OUT_DIR = _BENCH_DIR / "diagnostics" / "task_5"
 OUT_DIR.mkdir(parents=True, exist_ok=True)

@@ -45,8 +45,8 @@ image = (
         "cd /root/quantum-rl-project && uv sync --frozen"
     )
     .add_local_file(
-        str(project_root / "src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
-        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
+        str(project_root / "src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
+        remote_path="/root/quantum-rl-project/src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
     )
 )
 
@@ -62,7 +62,7 @@ app = modal.App("quantum-rl-training")
     timeout=86400,  # 24 hour timeout
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
-def train(checkpoint_artifact: str = None, config_path: str = "src/swarm/training/configs/ppo_impala.yaml"):
+def train(checkpoint_artifact: str = None, config_path: str = "src/qadapt/training/configs/ppo_impala.yaml"):
     """Run the training script inside Modal container.
 
     Args:
@@ -77,7 +77,7 @@ def train(checkpoint_artifact: str = None, config_path: str = "src/swarm/trainin
     os.chdir("/root/quantum-rl-project")
 
     # Build command
-    cmd = ["uv", "run", "python", "src/swarm/training/train.py", "--config", config_path]
+    cmd = ["uv", "run", "python", "src/qadapt/training/train.py", "--config", config_path]
 
     # If checkpoint artifact specified, download it first
     if checkpoint_artifact:
@@ -98,7 +98,7 @@ def train(checkpoint_artifact: str = None, config_path: str = "src/swarm/trainin
 @app.local_entrypoint()
 def main(
     checkpoint: str = None,
-    config: str = "src/swarm/training/configs/ppo_impala.yaml",
+    config: str = "src/qadapt/training/configs/ppo_impala.yaml",
 ):
     """Entry point when running 'modal run modal_train.py'
 

@@ -16,7 +16,7 @@ _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 sys.path.insert(0, str(_REPO / "SuperSims"))
 
-from swarm.environment.supersims_env import SuperSimsEnv  # noqa: E402
+from qadapt.environment.supersims_env import SuperSimsEnv  # noqa: E402
 
 CFG = "supersims_env_config_1d_omegad.yaml"
 

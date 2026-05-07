@@ -45,7 +45,7 @@ for _p in (_THIS_DIR, _PROJECT_SRC):
         sys.path.insert(0, _p_str)
 
 from eval_adapter import load_policy
-from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
+from qadapt.environment.multi_agent_wrapper import MultiAgentEnvWrapper
 
 
 def _random_policy(action_dict_template: dict[str, np.ndarray], rng: np.random.Generator):

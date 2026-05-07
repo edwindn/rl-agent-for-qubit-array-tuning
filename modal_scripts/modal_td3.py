@@ -44,8 +44,8 @@ image = (
         "cd /root/quantum-rl-project && uv sync --frozen"
     )
     .add_local_file(
-        str(project_root / "src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
-        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
+        str(project_root / "src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
+        remote_path="/root/quantum-rl-project/src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
     )
 )
 
@@ -75,7 +75,7 @@ def train(checkpoint_artifact: str = None):
     os.chdir("/root/quantum-rl-project")
 
     # Build the command
-    cmd = ["uv", "run", "python", "src/swarm/algo_ablations/td3_train.py", "--config", "configs/td3_training_config.yaml"]
+    cmd = ["uv", "run", "python", "src/qadapt/algo_ablations/td3_train.py", "--config", "configs/td3_training_config.yaml"]
 
     # If checkpoint artifact is provided, download it using uv run and add to command
     if checkpoint_artifact:

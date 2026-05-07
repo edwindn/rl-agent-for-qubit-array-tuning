@@ -46,8 +46,8 @@ image = (
         "cd /root/quantum-rl-project && uv sync --frozen"
     )
     .add_local_file(
-        str(project_root / "src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
-        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
+        str(project_root / "src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
+        remote_path="/root/quantum-rl-project/src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
     )
 )
 
@@ -92,7 +92,7 @@ def run_eval(
     # Copy training config if not present in checkpoint
     training_config_path = Path(artifact_dir) / "training_config.yaml"
     if not training_config_path.exists():
-        default_config = Path("src/swarm/training/configs/ppo_impala.yaml")
+        default_config = Path("src/qadapt/training/configs/ppo_impala.yaml")
         print(f"No training_config.yaml in checkpoint, copying from {default_config}")
         shutil.copy(default_config, training_config_path)
 
@@ -107,7 +107,7 @@ def run_eval(
     print(f"Overriding num_dots: {original_num_dots} -> {num_dots}")
 
     # Override capacitance model weights path for Modal
-    modal_weights_path = "/root/quantum-rl-project/src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
+    modal_weights_path = "/root/quantum-rl-project/src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
     env_config["capacitance_model"]["weights_path"] = modal_weights_path
     print(f"Overriding capacitance weights path to: {modal_weights_path}")
 

@@ -33,7 +33,7 @@ for _p in (_VENDOR_DIR, _PROJECT_SRC):
         sys.path.insert(0, _p_str)
 
 from envs.multiagentenv import MultiAgentEnv  # vendor
-from swarm.environment.multi_agent_wrapper import MultiAgentEnvWrapper
+from qadapt.environment.multi_agent_wrapper import MultiAgentEnvWrapper
 
 
 class PyMARLEnvWrapper(MultiAgentEnv):

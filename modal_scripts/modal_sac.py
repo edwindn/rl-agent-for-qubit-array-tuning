@@ -44,8 +44,8 @@ image = (
         "cd /root/quantum-rl-project && uv sync --frozen"
     )
     .add_local_file(
-        str(project_root / "src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
-        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
+        str(project_root / "src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"),
+        remote_path="/root/quantum-rl-project/src/qadapt/capacitance_model/mobilenet_final_epoch_8/mobilenet_barrier_weights.pth"
     )
 )
 
@@ -72,7 +72,7 @@ def train():
     # Run the SAC training script using uv to use the virtual environment
     # Uses the SAC config from algo_ablations/configs
     subprocess.run(
-        ["uv", "run", "python", "src/swarm/algo_ablations/sac_train.py", "--config", "configs/sac_training_config.yaml"],
+        ["uv", "run", "python", "src/qadapt/algo_ablations/sac_train.py", "--config", "configs/sac_training_config.yaml"],
         check=True
     )
 

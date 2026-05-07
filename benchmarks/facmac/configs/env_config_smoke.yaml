@@ -1,4 +1,4 @@
-# Smoke-test env override — identical to src/swarm/environment/env_config.yaml
+# Smoke-test env override — identical to src/qadapt/environment/env_config.yaml
 # except resolution dropped to 48 and max_steps shortened, so the buffer and
 # QMixer hypernet fit in CPU RAM and the training loop completes in ~10 min.
 # Task-6 (full training) uses the original env_config.yaml.

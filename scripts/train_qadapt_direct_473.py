@@ -31,7 +31,7 @@ import wandb
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TRAIN_PY = REPO_ROOT / "src" / "swarm" / "training" / "train.py"
+TRAIN_PY = REPO_ROOT / "src" / "qadapt" / "training" / "train.py"
 
 # Reuse the ablation pipeline's wandb-config reconstruction helpers.
 sys.path.insert(0, str(REPO_ROOT / "src" / "eval_runs" / "ablation"))

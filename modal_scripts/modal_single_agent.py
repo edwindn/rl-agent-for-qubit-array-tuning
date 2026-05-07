@@ -1,7 +1,7 @@
 """
 Modal wrapper for running single-agent PPO training on cloud GPUs.
 
-Uses the training code in src/swarm/single_agent_ablations/
+Uses the training code in src/qadapt/single_agent_ablations/
 
 Usage (from project root):
     modal run modal_scripts/modal_single_agent.py
@@ -40,8 +40,8 @@ image = (
         "cd /root/quantum-rl-project && UV_HTTP_TIMEOUT=300 uv sync --frozen"
     )
     .add_local_file(
-        str(project_root / "src/swarm/capacitance_model/weights/best_model_barriers.pth"),
-        remote_path="/root/quantum-rl-project/src/swarm/capacitance_model/weights/best_model_barriers.pth"
+        str(project_root / "src/qadapt/capacitance_model/weights/best_model_barriers.pth"),
+        remote_path="/root/quantum-rl-project/src/qadapt/capacitance_model/weights/best_model_barriers.pth"
     )
 )
 
@@ -62,7 +62,7 @@ def train(num_dots: int = 2, num_iterations: int = 150):
     os.chdir("/root/quantum-rl-project")
 
     cmd = [
-        "uv", "run", "python", "src/swarm/single_agent_ablations/train.py",
+        "uv", "run", "python", "src/qadapt/single_agent_ablations/train.py",
         "--num-dots", str(num_dots),
         "--defaults.num_iterations", str(num_iterations),
         "--rl_config.env_runners.sample_timeout_s", "1800",

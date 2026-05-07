@@ -30,11 +30,11 @@ _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 sys.path.insert(0, str(_REPO / "SuperSims"))
 
-from swarm.inference.eval_supersims import (  # noqa: E402
+from qadapt.inference.eval_supersims import (  # noqa: E402
     load_modules_from_checkpoint,
     greedy_action,
 )
-from swarm.environment.supersims_env import SuperSimsEnv  # noqa: E402
+from qadapt.environment.supersims_env import SuperSimsEnv  # noqa: E402
 
 
 def run_episode(env, policy_split, modules, seed, mode="greedy", rng=None):

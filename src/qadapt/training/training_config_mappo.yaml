@@ -1,0 +1,236 @@
+# MAPPO (centralized-critic PPO) configuration for multi-agent quantum device tuning.
+# Sibling of training_config.yaml. The actor side is identical to PPO; the critic
+# side reads {global_image (full N-1 channel CSD stack), global_voltages (concat
+# of all gate + barrier voltages)} via a per-policy `centralized_critic` block.
+#
+# IMPORTANT: MAPPO is a baseline, run with NO gate virtualization (the
+# capacitance/Kalman predictor in env_config.yaml is part of the main PPO/SAC
+# algorithm we're benchmarking against, not part of the baseline). Use the
+# sibling env_config_mappo.yaml (update_method: null) via --env-config.
+#
+# Run with:
+#   uv run python src/qadapt/training/train.py \
+#     --config src/qadapt/training/training_config_mappo.yaml \
+#     --env-config src/qadapt/environment/env_config_mappo.yaml \
+#     --disable-wandb
+
+# Default training parameters
+defaults:
+  num_iterations: 400        # Total training iterations
+  delete_old_checkpoints: true # Delete local checkpoints as we go along (note this won't affect wandb artifact logging)
+  save_distance_data: true # Save per-agent diagnostic state info
+
+# Weights & Biases configuration
+wandb:
+  entity: "rl_agents_for_tuning"
+  project: "RLModel"
+  ema_period: 20          # EMA smoothing length
+
+# Ray cluster configuration
+ray:
+  include_dashboard: false   # Disable Ray dashboard for cleaner output
+  log_to_driver: false       # Reduce driver logs
+  logging_level: 40         # WARNING level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR)
+
+  # Runtime environment settings
+  runtime_env:
+    excludes:
+      - "dataset"
+      - "dataset_v1"
+      - "**/wandb/**"
+      - "outputs"
+      - "test_outputs"
+      - "**/checkpoints/**"
+      - "**/weights/**"
+      - "*dataset*"
+      - "**/data/**"
+      - "**/artifacts/**"
+      - "**/*.png"
+      - "**/*.pth"
+      - "**/*.pkl"
+
+    env_vars:
+      JAX_PLATFORM_NAME: "cuda"
+      JAX_PLATFORMS: "cuda"
+
+      PYTHONWARNINGS: "ignore::DeprecationWarning,ignore::FutureWarning"
+      RAY_DISABLE_IMPORT_WARNING: "1"
+
+      # Suppress metrics exporter error (known Ray 2.53+ bug, doesn't affect training)
+      RAY_METRICS_EXPORT_INTERVAL_MS: "0"
+
+      # Memory contention
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+      XLA_PYTHON_CLIENT_MEM_FRACTION: "0.25"
+      JAX_ENABLE_X64: "true"
+
+# Algorithm Configuration
+rl_config:
+  algorithm: "MAPPO" # PPO, MAPPO, or SAC
+
+  # Environment runners configuration
+  env_runners:
+    num_env_runners: 6              # Number of parallel environment runners
+
+    rollout_fragment_length: 50     # Steps per rollout fragment
+    sample_timeout_s: 600.0         # Timeout for sampling - set higher with fewer env runners
+    num_gpus_per_env_runner: 0.45
+
+  # Learner configuration
+  learners:
+    num_learners: 1                 # Number of learner workers
+    num_gpus_per_learner: 0.95       # GPU allocation per learner
+
+  # Training hyperparameters
+  training:
+    train_batch_size: 16384          # Total batch size for training
+    minibatch_size: 2048             # Size of minibatches for SGD
+    num_epochs: 10                   # Number of SGD epochs per training iteration
+    grad_clip: 40.0                 # Amount of gradient clipping (set to null to disable) ~40.0 is the default
+    grad_clip_by: "norm"            # Gradient clipping method
+
+    # PPO-specific config
+    lr: 0.0005
+    gamma: 0.0                      # Discount factor (matches IPPO's "no bootstrap" setting on this env)
+    lambda_: 0.95                   # GAE lambda parameter
+    clip_param: 0.2                 # PPO clipping parameter
+    entropy_coeff: 0.01             # Entropy regularization coefficient
+    vf_loss_coeff: 0.5              # Value function loss coefficient (centralized critic; tune later)
+    kl_target: 0.01                 # Target size of KL penalty on policy updates
+
+    # SAC-specific config (unused for MAPPO; kept for parser compatibility)
+    actor_lr: 0.0003
+    critic_lr: 0.0003
+    alpha_lr: 0.0003
+    twin_q: true
+    tau: 0.005
+    initial_alpha: 1.0
+    target_entropy: "auto"
+    n_step: 1
+    clip_actions: true
+    target_network_update_freq: 1
+    num_steps_sampled_before_learning_starts: 1000
+    replay_buffer_config: {
+      "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
+      "capacity": 1000000,
+      "alpha": 0.6,
+      "beta": 0.4,
+    }
+
+
+  # Multi-agent configuration
+  multi_agent:
+    policies:
+      - "plunger_policy"
+      - "barrier_policy"
+    policies_to_train:
+      - "plunger_policy"
+      - "barrier_policy"
+    count_steps_by: "agent_steps"
+
+    free_log_std: false         # Whether to predict the std (better exploration) or not (more stable)
+    log_std_bounds: [-10, 2]
+
+# Checkpoint configuration
+checkpoints:
+  save_dir: "./checkpoints"
+  upload_best_only: true
+
+# GIF capture configuration for agent visualization
+gif_config:
+  enabled: true
+  target_agent_type: "plunger"
+  target_agent_indices: [1]
+  save_dir: "/tmp/shared_gif_captures"
+  fps: 0.5
+
+# Neural Network Architecture Configuration
+# For MAPPO, each policy block additionally specifies a `centralized_critic`
+# block. Its shape mirrors the per-policy block (backbone + value_head) and is
+# consumed by CustomMAPPOCatalog to build the critic encoder + value head over
+# the global state.
+neural_networks:
+  plunger_policy:
+    backbone:
+      type: "IMPALA"
+      mobilenet_version: "small"
+      feature_size: 256
+      load_pretrained: true
+      freeze_backbone: false
+      adaptive_pooling: true
+      num_res_blocks: 2
+      memory_layer: null
+      lstm:
+        hidden_dim: 256
+        num_layers: 1
+        max_seq_len: 1
+        store_voltages: false
+        voltage_hidden_dim: 16
+      transformer:
+        latent_size: 128
+        num_attention_heads: 4
+        num_layers: 1
+        max_seq_len: 10
+        feedforward_dim: null
+        dropout: 0.1
+        pooling_mode: "mean"
+        use_ctlpe: true
+        add_pos_embeddings: false
+    policy_head:
+      hidden_layers: [64, 64, 32]
+      activation: "relu"
+      use_attention: false
+    value_head:
+      # NOTE: unused under MAPPO. The centralized critic uses
+      # `centralized_critic.value_head` below. Kept here for config-shape parity
+      # with the IPPO config so swap-in/swap-out is mechanical.
+      hidden_layers: [64, 64, 32]
+      activation: "relu"
+      use_attention: false
+    centralized_critic:
+      backbone:
+        type: "IMPALA"
+        mobilenet_version: "small"
+        feature_size: 256
+        load_pretrained: true
+        freeze_backbone: false
+        adaptive_pooling: true
+        num_res_blocks: 2
+        memory_layer: null
+      value_head:
+        hidden_layers: [64, 64, 32]
+        activation: "relu"
+        use_attention: false
+
+  barrier_policy:
+    backbone:
+      type: "IMPALA"
+      mobilenet_version: "small"
+      feature_size: 256
+      freeze_backbone: false
+      adaptive_pooling: true
+      num_res_blocks: 2
+      memory_layer: null
+    policy_head:
+      hidden_layers: [32]
+      activation: "relu"
+      use_attention: false
+    value_head:
+      # NOTE: unused under MAPPO (see plunger_policy.value_head note).
+      hidden_layers: [32]
+      activation: "relu"
+      use_attention: false
+    centralized_critic:
+      backbone:
+        type: "IMPALA"
+        mobilenet_version: "small"
+        feature_size: 256
+        load_pretrained: true
+        freeze_backbone: false
+        adaptive_pooling: true
+        num_res_blocks: 2
+        memory_layer: null
+      value_head:
+        hidden_layers: [64, 64, 32]
+        activation: "relu"
+        use_attention: false

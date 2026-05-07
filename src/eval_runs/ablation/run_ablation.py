@@ -248,8 +248,8 @@ def _prepare_checkpoint(
     return ckpt_dir
 
 
-SINGLE_AGENT_TRAIN = REPO_ROOT / "src" / "swarm" / "single_agent_ablations" / "train.py"
-SINGLE_AGENT_SAC_TRAIN = REPO_ROOT / "src" / "swarm" / "single_agent_sac" / "train.py"
+SINGLE_AGENT_TRAIN = REPO_ROOT / "src" / "qadapt" / "single_agent_ablations" / "train.py"
+SINGLE_AGENT_SAC_TRAIN = REPO_ROOT / "src" / "qadapt" / "single_agent_sac" / "train.py"
 FACMAC_EVAL = REPO_ROOT / "benchmarks" / "facmac" / "run_eval_trials.py"
 
 
@@ -263,7 +263,7 @@ def _run_eval(
     """Invoke the appropriate eval entry point based on pipeline kind.
 
     - rlmodel: src/eval_runs/main.py (PPO/MAPPO/SAC swarm)
-    - single_agent: src/swarm/single_agent_ablations/train.py --eval-only
+    - single_agent: src/qadapt/single_agent_ablations/train.py --eval-only
     - facmac: benchmarks/facmac/run_eval_trials.py --npy-output-dir
     """
     env = os.environ.copy()
