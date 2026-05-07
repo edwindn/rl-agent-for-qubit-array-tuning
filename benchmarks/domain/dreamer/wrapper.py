@@ -1,7 +1,7 @@
 """
 DreamerV3-compatible wrapper for QuantumDeviceEnv.
 
-Wraps the new src/swarm/environment/env.py environment for use with DreamerV3.
+Wraps the new src/qadapt/environment/env.py environment for use with DreamerV3.
 Supports N plungers and N-1 barriers.
 
 Key conversions:
@@ -21,7 +21,7 @@ from gymnasium import spaces
 src_dir = Path(__file__).parent.parent.parent / 'src'
 sys.path.insert(0, str(src_dir))
 
-from swarm.environment.env import QuantumDeviceEnv
+from qadapt.environment.env import QuantumDeviceEnv
 
 
 class DreamerEnvWrapper(gym.Env):

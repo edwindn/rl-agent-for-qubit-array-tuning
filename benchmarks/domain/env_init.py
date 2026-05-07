@@ -15,7 +15,7 @@ project_root = Path(__file__).parent.parent
 src_dir = project_root / "src"
 sys.path.insert(0, str(src_dir))
 
-from swarm.environment.env import QuantumDeviceEnv
+from qadapt.environment.env import QuantumDeviceEnv
 
 # =============================================================================
 # Centralized config path - change this to use a different env config
