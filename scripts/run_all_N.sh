@@ -6,15 +6,15 @@
 # into plots_supersims_diagnostic/staircase_scan_N{N}.npz.
 #
 # Auto-mode invocation:
-#   nohup bash scripts/run_all_N.sh > /tmp/claude_runs/run_all_N.log 2>&1 &
+#   nohup bash scripts/run_all_N.sh > /tmp/eval_runs/run_all_N.log 2>&1 &
 set -euo pipefail
 cd <repo>
 source .venv/bin/activate
 
 CKPT=checkpoints_supersims_grouped/iteration_28
 OUT_DIR=plots_supersims_diagnostic
-SHARD_DIR=/tmp/claude_runs/shards
-mkdir -p "$SHARD_DIR" /tmp/claude_runs
+SHARD_DIR=/tmp/eval_runs/shards
+mkdir -p "$SHARD_DIR" /tmp/eval_runs
 
 # (N, total_seeds, param_cfg)
 N_VALUES=(2 4 6 8)

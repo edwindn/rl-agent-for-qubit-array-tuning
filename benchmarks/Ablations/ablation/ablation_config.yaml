@@ -3,7 +3,7 @@
 #
 # To add an algo:
 #   1. Add an entry under `algos` with the run number (the integer suffix of
-#      the wandb display name, e.g. ethereal-surf-473 -> 473).
+#      the wandb display name, e.g. -> integer).
 #   2. Specify env_overrides as nested dict for any env_config.yaml fields that
 #      differ from the canonical run (use dotted keys for nesting).
 #   3. Run: uv run python run_ablation.py --algo <name> --gpu N
@@ -82,14 +82,14 @@ algos:
     wandb_run_number: 648
     pipeline: "rlmodel"
     env_overrides: {}
-    notes: "MAPPO benchmark — zany-cloud-648, 4 dots, 400 iters, update_method=null. Best ~iter 250-300."
+    notes: "MAPPO benchmark — 4 dots, 400 iters, update_method=null. Best ~iter 250-300."
 
   single_agent_sac:
     wandb_project: "anon-entity/SingleAgentBenchmark"
     wandb_run_number: 72
     pipeline: "single_agent_sac"
     env_overrides: {}
-    notes: "Single-agent SAC baseline — ethereal-sunset-72"
+    notes: "Single-agent SAC baseline"
 
   facmac:
     # Local checkpoint (not from wandb). FACMAC was unstable; we eval the final

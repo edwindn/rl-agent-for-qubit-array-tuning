@@ -14,7 +14,7 @@ agent_modules:
 action_range: ~
 action_selector: ~
 agent_output_type: ~
-batch_size_run: 26    # parallel runner ramp from default 1 (rescue: bsr=1 was hitting <2010 t_env in 30+ min)
+batch_size_run: 26    # parallel runner ramp from default 1 (bsr=1 was hitting <2010 t_env in 30+ min)
 batch_size: 32
 buffer_size: 5000
 buffer_warmup: 0
@@ -52,7 +52,7 @@ optimizer: adam
 optimizer_epsilon: 0.01
 rnn_hidden_dim: 64
 run_mode: ~
-runner: "parallel"    # rescue: parallel runner needed for FACMAC throughput (was: "episode" with bsr=1)
+runner: "parallel"    # parallel runner needed for FACMAC throughput (was: "episode" with bsr=1)
 runner_scope: 'episodic'
 target_update_interval: ~
 target_update_mode: 'soft'
@@ -75,6 +75,6 @@ noise_clip: 0.5
 
 # wandb
 use_wandb: True
-wandb_project: "FACMAC-rescue"
+wandb_project: "MARL-baselines"
 wandb_entity: "anon-entity"
 wandb_ema_period: 20

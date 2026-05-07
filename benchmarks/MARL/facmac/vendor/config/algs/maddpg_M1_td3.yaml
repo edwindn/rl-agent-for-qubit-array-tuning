@@ -77,6 +77,6 @@ noise_clip: 0.5
 
 # wandb
 use_wandb: True
-wandb_project: "FACMAC-rescue"
+wandb_project: "MARL-baselines"
 wandb_entity: "anon-entity"
 wandb_ema_period: 20

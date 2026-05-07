@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Eval orchestration for the rescue campaign.
+# Eval orchestration for the baseline tuning.
 # After Modal runs commit, this:
 #   1. Pulls each algo's checkpoints from the facmac-results volume
 #   2. Runs run_eval_trials.py against the latest checkpoint

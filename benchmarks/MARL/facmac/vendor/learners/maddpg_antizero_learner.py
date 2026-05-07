@@ -1,5 +1,5 @@
 """
-MADDPG with anti-zero action penalty (rescue campaign M6).
+MADDPG with anti-zero action penalty.
 
 Hypothesis: vanilla MADDPG actor gradients vanish when the actor settles near
 zero output because the critic's Q-surface is flat at that point (low Q-curvature

@@ -1,5 +1,5 @@
 """
-TD3-style learner for the rescue campaign (M1).
+TD3-style learner for the baseline tuning (M1).
 
 Diff vs MADDPGLearner:
   1. Twin critics Q1 / Q2 — target uses min(Q1', Q2') (clipped double-Q).

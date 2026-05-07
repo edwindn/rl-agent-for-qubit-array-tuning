@@ -88,7 +88,7 @@ class PyMARLEnvWrapper(MultiAgentEnv):
         self._episode_plunger_return = 0.0
         self._episode_barrier_return = 0.0
 
-        # F4 (rescue campaign): optional running-mean/std reward normalisation.
+        # F4: optional running-mean/std reward normalisation.
         # When enabled, team_reward returned by step() is replaced by
         # (r - running_mean) / sqrt(running_var + eps). Useful when raw reward
         # scale destabilises the critic. Default off — existing runs unaffected.

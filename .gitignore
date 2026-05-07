@@ -1,7 +1,5 @@
 #Stock gitignore
 
-# Specific yaml setup files
-# src/swarm/**/*.yaml
 
 # Python
 __pycache__/
@@ -160,9 +158,6 @@ checkpoints_supersims*/
 benchmarks/MARL/facmac/results/
 benchmarks/MARL/facmac/tb_logs/
 
-# Stale src/qadapt/.egg-info / swarm_rl.egg-info directories that linger after
-# package rename
-src/swarm_rl.egg-info/
 
 # IDE
 .vscode/

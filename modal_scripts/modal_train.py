@@ -67,7 +67,7 @@ def train(checkpoint_artifact: str = None, config_path: str = "src/qadapt/traini
 
     Args:
         checkpoint_artifact: Optional wandb artifact path to resume from
-                            e.g. 'anon-entity/RLModel/rl_checkpoint_best:v3510'
+                            e.g. 'anon-entity/RLModel/rl_checkpoint_best:vN'
         config_path: Path to config file relative to project root
     """
     import subprocess
@@ -104,7 +104,7 @@ def main(
 
     Args:
         checkpoint: Optional wandb artifact path to resume from
-                   e.g. 'anon-entity/RLModel/rl_checkpoint_best:v3510'
+                   e.g. 'anon-entity/RLModel/rl_checkpoint_best:vN'
         config: Path to config file relative to project root
     """
     print("Starting quantum device RL training on Modal...")

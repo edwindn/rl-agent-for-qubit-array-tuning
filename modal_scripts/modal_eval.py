@@ -12,7 +12,7 @@ Usage (from project root):
     modal run modal_scripts/modal_eval.py --num-rollouts 100
 
     # Custom checkpoint
-    modal run modal_scripts/modal_eval.py --checkpoint "anon-entity/RLModel/rl_checkpoint_best:v3482"
+    modal run modal_scripts/modal_eval.py --checkpoint "anon-entity/RLModel/rl_checkpoint_best:vN"
 """
 import modal
 from pathlib import Path
@@ -69,7 +69,7 @@ def run_eval(
 
     Args:
         checkpoint_artifact: Wandb artifact path for the checkpoint
-                            e.g. 'anon-entity/RLModel/rl_checkpoint_best:v3482'
+                            e.g. 'anon-entity/RLModel/rl_checkpoint_best:vN'
         num_dots: Number of dots for the environment (default: 8)
         num_rollouts: Number of rollouts to collect (default: 100)
     """
@@ -135,7 +135,7 @@ def run_eval(
 
 @app.local_entrypoint()
 def main(
-    checkpoint: str = "anon-entity/RLModel/rl_checkpoint_best:v3482",
+    checkpoint: str = "anon-entity/RLModel/rl_checkpoint_best:vN",
     num_dots: int = 8,
     num_rollouts: int = 100,
 ):

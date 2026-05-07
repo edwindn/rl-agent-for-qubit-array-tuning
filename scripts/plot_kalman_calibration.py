@@ -16,7 +16,7 @@ Data generation (1000 episodes, NN=0.7, NNN=0.3 fixed, explore mode):
     # Requires prior_variance_nnn=0.03 in env.py Kalman init
     for gpu in 0 1 2 3 4 5 6 7; do
         CUDA_VISIBLE_DEVICES=$gpu uv run python src/qadapt/capacitance_model/collect_episode_data.py \
-            --checkpoint artifacts/rl_checkpoint_best:v3482 \
+            --checkpoint artifacts/rl_checkpoint_best:vN \
             --episodes 125 --explore \
             --output data/episode_data_1000ep_gpu${gpu}.npy &
     done

@@ -11,7 +11,7 @@ Key difference from modal_eval.py:
 Usage:
     modal run modal_scripts/modal_inference.py
     modal run modal_scripts/modal_inference.py --num-dots 8 --num-rollouts 100
-    modal run modal_scripts/modal_inference.py --checkpoint "anon-entity/RLModel/rl_checkpoint_best:v3482"
+    modal run modal_scripts/modal_inference.py --checkpoint "anon-entity/RLModel/rl_checkpoint_best:vN"
 """
 import modal
 from pathlib import Path
@@ -127,7 +127,7 @@ def run_inference(
 
 @app.local_entrypoint()
 def main(
-    checkpoint: str = "anon-entity/RLModel/rl_checkpoint_best:v3482",
+    checkpoint: str = "anon-entity/RLModel/rl_checkpoint_best:vN",
     num_dots: int = 8,
     num_rollouts: int = 10,
 ):
