@@ -8,7 +8,7 @@ and emits a single appendix figure:
   qadapt (473), nature_cnn (484), lstm (520), transformer (555),
   gamma_nonzero (511), w_o_virtualization=IPPO (496), MAPPO (648),
   single_agent_ppo (57)
-  x = iteration (0-150), y = episode_return_mean
+  x = epoch (full extent of each run), y = episode_return_mean
 
 Output: paper_plots/training_reward_curves_appendix.{png,svg}.
 
@@ -100,7 +100,7 @@ def _stitch_chained_runs(api, project: str, run_numbers: list[int],
     return np.concatenate(seg_x), np.concatenate(seg_y)
 
 
-def render_qadapt_family(api, out_stem: Path, max_iter: int = 150) -> None:
+def render_qadapt_family(api, out_stem: Path, max_iter: int | None = None) -> None:
     plt.rcParams.update({"font.size": 14})
     fig, ax = plt.subplots(figsize=(8.5, 5.5))
 
@@ -109,22 +109,25 @@ def render_qadapt_family(api, out_stem: Path, max_iter: int = 150) -> None:
     colors = [cc.gouldian[int(i)] for i in palette_idx]
 
     plotted = 0
+    global_max_x = 0.0
     for (project, run_nums, label, y_key), color in zip(QADAPT_FAMILY, colors):
         print(f"  [pull] {label}: runs {run_nums}")
         x, y = _stitch_chained_runs(api, project, run_nums, y_key)
         if len(x) == 0:
             print(f"  [skip] {label}: no data")
             continue
-        mask = x <= max_iter
-        x, y = x[mask], y[mask]
+        if max_iter is not None:
+            mask = x <= max_iter
+            x, y = x[mask], y[mask]
         if len(x) < 2:
             continue
         ax.plot(x, y, color=color, lw=1.6, label=label, alpha=0.9)
         plotted += 1
+        global_max_x = max(global_max_x, float(x.max()))
         print(f"  [plot] {label}: {len(x)} stitched points (max iter {x.max():.0f})")
 
-    ax.set_xlim(0, max_iter)
-    ax.set_xlabel("Training iteration")
+    ax.set_xlim(0, max_iter if max_iter is not None else global_max_x)
+    ax.set_xlabel("Epochs")
     ax.set_ylabel("Episode return")
     for spine in ("top", "bottom", "left", "right"):
         ax.spines[spine].set_visible(True)
@@ -148,7 +151,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=Path,
                     default=Path(__file__).resolve().parents[1] / "paper_plots")
-    ap.add_argument("--max-iter", type=int, default=150)
+    ap.add_argument("--max-iter", type=int, default=None,
+                    help="Optional cap on iterations (default: full extent of each run)")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
