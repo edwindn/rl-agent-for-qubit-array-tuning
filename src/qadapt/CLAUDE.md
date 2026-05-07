@@ -1,4 +1,0 @@
-- Don't run python scripts yourself after modification, let me know which ones have changed so I can test them.
-- We are using packages from uv package manager. If in doubt about a specific API for a package, check its source code there or ask for clarification.
-- Don't write code to fail gracefully, such as calling .get() on dictionaries. Index dictionaries directly and let the code throw an error if it doesn't work as expected.
-- When given a ray worker or raylet error, search the Ray log files in the /tmp/ray directory specifically for the Actor or Worker ID specified in the error message, to find what the error was. Note, do not search directly inside the session_latest/ directory, just search globally inside /tmp/ray
