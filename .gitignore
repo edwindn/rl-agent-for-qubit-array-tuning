@@ -143,6 +143,7 @@ sacred/
 # Local-only artefact dirs (never committed; preserve disk-space marker only)
 _archive/
 test_outputs/
+checkpoints_supersims*/
 
 # PyMARL/Sacred run logs
 benchmarks/MARL/facmac/results/
