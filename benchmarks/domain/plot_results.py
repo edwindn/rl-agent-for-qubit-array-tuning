@@ -406,13 +406,17 @@ def main():
     else:
         results_dir = Path(__file__).parent / "results" / "final_results"
 
+    repo_root = Path(__file__).resolve().parents[2]
+    paper_plots = repo_root / "paper_plots"
+    paper_plots.mkdir(parents=True, exist_ok=True)
+
     if args.plot in ["scans", "both"]:
-        output = Path(args.output) if args.output else results_dir / "num_dots_scaling.png"
+        output = Path(args.output) if args.output else paper_plots / "domain_benchmarks_scans.svg"
         plot_scans_to_threshold(results_dir, output, threshold=args.threshold)
 
     if args.plot in ["convergence", "both"]:
         suffix = f"_{args.num_dots}dots" if args.num_dots else ""
-        output = Path(args.output) if args.output else results_dir / f"convergence{suffix}.png"
+        output = Path(args.output) if args.output else paper_plots / f"domain_benchmarks_convergence{suffix}.svg"
         plot_convergence_curves(
             results_dir, output,
             max_scans=args.max_scans,

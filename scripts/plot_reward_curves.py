@@ -10,7 +10,7 @@ and emits a single appendix figure:
   single_agent_ppo (57)
   x = iteration (0-150), y = episode_return_mean
 
-Output: plots_appendix/training_reward_curves_appendix.{png,svg}.
+Output: paper_plots/training_reward_curves_appendix.{png,svg}.
 
 Usage:
   uv run python scripts/plot_reward_curves.py
@@ -147,7 +147,7 @@ def render_qadapt_family(api, out_stem: Path, max_iter: int = 150) -> None:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=Path,
-                    default=Path("/home/rahul/qaduub-mappo/plots_appendix"))
+                    default=Path(__file__).resolve().parents[1] / "paper_plots")
     ap.add_argument("--max-iter", type=int, default=150)
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)

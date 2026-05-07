@@ -130,6 +130,11 @@ collected_data/
 raw_data/
 processed_data/
 
+# Paper-figure inputs (small npz files needed to regenerate appendix plots).
+# Override the broader data/ + *.npz ignores above.
+!paper_plots/data/
+!paper_plots/data/**
+
 # Results and outputs
 results/
 outputs/

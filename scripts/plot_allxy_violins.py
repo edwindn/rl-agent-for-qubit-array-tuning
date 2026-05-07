@@ -5,8 +5,8 @@ Within each gate pair, 4 violins (one per N ∈ {2, 4, 6, 8}, dodged horizontall
 pooling 100 seeds × N qubits of P(|1>) values per violin. Ideal staircase
 {0×5, 0.5×12, 1×4} overlaid as a dashed reference.
 
-Inputs: plots_supersims_diagnostic/staircase_scan_N{N}.npz for each N.
-Outputs: plots_supersims_diagnostic/appendix_supersim_violin.{png,svg}.
+Inputs: paper_plots/data/staircase_scan_N{N}.npz for each N.
+Outputs: paper_plots/appendix_supersim_violin.{png,svg}.
 
 Usage:
   uv run python scripts/plot_allxy_violins.py
@@ -29,8 +29,8 @@ sys.path.insert(0, str(_REPO / "SuperSims"))
 from all_xy_sequence import ALLXY_GATES, ALLXY_IDEAL  # noqa: E402
 
 DEFAULT_N_VALUES = [2, 4, 6, 8]
-DEFAULT_DATA_DIR = _REPO / "plots_supersims_diagnostic"
-DEFAULT_OUT = DEFAULT_DATA_DIR / "appendix_supersim_violin"
+DEFAULT_DATA_DIR = _REPO / "paper_plots" / "data"
+DEFAULT_OUT = _REPO / "paper_plots" / "appendix_supersim_violin"
 
 
 def _load_scans(data_dir: Path, n_values):

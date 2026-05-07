@@ -9,8 +9,8 @@ Cumulative-best convention: at each step t, score = max over t'<=t of the
 per-step mean-across-qubits reward. Justification: calibration is non-destructive
 — there's no cost to rolling back to a better-seen earlier point.
 
-Inputs:  plots_supersims_diagnostic/staircase_scan_N{N}.npz
-Outputs: plots_supersims_diagnostic/appendix_supersim_convergence.{png,svg}
+Inputs:  paper_plots/data/staircase_scan_N{N}.npz
+Outputs: paper_plots/appendix_supersim_convergence.{png,svg}
 """
 import argparse
 from pathlib import Path
@@ -24,8 +24,8 @@ from matplotlib import cm
 
 DEFAULT_N_VALUES = [2, 4, 6, 8]
 _REPO = Path(__file__).resolve().parents[1]
-DEFAULT_DATA_DIR = _REPO / "plots_supersims_diagnostic"
-DEFAULT_OUT = DEFAULT_DATA_DIR / "appendix_supersim_convergence"
+DEFAULT_DATA_DIR = _REPO / "paper_plots" / "data"
+DEFAULT_OUT = _REPO / "paper_plots" / "appendix_supersim_convergence"
 
 
 def _load(data_dir: Path, N: int):
