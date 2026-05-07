@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 """
-Pull training reward curves from wandb for all baselines/ablations and the
-rescue runs, render two appendix figures:
+Render the QADAPT-family training reward curves appendix figure.
 
-  Fig 1 — QADAPT-family curves (PPO iterations):
-    qadapt (473), nature_cnn (484), lstm (520), transformer (555),
-    gamma_nonzero (511), w_o_virtualization (496), MAPPO (648),
-    single_agent_ppo (57), single_agent_sac (72)
-    x = iteration (0-150), y = episode_return_mean
+Pulls per-run histories from wandb (chained runs stitched on the iteration axis)
+and emits a single appendix figure:
 
-  Fig 2 — MADDPG / FACMAC rescue curves (env steps):
-    M6 anti-zero, M1 TD3, M3 lowcriticlr, M6b strong,
-    F1 lowcriticlr, F2 VDN, F2b nomixer, F3 slowtau, F4 rewardnorm
-    x = t_env (0-500k), y = test_return_mean
+  qadapt (473), nature_cnn (484), lstm (520), transformer (555),
+  gamma_nonzero (511), w_o_virtualization=IPPO (496), MAPPO (648),
+  single_agent_ppo (57)
+  x = iteration (0-150), y = episode_return_mean
 
-Outputs both PNG and SVG to plots_supersims_diagnostic/ (or --out-dir).
+Output: plots_appendix/training_reward_curves_appendix.{png,svg}.
 
 Usage:
   uv run python scripts/plot_reward_curves.py
@@ -41,14 +37,6 @@ QADAPT_FAMILY = [
     ("rl_agents_for_tuning/SingleAgentBenchmark", [57], "single-agent PPO",         "episode_return_mean"),
 ]
 
-# Rescue runs (from FACMAC-rescue wandb project) — only the two best, matching
-# the eval-table picks: best MADDPG = M6 anti-zero, best FACMAC = F3 slow-tau.
-RESCUE_RUNS = [
-    ("rl_agents_for_tuning/FACMAC-rescue", "maddpg_M6_antizero", "MADDPG"),
-    ("rl_agents_for_tuning/FACMAC-rescue", "facmac_F3_slowtau",  "FACMAC"),
-]
-
-
 def _resolve_run(api, project: str, run_number: int):
     """For RLModel-style: find run by display_name suffix '-<number>'."""
     runs = list(api.runs(project, per_page=500))
@@ -56,17 +44,6 @@ def _resolve_run(api, project: str, run_number: int):
     hits = [r for r in runs if (r.display_name or "").endswith(suffix)]
     if not hits:
         return None
-    return hits[0]
-
-
-def _resolve_run_by_name_prefix(api, project: str, name_prefix: str):
-    """For FACMAC-rescue: find run whose display_name starts with the algo name."""
-    runs = list(api.runs(project, per_page=500))
-    hits = [r for r in runs if (r.display_name or "").startswith(name_prefix)]
-    if not hits:
-        return None
-    # If multiple, pick the most recently created.
-    hits.sort(key=lambda r: r.created_at, reverse=True)
     return hits[0]
 
 
@@ -167,95 +144,18 @@ def render_qadapt_family(api, out_stem: Path, max_iter: int = 150) -> None:
     print(f"  wrote {out_png} (+ .svg)  — {plotted} runs plotted")
 
 
-def _parse_rescue_log(log_path: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Parse PyMARL Recent Stats from rescue log → (t_env, test_return_mean)."""
-    import re
-    HEADER = re.compile(r"Recent Stats \| t_env:\s+(\d+)")
-    METRIC = re.compile(r"test_return_mean:\s+([\d.]+)")
-    cur_t = None; pts: dict[int, float] = {}
-    text = log_path.read_text(errors="ignore")
-    for line in text.splitlines():
-        h = HEADER.search(line)
-        if h:
-            cur_t = int(h.group(1)); continue
-        if cur_t is None: continue
-        m = METRIC.search(line)
-        if m:
-            pts[cur_t] = float(m.group(1))
-            cur_t = None
-    ts = sorted(pts)
-    return np.asarray(ts), np.asarray([pts[t] for t in ts])
-
-
-def render_rescue(_api_unused, out_stem: Path, max_t_env: int = 500_000,
-                   logs_dir: Path = Path("/tmp/claude_runs/rescue_modal")) -> None:
-    """Render rescue training curves from local PyMARL logs.
-
-    Wandb's scan_history is too slow on these runs; the local logs have the same
-    Recent Stats blocks PyMARL emitted, so we parse those directly.
-    """
-    plt.rcParams.update({"font.size": 14})
-    fig, ax = plt.subplots(figsize=(9.5, 5.5))
-
-    import colorcet as cc
-    palette_idx = (np.linspace(0.0, 0.95, len(RESCUE_RUNS)) * 256).astype(int)
-    colors = [cc.gouldian[int(i)] for i in palette_idx]
-
-    plotted = 0
-    for (_project, name_prefix, label), color in zip(RESCUE_RUNS, colors):
-        log_path = logs_dir / f"{name_prefix}.log"
-        if not log_path.exists():
-            print(f"  [skip] {label}: no log at {log_path}")
-            continue
-        x, y = _parse_rescue_log(log_path)
-        if len(x) < 2:
-            print(f"  [skip] {label}: only {len(x)} points")
-            continue
-        mask = x <= max_t_env
-        x, y = x[mask], y[mask]
-        ls = "--" if "MADDPG" in label else "-"
-        ax.plot(x / 1000, y, color=color, lw=1.6, ls=ls, label=label, alpha=0.9)
-        plotted += 1
-        print(f"  [plot] {label}: {len(x)} points (max t_env {x.max():.0f})  y=[{y.min():.1f},{y.max():.1f}]")
-
-    ax.set_xlim(0, max_t_env / 1000)
-    ax.set_ylim(15, 56)   # captures M6b's collapse (~19) up to FACMAC peaks (~55)
-    ax.set_xlabel(r"Environment steps ($\times 10^{3}$)")
-    ax.set_ylabel("Test return")
-    for spine in ("top", "bottom", "left", "right"):
-        ax.spines[spine].set_visible(True)
-        ax.spines[spine].set_color("#303030")
-        ax.spines[spine].set_linewidth(1.6)
-    ax.tick_params(axis="both", which="both", direction="in", length=8, width=1.2,
-                   colors="#303030", top=True, bottom=True, left=True, right=True)
-    ax.grid(axis="y", alpha=0.18)
-    ax.legend(loc="lower right", fontsize=9, frameon=False, ncol=2)
-
-    fig.tight_layout()
-    out_png = out_stem.with_suffix(".png")
-    out_svg = out_stem.with_suffix(".svg")
-    fig.savefig(out_png, dpi=300, bbox_inches="tight")
-    fig.savefig(out_svg, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  wrote {out_png} (+ .svg)  — {plotted} runs plotted")
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=Path,
                     default=Path("/home/rahul/qaduub-mappo/plots_appendix"))
     ap.add_argument("--max-iter", type=int, default=150)
-    ap.add_argument("--max-t-env", type=int, default=500_000)
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     api = wandb.Api()
-    print("== QADAPT family ==")
-    render_qadapt_family(api, args.out_dir / "fig_qadapt_family_curves",
+    print("== Training reward curves (QADAPT family) ==")
+    render_qadapt_family(api, args.out_dir / "training_reward_curves_appendix",
                          max_iter=args.max_iter)
-    print()
-    print("== MADDPG/FACMAC rescue ==")
-    render_rescue(api, args.out_dir / "fig_rescue_curves", max_t_env=args.max_t_env)
 
 
 if __name__ == "__main__":

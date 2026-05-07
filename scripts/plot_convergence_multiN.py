@@ -1,4 +1,4 @@
-"""Figure B: Multi-N convergence curves (4 panels, one per N).
+"""Appendix SuperSims convergence: multi-N curves (4 panels, one per N).
 
 For each N ∈ {2, 4, 6, 8}, plot the cumulative-best per-step mean-across-qubits
 reward across seeds, mean ± std band, with a uniform-random-action baseline.
@@ -10,7 +10,7 @@ per-step mean-across-qubits reward. Justification: calibration is non-destructiv
 — there's no cost to rolling back to a better-seen earlier point.
 
 Inputs:  plots_supersims_diagnostic/staircase_scan_N{N}.npz
-Outputs: plots_supersims_diagnostic/figB_convergence_multiN.{png,svg}
+Outputs: plots_supersims_diagnostic/appendix_supersim_convergence.{png,svg}
 """
 import argparse
 from pathlib import Path
@@ -25,7 +25,7 @@ from matplotlib import cm
 DEFAULT_N_VALUES = [2, 4, 6, 8]
 _REPO = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_DIR = _REPO / "plots_supersims_diagnostic"
-DEFAULT_OUT = DEFAULT_DATA_DIR / "figB_convergence_multiN"
+DEFAULT_OUT = DEFAULT_DATA_DIR / "appendix_supersim_convergence"
 
 
 def _load(data_dir: Path, N: int):
