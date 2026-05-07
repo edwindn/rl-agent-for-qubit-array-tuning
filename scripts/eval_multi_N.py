@@ -31,7 +31,7 @@ _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 sys.path.insert(0, str(_REPO / "SuperSims"))
 
-from qadapt.inference.eval_supersims import (  # noqa: E402
+from qadapt.voltage_model.eval_supersims import (  # noqa: E402
     load_modules_from_checkpoint,
     greedy_action,
 )

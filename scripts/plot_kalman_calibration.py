@@ -39,7 +39,7 @@ from matplotlib.colors import ListedColormap
 
 from plot_calibration_grid import load_episode_data, reconstruct_kalman_variances
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "episode_data_1000ep.npy"
 
 

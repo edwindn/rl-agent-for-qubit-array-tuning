@@ -17,7 +17,7 @@ from pathlib import Path
 from collections import defaultdict
 from matplotlib.colors import ListedColormap
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "episode_data.npy"
 
 
