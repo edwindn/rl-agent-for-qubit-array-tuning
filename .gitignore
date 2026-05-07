@@ -117,7 +117,7 @@ dmypy.json
 *.weights
 checkpoints/
 models/
-!src/swarm/voltage_model/models/
+!src/qadapt/voltage_model/models/
 weights/
 saved_models/
 *.png
@@ -137,6 +137,20 @@ logs/
 runs/
 tensorboard_logs/
 wandb/
+sacred/
+**/sacred/
+
+# Local-only artefact dirs (never committed; preserve disk-space marker only)
+_archive/
+test_outputs/
+
+# PyMARL/Sacred run logs
+benchmarks/MARL/facmac/results/
+benchmarks/MARL/facmac/tb_logs/
+
+# Stale src/qadapt/.egg-info / swarm_rl.egg-info directories that linger after
+# package rename
+src/swarm_rl.egg-info/
 
 # IDE
 .vscode/
