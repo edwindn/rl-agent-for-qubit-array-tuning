@@ -11,7 +11,7 @@ import numpy as np
 import yaml
 
 # Add src directory to path for imports
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).resolve().parents[2]
 src_dir = project_root / "src"
 sys.path.insert(0, str(src_dir))
 
@@ -20,7 +20,7 @@ from qadapt.environment.env import QuantumDeviceEnv
 # =============================================================================
 # Centralized config path - change this to use a different env config
 # =============================================================================
-ENV_CONFIG_PATH = src_dir / "swarm" / "environment" / "env_config.yaml"
+ENV_CONFIG_PATH = src_dir / "qadapt" / "environment" / "env_config.yaml"
 
 
 def load_env_config() -> dict:

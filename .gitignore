@@ -150,6 +150,12 @@ _archive/
 test_outputs/
 checkpoints_supersims*/
 
+# Convenience symlinks pointing at the rl-agent worktree's data dirs
+# (created locally to feed plot scripts; never committed)
+/data
+/benchmarks/results
+/benchmarks/domain/results
+
 # PyMARL/Sacred run logs
 benchmarks/MARL/facmac/results/
 benchmarks/MARL/facmac/tb_logs/
