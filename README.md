@@ -35,32 +35,77 @@ QArray 1.6, dynamiqs 0.3.4.
 
 ## Reproducing paper results
 
-This is a code release; large training artefacts (checkpoints, ~13 GB of domain-benchmark
-result JSONs, ~15 GB of capacitance episode rollouts, wandb run histories) are **not**
-committed. Reviewers can run a subset out of the box; the rest needs retraining or
-data regeneration.
-
-**Runnable from a fresh clone (no GPU, no auth):**
+Large training artefacts (checkpoints, ~13 GB of domain-benchmark JSONs, ~15 GB
+of capacitance episode rollouts, wandb run histories) are not committed. The two
+SuperSims appendix plots can be re-rendered immediately from `paper_plots/data/`:
 
 ```bash
-# SuperSims appendix figures — inputs are committed under paper_plots/data/
-uv run python scripts/plot_allxy_violins.py        # appendix_supersim_violin.svg
-uv run python scripts/plot_convergence_multiN.py   # appendix_supersim_convergence.svg
+uv run python scripts/plot_allxy_violins.py
+uv run python scripts/plot_convergence_multiN.py
 ```
 
-**Requires retraining or running a method (GPU, several hours each):**
+Reproducing every other number / figure requires retraining and regenerating data.
 
-| Output | Pipeline |
-|---|---|
-| Table 1 (`compute_table.py`) | Train every variant in `benchmarks/Ablations/ablation/ablation_config.yaml`, then `run_ablation.py` to populate `benchmarks/Ablations/collected_data/`. |
-| Training reward curves (`scripts/plot_reward_curves.py`) | Retrain each variant and configure `wandb` logging; the script pulls run histories from a wandb project. |
-| `paper_plots/data/staircase_scan_N{2,4,6,8}.npz` | Train a QADAPT policy on the SuperSims env, then `scripts/eval_multi_N.py` rolls out 100 seeds × N qubits. |
-| Capacitance plots (`plot_capacitance_convergence.py`, `plot_kalman_calibration.py`) | Run `qadapt.capacitance_model.collect_episode_data` against a trained virtualization model to produce `data/episode_data_1000ep.npy`. |
-| Domain benchmark plots (`benchmarks/domain/plot_results.py`, `plot_scaling.py`) | Run each `benchmarks/domain/{bayesian,lbfgs,nelder_mead,random,dreamer}/run.py` to populate `benchmarks/results/final_{N}dot/`. |
+### Table 1 — QADAPT, ablations, MARL baselines
 
-Training entry points: `src/qadapt/training/train.py` (QADAPT + ablations on the
-QArray env), `src/qadapt_for_supersim/` (SuperSims env), `benchmarks/MARL/*/train.py`
-(MARL baselines). Modal cloud entry points: `modal_scripts/`.
+1. Train each variant listed in `benchmarks/Ablations/ablation/ablation_config.yaml`.
+   QADAPT and the architecture/training ablations train via
+   `src/qadapt/training/train.py` with the matching config; MARL baselines via
+   their own entry points under `benchmarks/MARL/`.
+2. Run `benchmarks/Ablations/ablation/run_ablation.py --algo <name>` for each
+   trained checkpoint. This writes per-trial JSONs into
+   `benchmarks/Ablations/collected_data/<timestamp>_<algo>/`.
+3. Aggregate:
+
+   ```bash
+   uv run python benchmarks/Ablations/ablation/compute_table.py --markdown table.md
+   ```
+
+### Training reward curves (Fig. appendix)
+
+Retrain each QADAPT-family variant with wandb logging on, then point the
+`QADAPT_FAMILY` list at the top of `scripts/plot_reward_curves.py` at your runs
+and execute the script.
+
+### Domain benchmarks — per-N convergence panels + scaling
+
+1. Run each method to populate `benchmarks/results/final_{2,4,6,8}dot/`:
+
+   ```bash
+   for d in benchmarks/domain/{bayesian,lbfgs,nelder_mead,random,dreamer}; do
+     uv run python $d/run.py
+   done
+   ```
+
+2. Render:
+
+   ```bash
+   for n in 2 4 6 8; do
+     uv run python benchmarks/domain/plot_results.py --plot convergence --num-dots $n
+   done
+   uv run python benchmarks/domain/plot_scaling.py
+   ```
+
+### Capacitance plots
+
+1. Train the virtualisation CNN with
+   `src/qadapt/capacitance_model/train_capacitance_model.py`.
+2. Roll out a tuning episode against the trained CNN, dumping per-step samples
+   to `data/episode_data_1000ep.npy`.
+3. Render:
+
+   ```bash
+   uv run python scripts/plot_capacitance_convergence.py
+   uv run python scripts/plot_kalman_calibration.py
+   ```
+
+### SuperSims appendix data (regenerate the committed `.npz`)
+
+1. Train QADAPT on the SuperSims env using `src/qadapt_for_supersim/training_config.yaml`.
+2. `bash scripts/run_all_N.sh` (wraps `scripts/eval_multi_N.py`) to roll out 100
+   seeds × N qubits for N ∈ {2, 4, 6, 8}.
+
+Modal cloud entry points for hero training runs live in `modal_scripts/`.
 
 ## Citation
 
