@@ -1,0 +1,12 @@
+# SuperSims environment configuration.
+# Drives src/swarm/environment/supersims_env.py.
+
+simulator:
+  # Episode horizon (tuning steps per episode).
+  max_steps: 20
+
+  # Whether to also run the alone-driving simulation each step (for diagnostics only).
+  # When False, only `simultaneous=True` is run — half the per-step sim cost.
+  alone_enabled: false
+
+env_type: "supersims"

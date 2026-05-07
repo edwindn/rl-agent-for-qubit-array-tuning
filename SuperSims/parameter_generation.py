@@ -1,4 +1,5 @@
 import json
+import os
 import jax
 import jax.numpy as jnp
 from pathlib import Path
@@ -13,9 +14,13 @@ Natural units are assumed, i.e. hbar = 1, time is in ns, angular frequencies in 
 
 Ranges for all parameters are defined in parameter_config.json.
 Frequencies with the _GHz suffix are multiplied by 2π on load (rad/ns).
+
+Override which config file is loaded with SUPERSIMS_PARAM_CFG (filename only,
+relative to this directory). Default: parameter_config.json.
 """
 
-_cfg = json.loads((Path(__file__).parent / "parameter_config.json").read_text())
+_cfg_name = os.environ.get("SUPERSIMS_PARAM_CFG", "parameter_config.json")
+_cfg = json.loads((Path(__file__).parent / _cfg_name).read_text())
 
 # ----- System Parameters ----- #
 N_QUBITS = _cfg["system"]["N_QUBITS"]
